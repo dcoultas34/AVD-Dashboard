@@ -1,0 +1,32 @@
+// =============================================================================
+// scaling-plan-history.kql - AVD Autoscale evaluation events for a host pool
+// =============================================================================
+//
+// WHAT IT DOES:
+// Returns the last 24 hours of AVD autoscale evaluation events for a specific
+// host pool. Each row represents one scaling evaluation cycle and shows why
+// the scaler made its decision (drain, deallocate, scale-out, etc.).
+//
+// HOW IT WORKS:
+// 1. Query WVDAutoscaleEvaluationPooled - written by the AVD autoscale service
+//    each time it evaluates whether to scale the host pool up or down
+// 2. Filter by HostPoolName for the selected host pool (case-insensitive)
+// 3. Order by ScalingEvaluationStartTime descending (most recent first)
+// 4. Project only the columns shown in the dashboard popup
+//
+// PLACEHOLDERS (replaced at runtime by PowerShell):
+//   {{HostPool}} - host pool display name (case-insensitive match)
+//
+// OUTPUT COLUMNS: EvaluationTime, HostPool, Schedule, Phase, Reason
+// =============================================================================
+
+WVDAutoscaleEvaluationPooled
+| where TimeGenerated > ago(24h)
+| where _ResourceId endswith "/{{HostPool}}"
+| order by ScalingEvaluationStartTime desc
+| project
+    EvaluationTime = format_datetime(ScalingEvaluationStartTime, 'yyyy-MM-dd HH:mm:ss'),
+    HostPool       = tostring(split(_ResourceId, '/')[array_length(split(_ResourceId, '/')) - 1]),
+    Schedule       = ConfigScheduleName,
+    Phase          = ConfigSchedulePhase,
+    Reason         = ScalingReasonMessage

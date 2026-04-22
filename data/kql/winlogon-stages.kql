@@ -1,0 +1,97 @@
+// =============================================================================
+// winlogon-stages.kql - Winlogon Stages breakdown for AVD connections
+// =============================================================================
+//
+// SOURCE: Adapted from the AVD Insights workbook "Winlogon stages" view.
+//
+// WHAT IT DOES:
+// Breaks down the logon process into individual stages and calculates
+// P50 (median) and P95 duration for each stage across all connections.
+//
+// HOW IT WORKS:
+// 1. Start from WVDConnections (State == "Connected") for the time range
+// 2. Filter to connections that reached RdpStackConnectionEstablished
+//    (excludes failed connections that never reached the session host)
+// 3. Filter to new sessions only (LoadBalanceOutcome == "NewSession"),
+//    excluding reconnections to existing sessions
+// 4. Join to the "LogonDelay" checkpoint in WVDCheckpoints - this checkpoint
+//    contains per-stage timing in its Parameters bag as key-value pairs:
+//      Key   = internal stage name (e.g. "WinLogon_Logon_GPClient")
+//      Value = duration in milliseconds
+// 5. Remove non-timing keys (LogonType, WinLogonPid) from Parameters
+// 6. mv-expand the Parameters bag into individual rows (one per stage)
+// 7. Rename internal stage names to friendly display labels:
+//      frxsvc              -> FSLogix       (FSLogix profile container load)
+//      GPClient            -> Group policy  (Group Policy processing)
+//      WinLogon_StartShell -> Shell         (Windows shell initialisation)
+//      AuthenticateUser    -> User Auth.    (User credential authentication)
+//      everything else     -> Others        (miscellaneous logon tasks)
+// 8. Sum time per stage per user/session (handles multiple sub-stages)
+// 9. Calculate P50 and P95 percentiles across all users/sessions
+//
+// PLACEHOLDERS (replaced at runtime by PowerShell):
+//   {{TimeRange}}      - KQL ago() duration string (e.g. "24h", "48h", "7d")
+//   {{HostPoolFilter}} - Optional where clause to filter by host pool, or empty
+//
+// OUTPUT COLUMNS: Stage (string), P50 (real), P95 (real), Samples (long)
+// =============================================================================
+
+let newSessions = true;
+let renameStage = (stage: string) {
+    case(
+    stage =~ "frxsvc",
+    "FSLogix",
+    stage =~ "GPClient",
+    "Group policy",
+    stage =~ "WinLogon_StartShell",
+    "Shell",
+    stage =~ "AuthenticateUser",
+    "User Auth.",
+    "Others"
+)
+};
+WVDConnections
+| where State == "Connected"
+| where TimeGenerated > ago({{TimeRange}})
+{{HostPoolFilter}}
+| join kind = leftsemi
+    (
+    // Only include connections that actually reached the host to prevent
+    // short (failed) attempts from skewing the data
+    WVDCheckpoints
+    | where Source == "RDStack" and Name == "RdpStackConnectionEstablished"
+    )
+    on CorrelationId
+| join kind = leftsemi
+    (
+    // Filter to new sessions (not reconnections) via the load balancer checkpoint
+    WVDCheckpoints
+    | where Name == "LoadBalancedNewConnection"
+    | extend LoadBalanceOutcome=Parameters.LoadBalanceOutcome
+    | where (newSessions and LoadBalanceOutcome == "NewSession") or (not(newSessions) and LoadBalanceOutcome in ('Disconnected', 'Active'))
+    )
+    on CorrelationId
+| project TimeGenerated, CorrelationId, UserName, SessionHostName
+| join kind=inner
+    (
+    // The LogonDelay checkpoint contains per-stage timing in its Parameters bag.
+    // Each key is a stage name, each value is duration in milliseconds.
+    WVDCheckpoints
+    | where Name == "LogonDelay"
+    )
+    on CorrelationId
+| extend
+    Type = tostring(Parameters.LogonType),
+    // Remove non-timing keys so mv-expand only produces stage rows
+    Parameters = bag_remove_keys(Parameters, dynamic(["LogonType", "WinLogonPid"]))
+// Expand the Parameters bag: each key-value pair becomes its own row
+| mv-expand bagexpansion=array Parameters
+| extend Stage = tostring(Parameters[0]), Time = toreal(Parameters[1]) / 1000
+// Exclude the total/aggregate rows - we want individual stages only
+| where Stage != "WinLogon_Total" and Stage != "WinLogon_Logon"
+// Rename internal stage names to friendly display labels
+| extend Stage = renameStage(trim_start("WinLogon_Logon_", Stage))
+// Sum time per stage per user/session (some stages have sub-components)
+| summarize Time=sum(Time), TimeGenerated=min(TimeGenerated) by Stage, UserName, SessionHostName, _ResourceId
+// Calculate P50 (median) and P95 percentiles across all user sessions
+| summarize P50 = round(percentile(Time, 50), 1), P95 = round(percentile(Time, 95), 1), Samples = count() by Stage

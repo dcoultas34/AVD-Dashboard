@@ -1,0 +1,27 @@
+// =============================================================================
+// winlogon-hostpools.kql - Distinct host pool names for dropdown filter
+// =============================================================================
+//
+// WHAT IT DOES:
+// Returns a list of distinct host pool names that have had connections in the
+// last 7 days. Used to populate the host pool filter ComboBox in the
+// Monitoring tab. Uses a 7-day window (regardless of the chart time range)
+// to catch pools that might not have had connections in the last 24h.
+//
+// HOW IT WORKS:
+// 1. Query WVDConnections for "Started" connections in the last 7 days
+// 2. Extract the host pool name from _ResourceId (the 9th segment, index 8,
+//    of the ARM resource path: /subscriptions/.../hostPools/{name})
+// 3. Return distinct names sorted alphabetically
+//
+// NO PLACEHOLDERS - this query always uses a fixed 7-day window.
+//
+// OUTPUT COLUMNS: HostPool (string)
+// =============================================================================
+
+WVDConnections
+| where TimeGenerated > ago(7d)
+| where State == "Started"
+| extend HostPool = tostring(split(_ResourceId, '/')[8])
+| distinct HostPool
+| order by HostPool asc

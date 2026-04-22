@@ -1,0 +1,239 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.5.2 Chrome/142.0.7444.265 Electron/39.6.1 Safari/537.36" version="29.5.2">
+  <diagram id="avd-dashboard-architecture" name="AVD Dashboard - Architecture">
+    <mxGraphModel dx="2265" dy="749" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ── Top-level config / data files ── -->
+        <mxCell id="cfg" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=12;arcSize=8;" value="&lt;b&gt;config/config.psd1&lt;/b&gt;&lt;br/&gt;&lt;font style=&#39;font-size:10px&#39;&gt;Environment configuration - shared by all entry points&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="260" x="530" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="cfg-example" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontColor=#666666;fontSize=10;arcSize=8;dashed=1;" value="config/EXAMPLE-config.psd1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Redacted template for source control&lt;/font&gt;" vertex="1">
+          <mxGeometry height="45" width="200" x="810" y="25" as="geometry" />
+        </mxCell>
+        <mxCell id="runcmds" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=11;arcSize=8;" value="&lt;b&gt;data/run-commands.psd1&lt;/b&gt;&lt;br/&gt;&lt;font style=&#39;font-size:10px&#39;&gt;Run Command definitions + data/runcommands/*.ps1 scripts&lt;/font&gt;" vertex="1">
+          <mxGeometry height="50" width="240" x="270" y="22" as="geometry" />
+        </mxCell>
+
+        <!-- ── avd-live-dashboard.ps1 swimlane ── -->
+        <mxCell id="dash-sw" parent="1" style="swimlane;fontStyle=1;fontSize=13;align=center;fillColor=#dae8fc;strokeColor=#6c8ebf;startSize=42;arcSize=4;" value="avd-live-dashboard.ps1" vertex="1">
+          <mxGeometry height="770" width="490" x="20" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="dash-hdr" parent="dash-sw" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontStyle=2;fontSize=10;fontColor=#6c8ebf;" value="Dot-sourced at startup (XAML + lifecycle functions)" vertex="1">
+          <mxGeometry height="16" width="470" x="10" y="50" as="geometry" />
+        </mxCell>
+
+        <!-- Shared helpers (yellow) -->
+        <mxCell id="t-rest" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" value="scripts/rest-api-helpers.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Invoke-Arm, Get-ArmToken, Write-Log, Set-WindowIcon&lt;/font&gt;" vertex="1">
+          <mxGeometry height="42" width="470" x="10" y="72" as="geometry" />
+        </mxCell>
+        <mxCell id="t-audit" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" value="scripts/audit-log.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Write-AuditLog - CSV audit trail for destructive actions&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="470" x="10" y="120" as="geometry" />
+        </mxCell>
+
+        <!-- Tab modules (white/blue border) -->
+        <mxCell id="t-sh" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" value="scripts/tab-sessionhosts.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Session Hosts tab - VM power state, metrics, disk IOPS, costs, context menu (RDP / C$ / Run Command)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="42" width="470" x="10" y="166" as="geometry" />
+        </mxCell>
+        <mxCell id="t-cost" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" value="scripts/cost-lookup.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Azure Retail Prices API (no auth) - Compute / Disk / Txn GBP/mo columns&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="470" x="10" y="214" as="geometry" />
+        </mxCell>
+        <mxCell id="t-si" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" value="scripts/tab-sessioninfo.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Session History tab - LAW queries, Unique Users popup, session detail drill-down&lt;/font&gt;" vertex="1">
+          <mxGeometry height="42" width="470" x="10" y="256" as="geometry" />
+        </mxCell>
+        <mxCell id="t-af" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" value="scripts/tab-azurefiles.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Azure Files tab - share/snapshot management, quota, profile metrics&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="470" x="10" y="304" as="geometry" />
+        </mxCell>
+        <mxCell id="t-mon" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" value="scripts/tab-monitoring.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Monitoring tab - Log Analytics alerts, threshold rules&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="470" x="10" y="346" as="geometry" />
+        </mxCell>
+        <mxCell id="t-inf" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" value="scripts/tab-infrastructure.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Infrastructure tab - non-AVD VMs, power actions, Per Host Pool grid, Scaling Plan History&lt;/font&gt;" vertex="1">
+          <mxGeometry height="42" width="470" x="10" y="388" as="geometry" />
+        </mxCell>
+        <mxCell id="t-ado" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" value="scripts/tab-azuredevops.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Azure DevOps tab - pipeline run status (PAT auth, DPAPI-encrypted)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="470" x="10" y="436" as="geometry" />
+        </mxCell>
+
+        <!-- Popup / utility modules -->
+        <mxCell id="t-sd" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f4fd;strokeColor=#6c8ebf;fontSize=11;" value="scripts/session-detail.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Session detail popup, Send Message, Shadow/RDP. Dot-sources session-history.ps1&lt;/font&gt;" vertex="1">
+          <mxGeometry height="42" width="470" x="10" y="482" as="geometry" />
+        </mxCell>
+        <mxCell id="t-hist" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f4fd;strokeColor=#6c8ebf;fontSize=11;" value="scripts/session-history.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Session History popup - LAW drill-down from session-detail.ps1&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="470" x="10" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="t-rc" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f4fd;strokeColor=#6c8ebf;fontSize=11;" value="scripts/run-command.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Run Command picker, execution &amp;amp; output (loads data/run-commands.psd1)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="470" x="10" y="572" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dash-az-note" parent="dash-sw" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=10;fontColor=#6c8ebf;" value="&lt;i&gt;All modules query Azure via Invoke-Arm (rest-api-helpers.ps1) from background runspaces.&lt;br/&gt;Only Az.Accounts is required (token acquisition). cost-lookup.ps1 uses public REST (no auth).&lt;/i&gt;" vertex="1">
+          <mxGeometry height="36" width="470" x="10" y="618" as="geometry" />
+        </mxCell>
+
+        <!-- Legend for popup scripts -->
+        <mxCell id="legend-tab" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=9;" value="Tab module" vertex="1">
+          <mxGeometry height="20" width="90" x="10" y="662" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-popup" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f4fd;strokeColor=#6c8ebf;fontSize=9;" value="Popup / utility" vertex="1">
+          <mxGeometry height="20" width="90" x="110" y="662" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-helper" parent="dash-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" value="Shared helper" vertex="1">
+          <mxGeometry height="20" width="90" x="210" y="662" as="geometry" />
+        </mxCell>
+
+        <!-- ── profile-tools.ps1 swimlane ── -->
+        <mxCell id="prof-sw" parent="1" style="swimlane;fontStyle=1;fontSize=13;align=center;fillColor=#d5e8d4;strokeColor=#82b366;startSize=42;arcSize=4;" value="profile-tools.ps1" vertex="1">
+          <mxGeometry height="560" width="380" x="1060" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="prof-hdr" parent="prof-sw" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontStyle=2;fontSize=10;fontColor=#82b366;" value="Background workers (Start-Job, inherits Windows credentials for UNC)" vertex="1">
+          <mxGeometry height="16" width="360" x="10" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="pw-rest" parent="prof-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" value="scripts/rest-api-helpers.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Dot-sourced for Invoke-Arm / Get-ArmToken&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="360" x="10" y="72" as="geometry" />
+        </mxCell>
+        <mxCell id="pw-store" parent="prof-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" value="scripts/storage-api-helpers.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Injected as string into runspaces - Azure Files SharedKey auth&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="360" x="10" y="114" as="geometry" />
+        </mxCell>
+        <mxCell id="pw-sz" parent="prof-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" value="scripts/profile-sizes.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Enumerate FSLogix profile sizes via Azure Files REST&lt;/font&gt;" vertex="1">
+          <mxGeometry height="40" width="360" x="10" y="162" as="geometry" />
+        </mxCell>
+        <mxCell id="pw-cl" parent="prof-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" value="scripts/profile-cleanup.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Archive/remove orphaned profiles&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="360" x="10" y="212" as="geometry" />
+        </mxCell>
+        <mxCell id="pw-d1" parent="prof-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" value="scripts/profile-delete-check.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Phase 1 - active lock &amp;amp; handle detection&lt;/font&gt;" vertex="1">
+          <mxGeometry height="40" width="360" x="10" y="258" as="geometry" />
+        </mxCell>
+        <mxCell id="pw-d2" parent="prof-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" value="scripts/profile-delete-unlock.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Phase 2 - close handles, remove lock files&lt;/font&gt;" vertex="1">
+          <mxGeometry height="40" width="360" x="10" y="308" as="geometry" />
+        </mxCell>
+        <mxCell id="pw-d3" parent="prof-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" value="scripts/profile-delete-remove.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Phase 3 - delete profile folders via UNC&lt;/font&gt;" vertex="1">
+          <mxGeometry height="40" width="360" x="10" y="358" as="geometry" />
+        </mxCell>
+        <mxCell id="prof-az-note" parent="prof-sw" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=10;fontColor=#82b366;" value="&lt;i&gt;Phases 1-3 are run sequentially as separate background jobs.&lt;br/&gt;storage-api-helpers.ps1 injected as string (not dot-sourced) into each runspace.&lt;/i&gt;" vertex="1">
+          <mxGeometry height="36" width="360" x="10" y="408" as="geometry" />
+        </mxCell>
+
+        <!-- ── Standalone Tools swimlane ── -->
+        <mxCell id="tools-sw" parent="1" style="swimlane;fontStyle=1;fontSize=13;align=center;fillColor=#e1d5e7;strokeColor=#9673a6;startSize=42;arcSize=4;" value="Standalone Tools &amp; Utilities" vertex="1">
+          <mxGeometry height="510" width="380" x="660" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="tools-hdr" parent="tools-sw" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontStyle=2;fontSize=10;fontColor=#9673a6;" value="Independent scripts (own process, own WPF window)" vertex="1">
+          <mxGeometry height="16" width="360" x="10" y="46" as="geometry" />
+        </mxCell>
+        <mxCell id="t-chk" parent="tools-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" value="scripts/Check-Permissions.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;RBAC role checker (per-storage-account validation)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="360" x="10" y="68" as="geometry" />
+        </mxCell>
+        <mxCell id="t-role" parent="tools-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" value="scripts/Create-DashboardRole.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Creates custom RBAC role &quot;AVD Dashboard Operator&quot; for minimal-privilege setup&lt;/font&gt;" vertex="1">
+          <mxGeometry height="40" width="360" x="10" y="114" as="geometry" />
+        </mxCell>
+        <mxCell id="t-edc" parent="tools-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" value="scripts/edit-config.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;WPF config editor (generates config.psd1)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="360" x="10" y="164" as="geometry" />
+        </mxCell>
+        <mxCell id="t-lv" parent="tools-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" value="tools/log-viewer.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Log file browser, error highlighting, tail mode&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="360" x="10" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="t-flv" parent="tools-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" value="tools/fslogix-log-viewer.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;FSLogix-specific log viewer with structured field parsing&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="360" x="10" y="256" as="geometry" />
+        </mxCell>
+        <mxCell id="t-av" parent="tools-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" value="tools/audit-viewer.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Audit log CSV viewer with date/action/text filters&lt;/font&gt;" vertex="1">
+          <mxGeometry height="36" width="360" x="10" y="302" as="geometry" />
+        </mxCell>
+        <mxCell id="t-els" parent="tools-sw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" value="tools/eventlog-summary.ps1&lt;br/&gt;&lt;font style=&#39;font-size:9px&#39;&gt;Windows Event Log browser (all channels, colour-coded errors/warnings, CSV export)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="40" width="360" x="10" y="348" as="geometry" />
+        </mxCell>
+
+        <!-- ── Storage / Persistence boxes ── -->
+        <mxCell id="appdata" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=11;arcSize=8;" value="&lt;b&gt;%APPDATA%\AVDDashboard&lt;/b&gt;&lt;br/&gt;&lt;font style=&#39;font-size:10px&#39;&gt;DPAPI-encrypted SP credential (dashboard) + ADO PAT (DevOps tab)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="280" x="20" y="940" as="geometry" />
+        </mxCell>
+        <mxCell id="az" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d6b656;fontStyle=1;fontSize=12;arcSize=8;" value="&lt;b&gt;Azure REST APIs&lt;/b&gt;&lt;br/&gt;&lt;font style=&#39;font-size:10px&#39;&gt;ARM (VMs, HostPools, SessionHosts, ScalingPlans) · Resource Graph · Log Analytics&lt;br/&gt;Azure Monitor Metrics · Azure Files · Azure DevOps · Azure Retail Prices (public)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="70" width="540" x="400" y="935" as="geometry" />
+        </mxCell>
+        <mxCell id="reg" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=11;arcSize=8;" value="&lt;b&gt;HKCU:\Software\AVDDashboard&lt;/b&gt;&lt;br/&gt;&lt;font style=&#39;font-size:10px&#39;&gt;Settings persistence (both entry points)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="260" x="1060" y="940" as="geometry" />
+        </mxCell>
+        <mxCell id="auditcsv" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=11;arcSize=8;" value="&lt;b&gt;audit.csv&lt;/b&gt;&lt;br/&gt;&lt;font style=&#39;font-size:10px&#39;&gt;Append-only CSV: logoff, drain, power, delete actions&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="240" x="20" y="886" as="geometry" />
+        </mxCell>
+
+        <!-- ── Edges: config reads ── -->
+        <mxCell id="e-cfg-dash" edge="1" parent="1" source="cfg" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=10;fontColor=#666666;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="dash-sw" value="reads on startup">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="265" y="47" />
+              <mxPoint x="265" y="110" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-cfg-prof" edge="1" parent="1" source="cfg" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=10;fontColor=#666666;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="prof-sw" value="reads on startup">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1250" y="47" />
+              <mxPoint x="1250" y="110" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-runcmds-dash" edge="1" parent="1" source="runcmds" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=10;fontColor=#666666;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.15;entryY=0;entryDx=0;entryDy=0;" target="dash-sw" value="loaded by run-command.ps1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="390" y="90" />
+              <mxPoint x="94" y="90" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Edges: inter-swimlane launches ── -->
+        <mxCell id="e-launch-prof" edge="1" parent="1" source="dash-sw" style="edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;fontSize=10;fontColor=#666666;exitX=1;exitY=0.45;exitDx=0;exitDy=0;entryX=0;entryY=0.45;entryDx=0;entryDy=0;" target="prof-sw" value="launches (Azure Files tab button)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-launch-tools" edge="1" parent="1" source="dash-sw" style="edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;fontSize=10;fontColor=#666666;exitX=1;exitY=0.6;exitDx=0;exitDy=0;entryX=0;entryY=0.6;entryDx=0;entryDy=0;" target="tools-sw" value="launches standalone tools">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ── Edges: Azure REST ── -->
+        <mxCell id="e-dash-az" edge="1" parent="1" source="dash-sw" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=10;fontColor=#d6b656;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.2;entryY=1;entryDx=0;entryDy=0;" target="az" value="REST API calls (Invoke-Arm, background runspaces)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="265" y="970" />
+              <mxPoint x="480" y="970" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-prof-az" edge="1" parent="1" source="prof-sw" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=10;fontColor=#d6b656;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.8;entryY=1;entryDx=0;entryDy=0;" target="az" value="REST API calls (Get-ArmToken + Invoke-Arm)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1250" y="970" />
+              <mxPoint x="860" y="970" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ── Edges: persistence ── -->
+        <mxCell id="e-dash-reg" edge="1" parent="1" source="dash-sw" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=10;fontColor=#666666;exitX=1;exitY=0.9;exitDx=0;exitDy=0;entryX=0;entryY=0;entryDx=0;entryDy=0;" target="reg" value="read/write settings">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="640" y="880" />
+              <mxPoint x="940" y="880" />
+              <mxPoint x="940" y="940" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-prof-reg" edge="1" parent="1" source="prof-sw" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=10;fontColor=#666666;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="reg" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-dash-appdata" edge="1" parent="1" source="dash-sw" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=10;fontColor=#666666;exitX=0;exitY=0.95;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="appdata" value="DPAPI encrypt/decrypt SP + ADO PAT">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-dash-audit" edge="1" parent="1" source="dash-sw" style="edgeStyle=orthogonalEdgeStyle;rounded=0;fontSize=10;fontColor=#666666;exitX=0;exitY=0.85;exitDx=0;exitDy=0;entryX=0;entryY=1;entryDx=0;entryDy=0;" target="auditcsv" value="Write-AuditLog (destructive actions)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-20" y="773" />
+              <mxPoint x="-20" y="941" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,59 @@
+// =============================================================================
+// Session History - Active and Disconnected concurrent sessions per time bin
+// =============================================================================
+//
+// DATA SOURCE: WVDAgentHealthStatus
+//   Written by each AVD session host agent every ~30 seconds. Each row is a
+//   health snapshot for one session host containing ActiveSessions and
+//   InactiveSessions counts at that exact moment.
+//
+// AGGREGATION METHOD (two-stage):
+//   Because each host writes a row every ~30 seconds, a single bin contains
+//   many nearly-identical rows per host. We cannot simply sum all rows.
+//
+//   Stage 1 - per host per bin:
+//     Use percentile(x, 100) which returns the maximum value for that host
+//     within the bin. This is equivalent to max() but operates correctly on
+//     the numeric column type without the arg_max type confusion seen in
+//     this LAW workspace version. Takes the peak reading per host per bin
+//     as a representative snapshot of that host's load.
+//
+//   Stage 2 - sum across all hosts:
+//     Sum the per-host peaks to get the fleet-wide total for each bin.
+//     This matches the Active/Disconnected counts on the Azure Portal host
+//     pool overview because it uses the same data source.
+//
+// HOST POOL FILTER:
+//   WVDAgentHealthStatus._ResourceId contains the full ARM path of the host pool.
+//   Segment 8 (zero-indexed, split by '/') is the host pool name.
+//   {{HostPoolFilter}} is replaced with a where clause or empty string.
+//
+// COLUMNS RETURNED:
+//   TimeGenerated  - start of each time bin (UTC)
+//   Active         - peak ActiveSessions per host summed across all hosts
+//   Disconnected   - peak InactiveSessions per host summed across all hosts
+//
+// PLACEHOLDERS:
+//   {{DisplayStart}}   - e.g. "ago(48h)" or "datetime(2026-04-01T00:00:00Z)"
+//   {{DisplayEnd}}     - e.g. "now()" or "datetime(2026-04-14T00:00:00Z)"
+//   {{BinSize}}        - e.g. "5m", "15m", "30m", "1h", "4h", "1d"
+//   {{HostPoolFilter}} - optional where clause, or empty string
+// =============================================================================
+
+// Stage 1: get the peak session count per host per bin using percentile(x,100).
+// percentile at 100th percentile = maximum value, but returns correct numeric
+// type unlike arg_max which returns the timestamp value in this LAW version.
+WVDAgentHealthStatus
+| where TimeGenerated >= {{DisplayStart}} and TimeGenerated <= {{DisplayEnd}}
+{{HostPoolFilter}}
+| extend BinTime = bin(TimeGenerated, {{BinSize}})
+| summarize
+    Active       = toint(percentile(toint(ActiveSessions),   100)),
+    Disconnected = toint(percentile(toint(InactiveSessions), 100))
+  by SessionHostName, BinTime
+// Stage 2: sum the per-host peaks across all hosts to get fleet-wide totals
+| summarize
+    Active       = sum(Active),       // users actively at keyboard
+    Disconnected = sum(Disconnected)  // sessions alive but user disconnected
+  by TimeGenerated = BinTime
+| order by TimeGenerated desc

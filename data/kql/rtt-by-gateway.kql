@@ -1,0 +1,49 @@
+// =============================================================================
+// rtt-by-gateway.kql - Round-Trip Time statistics by Azure gateway region
+// =============================================================================
+//
+// WHAT IT DOES:
+// Shows RTT (round-trip time) statistics grouped by the Azure RD Gateway region
+// that each user connected through. Helps identify network latency issues
+// affecting specific regions.
+//
+// HOW IT WORKS:
+// 1. Start from WVDConnectionNetworkData which contains per-sample RTT
+//    measurements (EstRoundTripTimeInMs) for each active connection
+// 2. Filter to valid RTT values (non-null, > 0)
+// 3. Join to WVDConnections (State == "Connected") to get:
+//    - GatewayRegion: the Azure region of the RD Gateway the user connected through
+//    - UserName: for counting distinct users per region
+// 4. The join uses CorrelationId which links network samples to their connection
+// 5. Aggregate per GatewayRegion:
+//    - Users:  distinct count of unique users
+//    - Median: 50th percentile RTT in ms (typical experience)
+//    - P95:    95th percentile RTT in ms (worst-case excluding outliers)
+//    - Peak:   absolute maximum RTT observed (single worst sample)
+//    - PeakTime: timestamp when the peak RTT was recorded
+// 6. arg_max(EstRoundTripTimeInMs, TimeGenerated) captures both the peak
+//    value and when it occurred in a single aggregation
+//
+// PLACEHOLDERS (replaced at runtime by PowerShell):
+//   {{TimeRange}} - KQL ago() duration string (e.g. "24h", "48h", "7d")
+//
+// OUTPUT COLUMNS: GatewayRegion, Users, Median, P95, Peak, PeakTime
+// =============================================================================
+
+WVDConnectionNetworkData
+| where TimeGenerated > ago({{TimeRange}})
+| where isnotnull(EstRoundTripTimeInMs) and EstRoundTripTimeInMs > 0
+| join kind=inner (
+    WVDConnections
+    | where TimeGenerated > ago({{TimeRange}})
+    | where State == "Connected"
+    | project CorrelationId, GatewayRegion, UserName
+) on CorrelationId
+| summarize
+    Users  = dcount(UserName),
+    Median = round(percentile(EstRoundTripTimeInMs, 50), 0),
+    P95    = round(percentile(EstRoundTripTimeInMs, 95), 0),
+    arg_max(EstRoundTripTimeInMs, TimeGenerated)
+    by GatewayRegion
+| project GatewayRegion, Users, Median, P95, Peak = round(EstRoundTripTimeInMs, 0), PeakTime = TimeGenerated
+| order by Users desc
