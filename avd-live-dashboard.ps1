@@ -132,7 +132,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-04-20
+    Version       : 2026-04-23
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -166,7 +166,7 @@ param(
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-04-16"
+$ScriptVersion = "2026-04-23"
 
 # =============================================================================
 # Customer / Environment Configuration
@@ -932,14 +932,16 @@ $dataScript = {
         }
     }
 
-    # Build hostpool-name -> scaling plan enabled map
-    $hpScalingMap = @{}
+    # Build hostpool-name -> scaling plan enabled map and ARM resource ID map
+    $hpScalingMap       = @{}
+    $hpScalingPlanIdMap = @{}
     if ($allScalingPlans) {
         foreach ($sp in $allScalingPlans) {
             foreach ($ref in $sp.properties.hostPoolReferences) {
                 $hpKey = $ref.hostPoolArmPath.Split("/")[-1]
                 if (-not $hpScalingMap.ContainsKey($hpKey) -or $ref.scalingPlanEnabled) {
-                    $hpScalingMap[$hpKey] = [bool]$ref.scalingPlanEnabled
+                    $hpScalingMap[$hpKey]       = [bool]$ref.scalingPlanEnabled
+                    $hpScalingPlanIdMap[$hpKey] = [string]$sp.id
                 }
             }
         }
@@ -1086,6 +1088,7 @@ $dataScript = {
                 "Network Access" = if ($hpNetworkMap[$hpName]) { $hpNetworkMap[$hpName] } else { "Public" } # publicNetworkAccess: Public / Private / Hosts Only / Clients Only
                 "Host Pool RG"   = $hpRg                                                                # Resource group of the host pool resource
                 "_VMRG"          = ""                                                                   # Session host VM resource group (empty — no VMs)
+                "_ScalingPlanId" = if ($hpScalingPlanIdMap.ContainsKey($hpName)) { $hpScalingPlanIdMap[$hpName] } else { '' } # ARM resource ID of the attached scaling plan
                 "Scope"          = if ($hpScopeMap[$hpName]) { $hpScopeMap[$hpName] } else { "Geographical" } # Deployment scope: Geographical or Regional (preview API)
                 "HP Location"    = if ($hpLocationMap[$hpName]) { $hpLocationMap[$hpName] } else { "" } # Azure region where the host pool resource itself is deployed
             })
@@ -1191,6 +1194,7 @@ $dataScript = {
                 "Network Access" = if ($hpNetworkMap[$hpName]) { $hpNetworkMap[$hpName] } else { "Public" } # publicNetworkAccess: Public / Private / Hosts Only / Clients Only
                 "Host Pool RG"   = $hpRg                                                                # Resource group of the host pool resource
                 "_VMRG"          = $grp.Name                                                            # Session host VM resource group
+                "_ScalingPlanId" = if ($hpScalingPlanIdMap.ContainsKey($hpName)) { $hpScalingPlanIdMap[$hpName] } else { '' } # ARM resource ID of the attached scaling plan
                 "Scope"          = if ($hpScopeMap[$hpName]) { $hpScopeMap[$hpName] } else { "Geographical" } # Deployment scope: Geographical or Regional (preview API)
                 "HP Location"    = if ($hpLocationMap[$hpName]) { $hpLocationMap[$hpName] } else { "" } # Azure region where the host pool resource itself is deployed
             })
@@ -2083,7 +2087,7 @@ Set-SplashStatus "Configuring grid styles and layout..." -Progress 96
 
 $script:PoolGrid.Add_AutoGeneratingColumn({
     param($s, $e)
-    if ($e.Column.Header -in @('_IsSecondary', '_VMRG', '_RGVMDiff')) { $e.Cancel = $true; return }
+    if ($e.Column.Header -in @('_IsSecondary', '_VMRG', '_RGVMDiff', '_ScalingPlanId')) { $e.Cancel = $true; return }
     # Hide RG VMs column when the feature is disabled — no data is collected so the column would be empty
     if (-not $script:ShowRGVMCount -and $e.Column.Header -eq 'RG VMs') { $e.Cancel = $true; return }
     if ($script:HiddenColumns.Count -gt 0 -and $e.Column.Header -in $script:HiddenColumns) { $e.Cancel = $true; return }
@@ -2190,6 +2194,56 @@ $selectedTrigger.Value    = $true
 [void]$poolRowStyle.Triggers.Add($hoverTrigger)
 [void]$poolRowStyle.Triggers.Add($selectedTrigger)
 $script:PoolGrid.RowStyle = $poolRowStyle
+
+# =============================================================================
+# PoolGrid - Context menu: Enable / Disable Scaling Plan
+# =============================================================================
+
+function Invoke-PoolScalingPlanToggle {
+    param([string]$HostPoolName, [string]$ScalingPlanId, [bool]$Enable)
+
+    $parts  = $ScalingPlanId.Split('/')
+    $spSub  = $parts[2]
+    $spRg   = $parts[4]
+    $spName = $parts[-1]
+    $verb   = if ($Enable) { 'Enabling' } else { 'Disabling' }
+    $noun   = if ($Enable) { 'enabled'  } else { 'disabled'  }
+
+    $current = Invoke-ArmRestMethod `
+        -Path "/subscriptions/$spSub/resourceGroups/$spRg/providers/Microsoft.DesktopVirtualization/scalingPlans/$spName" `
+        -Token $script:armToken -ApiVersion $script:ApiVersions.DesktopVirtualization -FullResponse
+
+    if (-not $current -or -not $current.properties.hostPoolReferences) {
+        [System.Windows.MessageBox]::Show("Could not retrieve scaling plan '$spName'.", 'Error', 'OK', 'Error')
+        return
+    }
+
+    $refs = @($current.properties.hostPoolReferences | ForEach-Object {
+        $hpKey = $_.hostPoolArmPath.Split('/')[-1]
+        [PSCustomObject]@{
+            hostPoolArmPath    = $_.hostPoolArmPath
+            scalingPlanEnabled = if ($hpKey -eq $HostPoolName) { $Enable } else { [bool]$_.scalingPlanEnabled }
+        }
+    })
+
+    $body = @{ properties = @{ hostPoolReferences = $refs } }
+
+    $resp = Invoke-ArmRestMethod -Method PATCH `
+        -Path "/subscriptions/$spSub/resourceGroups/$spRg/providers/Microsoft.DesktopVirtualization/scalingPlans/$spName" `
+        -Token $script:armToken -ApiVersion $script:ApiVersions.DesktopVirtualization `
+        -Body $body -FullResponse
+
+    if ($resp -and $resp.id) {
+        $selItem = $script:PoolGrid.SelectedItem
+        if ($selItem) {
+            $selItem['Scaling Plan'] = if ($Enable) { 'Yes' } else { 'No' }
+            $script:PoolGrid.Items.Refresh()
+        }
+        [System.Windows.MessageBox]::Show("Scaling plan '$spName' $noun for host pool '$HostPoolName'.", "$verb Scaling Plan", 'OK', 'Information')
+    } else {
+        [System.Windows.MessageBox]::Show("Failed to update scaling plan '$spName'. Check token/permissions.", 'Error', 'OK', 'Error')
+    }
+}
 
 # =============================================================================
 # PoolGrid - Context menu: Scaling Plan History
@@ -2501,11 +2555,14 @@ function Show-StartVmHistory {
 
 # ── PoolGrid context menu wiring ───────────────────────────────────────────
 $poolCtxMenu   = New-Object System.Windows.Controls.ContextMenu
+$menuPoolToggleScaling     = New-Object System.Windows.Controls.MenuItem
+$menuPoolToggleScaling.Header = "Toggle Scaling Plan"
+[void]$poolCtxMenu.Items.Add($menuPoolToggleScaling)
+$menuPoolSep1    = New-Object System.Windows.Controls.Separator
+[void]$poolCtxMenu.Items.Add($menuPoolSep1)
 $menuPoolScale = New-Object System.Windows.Controls.MenuItem
 $menuPoolScale.Header = "Scaling Plan History (24h)"
 [void]$poolCtxMenu.Items.Add($menuPoolScale)
-$menuPoolSep1    = New-Object System.Windows.Controls.Separator
-[void]$poolCtxMenu.Items.Add($menuPoolSep1)
 $menuPoolStartVm = New-Object System.Windows.Controls.MenuItem
 $menuPoolStartVm.Header = "Start VM History (24h)"
 [void]$poolCtxMenu.Items.Add($menuPoolStartVm)
@@ -2526,8 +2583,12 @@ $script:PoolGrid.Add_PreviewMouseRightButtonDown({
 $script:PoolGrid.Add_ContextMenuOpening({
     $sel    = @($script:PoolGrid.SelectedItems)
     $hasOne = $sel.Count -gt 0 -and $null -ne $sel[0]
-    $menuPoolScale.IsEnabled   = $hasOne
-    $menuPoolStartVm.IsEnabled = $hasOne
+    $menuPoolScale.IsEnabled         = $hasOne
+    $menuPoolStartVm.IsEnabled       = $hasOne
+    $hasScalingPlan = $hasOne -and -not [string]::IsNullOrWhiteSpace([string]$sel[0]['_ScalingPlanId'])
+    $scalingEnabled = $hasOne -and ([string]$sel[0]['Scaling Plan'] -eq 'Yes')
+    $menuPoolToggleScaling.IsEnabled = $hasScalingPlan
+    $menuPoolToggleScaling.Header    = if ($scalingEnabled) { 'Disable Scaling Plan' } else { 'Enable Scaling Plan' }
 }.GetNewClosure())
 
 $menuPoolScale.Add_Click({
@@ -2540,6 +2601,13 @@ $menuPoolStartVm.Add_Click({
     $sel = @($script:PoolGrid.SelectedItems)
     if ($sel.Count -eq 0 -or $null -eq $sel[0]) { return }
     Show-StartVmHistory -HostPool ([string]$sel[0]['Host Pool']) -VmRg ([string]$sel[0]['_VMRG'])
+}.GetNewClosure())
+
+$menuPoolToggleScaling.Add_Click({
+    $sel = @($script:PoolGrid.SelectedItems)
+    if ($sel.Count -eq 0 -or $null -eq $sel[0]) { return }
+    $enable = ([string]$sel[0]['Scaling Plan'] -ne 'Yes')
+    Invoke-PoolScalingPlanToggle -HostPoolName ([string]$sel[0]['Host Pool']) -ScalingPlanId ([string]$sel[0]['_ScalingPlanId']) -Enable $enable
 }.GetNewClosure())
 
 $script:PoolGrid.ContextMenu = $poolCtxMenu

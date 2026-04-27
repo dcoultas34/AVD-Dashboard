@@ -1,5 +1,17 @@
 # AVD Live Dashboard - Changelog
 
+## 2026-04-23
+- Session Hosts tab: power action skip logic now uses the Azure `Power State` column
+  (Running / Deallocated / Stopped from Resource Graph) instead of the AVD `Status`
+  column. Start skips Running VMs; Deallocate/Restart skips Deallocated/Stopped VMs.
+
+## 2026-04-22
+- Per Host Pool tab: added "Enable Scaling Plan" / "Disable Scaling Plan" right-click
+  menu items. Items are greyed out when the pool has no scaling plan attached. The
+  correct item is enabled based on the current state (only Enable shown when disabled,
+  only Disable shown when enabled). Calls ARM PATCH to update the scaling plan's
+  hostPoolReferences array; grid cell updates immediately on success.
+
 ## 2026-04-20
 - Per Host Pool tab: RG VMs red cell colour now preserved when the row is
   selected. Switched from a default-setter approach (overridden by the inherited

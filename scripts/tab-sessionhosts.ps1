@@ -4423,7 +4423,7 @@ function Initialize-SessionHostsTab {
         catch {
             [System.Windows.MessageBox]::Show("Failed to open C$ share: $_", "Error", "OK", "Error") | Out-Null
         }
-    }.GetNewClosure())
+    })
 
     # Firewall requirements for remote Event Viewer:
     #   TCP 135  — RPC Endpoint Mapper (required)
@@ -4446,7 +4446,7 @@ function Initialize-SessionHostsTab {
         catch {
             [System.Windows.MessageBox]::Show("Failed to open Event Viewer: $_", "Error", "OK", "Error") | Out-Null
         }
-    }.GetNewClosure())
+    })
 
     $menuSHRunCmd.Add_Click({
         try {
@@ -4649,7 +4649,7 @@ function Invoke-SessionHostsPowerAction {
     # using column name as the key. _RG is the hidden resource group column.
     # Power State is also captured so we can skip VMs already in the target state.
     $targets = @(foreach ($item in $script:SHGrid.SelectedItems) {
-        [PSCustomObject]@{ Name = [string]$item['VM Name']; RG = [string]$item['_RG']; PowerState = [string]$item['Status'] }
+        [PSCustomObject]@{ Name = [string]$item['VM Name']; RG = [string]$item['_RG']; PowerState = [string]$item['Power State'] }
     })
     if ($targets.Count -eq 0) { return }
 
@@ -4660,12 +4660,12 @@ function Invoke-SessionHostsPowerAction {
     $skipped  = @()
     $original = $targets
     if ($Action -eq 'Deallocate' -or $Action -eq 'Restart') {
-        $skipped = @($targets | Where-Object { $_.PowerState -eq 'Shutdown' })
-        $targets = @($targets | Where-Object { $_.PowerState -ne 'Shutdown' })
+        $skipped = @($targets | Where-Object { $_.PowerState -in @('Deallocated','Stopped') })
+        $targets = @($targets | Where-Object { $_.PowerState -notin @('Deallocated','Stopped') })
     }
     elseif ($Action -eq 'Start') {
-        $skipped = @($targets | Where-Object { $_.PowerState -eq 'Available' })
-        $targets = @($targets | Where-Object { $_.PowerState -ne 'Available' })
+        $skipped = @($targets | Where-Object { $_.PowerState -eq 'Running' })
+        $targets = @($targets | Where-Object { $_.PowerState -ne 'Running' })
     }
 
     # If all selected VMs are already in the target state, inform the user and exit

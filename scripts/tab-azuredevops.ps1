@@ -412,6 +412,95 @@ function _ADO_GetAuthHeader {
 # Use [System.Windows.Window]::GetWindow($element) to get it from any child.
 # =============================================================================
 
+function Show-AdoRunningPopup {
+    param([System.Windows.Window]$OwnerWindow)
+
+    $running = @($script:adoLastRuns | Where-Object {
+        [string]$_.'Status' -eq 'inProgress' -or [string]$_.'Status' -eq 'notStarted'
+    })
+
+    $dlg = New-Object System.Windows.Window
+    $dlg.Title  = "Running Pipelines ($($running.Count))"
+    $dlg.Width  = 780
+    $dlg.Height = 420
+    $dlg.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterOwner
+    $dlg.Owner  = $OwnerWindow
+    $dlg.ResizeMode   = [System.Windows.ResizeMode]::CanResize
+    $dlg.Background   = [System.Windows.Media.Brushes]::White
+    try { Set-WindowIcon -Window $dlg -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+
+    $sp = New-Object System.Windows.Controls.DockPanel
+    $sp.LastChildFill = $true
+
+    # Header
+    $hdr = New-Object System.Windows.Controls.TextBlock
+    $hdr.Text       = if ($running.Count -eq 0) { 'No pipelines currently running.' } else { "$($running.Count) pipeline(s) in progress" }
+    $hdr.FontSize   = 13
+    $hdr.FontWeight = [System.Windows.FontWeights]::SemiBold
+    $hdr.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0,120,212)
+    $hdr.Margin     = [System.Windows.Thickness]::new(16,14,16,10)
+    [System.Windows.Controls.DockPanel]::SetDock($hdr, [System.Windows.Controls.Dock]::Top)
+    [void]$sp.Children.Add($hdr)
+
+    # Close button row
+    $btnRow = New-Object System.Windows.Controls.StackPanel
+    $btnRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $btnRow.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
+    $btnRow.Margin = [System.Windows.Thickness]::new(0,8,16,12)
+    [System.Windows.Controls.DockPanel]::SetDock($btnRow, [System.Windows.Controls.Dock]::Bottom)
+    $closeBtn = New-Object System.Windows.Controls.Button
+    $closeBtn.Content = 'Close'; $closeBtn.Padding = [System.Windows.Thickness]::new(16,6,16,6)
+    $closeBtn.FontSize = 12; $closeBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $closeBtn.Add_Click({ $dlg.Close() })
+    [void]$btnRow.Children.Add($closeBtn)
+    [void]$sp.Children.Add($btnRow)
+
+    if ($running.Count -gt 0) {
+        $grid = New-Object System.Windows.Controls.DataGrid
+        $grid.AutoGenerateColumns    = $false
+        $grid.IsReadOnly             = $true
+        $grid.CanUserSortColumns     = $true
+        $grid.GridLinesVisibility    = [System.Windows.Controls.DataGridGridLinesVisibility]::Horizontal
+        $grid.AlternationCount       = 2
+        $grid.Margin                 = [System.Windows.Thickness]::new(8,0,8,0)
+        $grid.FontSize               = 12
+        $grid.HorizontalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Auto
+
+        foreach ($colDef in @(
+            @{ Header = 'Pipeline';      Binding = 'Pipeline';      Width = 220 }
+            @{ Header = 'Run #';         Binding = 'Run #';         Width = 60  }
+            @{ Header = 'Status';        Binding = 'Status';        Width = 90  }
+            @{ Header = 'Branch';        Binding = 'Branch';        Width = 130 }
+            @{ Header = 'Queued';        Binding = 'Queued';        Width = 130 }
+            @{ Header = 'Triggered By';  Binding = 'Triggered By';  Width = 140 }
+        )) {
+            $col = New-Object System.Windows.Controls.DataGridTextColumn
+            $col.Header  = $colDef.Header
+            $col.Binding = New-Object System.Windows.Data.Binding($colDef.Binding)
+            $col.Width   = $colDef.Width
+            [void]$grid.Columns.Add($col)
+        }
+
+        $dt = New-Object System.Data.DataTable
+        foreach ($c in @('Pipeline','Run #','Status','Branch','Queued','Triggered By')) { [void]$dt.Columns.Add($c) }
+        foreach ($r in $running) {
+            $dr = $dt.NewRow()
+            $dr['Pipeline']     = [string]$r.'Pipeline'
+            $dr['Run #']        = [string]$r.'Run #'
+            $dr['Status']       = [string]$r.'Status'
+            $dr['Branch']       = [string]$r.'Branch'
+            $dr['Queued']       = [string]$r.'Queued'
+            $dr['Triggered By'] = [string]$r.'Triggered By'
+            [void]$dt.Rows.Add($dr)
+        }
+        $grid.ItemsSource = $dt.DefaultView
+        [void]$sp.Children.Add($grid)
+    }
+
+    $dlg.Content = $sp
+    $dlg.ShowDialog() | Out-Null
+}
+
 function Show-AdoPatDialog {
     param([System.Windows.Window]$OwnerWindow)
 
@@ -575,8 +664,9 @@ function Show-AdoPatDialog {
         } else { $newInterval = 30 }
         $script:AdoRefreshIntervalSeconds = $newInterval
         try {
-            if (-not (Test-Path $script:RegPath)) { New-Item -Path $script:RegPath -Force | Out-Null }
-            Set-ItemProperty -Path $script:RegPath -Name 'AdoRefreshInterval' -Value $newInterval
+            $regPath = 'HKCU:\Software\AVDDashboard'
+            if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+            Set-ItemProperty -Path $regPath -Name 'AdoRefreshInterval' -Value $newInterval
         } catch {}
 
         # Save PAT
@@ -601,17 +691,19 @@ function Show-AdoPatDialog {
             Write-Log 'INFO [ADO] PAT cleared'
         }
 
-        # Save and apply URL if changed
+        # Save and apply URL
         $urlChanged = ($newUrl -ne $script:AdoOrgUrl)
-        if ($urlChanged) {
-            $script:AdoOrgUrl = $newUrl
-            $script:adoPipelineCache = @{}   # invalidate prefetch cache on org change
-            # Persist directly to registry
-            try {
-                if (-not (Test-Path $script:RegPath)) { New-Item -Path $script:RegPath -Force | Out-Null }
-                Set-ItemProperty -Path $script:RegPath -Name 'AdoOrgUrl' -Value $newUrl
-            } catch {}
-            Write-Log "INFO [ADO] Organisation URL updated to: $newUrl"
+        $script:AdoOrgUrl = $newUrl
+        if ($urlChanged) { $script:adoPipelineCache = @{} }
+        try {
+            $regPath = 'HKCU:\Software\AVDDashboard'
+            if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+            Set-ItemProperty -Path $regPath -Name 'AdoOrgUrl' -Value $newUrl
+            Write-Log "INFO [ADO] Organisation URL saved: '$newUrl'"
+        } catch {
+            Write-Log "ERROR [ADO] Failed to save Organisation URL to registry: $_"
+            $errTxt.Text = "Failed to save URL to registry: $_"
+            $errTxt.Visibility = [System.Windows.Visibility]::Visible
         }
 
         # Trigger refresh
@@ -995,7 +1087,6 @@ function _ADO_ShowRunDialog {
     # These are populated by the fetch callback and referenced in the Run click handler
     $paramControls = @{}
     $stageChecks   = @{}
-    $brCombo       = $null
     $defaultBranch = 'master'
 
     # ── Background fetch: definition + branches + preview ─────────────────────
@@ -1431,7 +1522,7 @@ function _ADO_QueueRun {
         [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
         $hdr    = @{ Authorization = "Basic $B64"; 'Content-Type' = 'application/json' }
         $params = $ParamsJson | ConvertFrom-Json
-        $skip   = @($SkipJson | ConvertFrom-Json)
+        $skip   = if ($SkipJson -and $SkipJson -ne '[]') { @($SkipJson | ConvertFrom-Json | ForEach-Object { [string]$_ }) } else { @() }
 
         $body = @{
             resources = @{ repositories = @{ self = @{ refName = "refs/heads/$Branch" } } }
@@ -1691,6 +1782,10 @@ function Initialize-AzureDevOpsTab {
     $script:ADORefreshButton.Add_Click({ Invoke-AzureDevOpsRefresh })
     $script:ADOConfigurePATButton.Add_Click({
         Show-AdoPatDialog -OwnerWindow ([System.Windows.Window]::GetWindow($script:AzureDevOpsTab))
+    })
+    $Window.FindName('ADORunningTile').Cursor = [System.Windows.Input.Cursors]::Hand
+    $Window.FindName('ADORunningTile').Add_MouseLeftButtonUp({
+        Show-AdoRunningPopup -OwnerWindow ([System.Windows.Window]::GetWindow($script:AzureDevOpsTab))
     })
 
     if (-not $script:AdoOrgUrl) {
