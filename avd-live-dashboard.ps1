@@ -132,7 +132,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-04-23
+    Version       : 2026-04-27
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -166,7 +166,7 @@ param(
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-04-23"
+$ScriptVersion = "2026-04-28"
 
 # =============================================================================
 # Customer / Environment Configuration
@@ -859,7 +859,7 @@ $dataScript = {
             'HostPool'    { Invoke-Arm -Path "/subscriptions/$subId/providers/Microsoft.DesktopVirtualization/hostPools"        -Token $tok -ApiVersion $apiPreview }
             'AppGroup'    { Invoke-Arm -Path "/subscriptions/$subId/providers/Microsoft.DesktopVirtualization/applicationGroups" -Token $tok -ApiVersion $api }
             'Workspace'   { Invoke-Arm -Path "/subscriptions/$subId/providers/Microsoft.DesktopVirtualization/workspaces"       -Token $tok -ApiVersion $api }
-            'ScalingPlan' { Invoke-Arm -Path "/subscriptions/$subId/providers/Microsoft.DesktopVirtualization/scalingPlans"     -Token $tok -ApiVersion $api }
+            'ScalingPlan'       { Invoke-Arm -Path "/subscriptions/$subId/providers/Microsoft.DesktopVirtualization/scalingPlans"     -Token $tok -ApiVersion $api }
         }
 '@)
 
@@ -950,13 +950,15 @@ $dataScript = {
     # Build hostpool-name -> deployment scope map (Geographical / Regional)
     # and hostpool-name -> location map (the host pool resource's own Azure region).
     # Scope requires the 2026-01-01-preview API; older pools default to Geographical.
-    $hpScopeMap      = @{}
-    $hpLocationMap   = @{}
-    $hpValidationMap = @{}
-    $hpStartVMMap    = @{}
-    $hpMaxSessionMap = @{}
-    $hpLBTypeMap     = @{}
-    $hpNetworkMap    = @{}
+    $hpScopeMap              = @{}
+    $hpLocationMap           = @{}
+    $hpValidationMap         = @{}
+    $hpStartVMMap            = @{}
+    $hpMaxSessionMap         = @{}
+    $hpLBTypeMap             = @{}
+    $hpNetworkMap            = @{}
+    $hpPrivateEndpointMap    = @{}
+    $hpPrivateEndpointDetails = @{}
     foreach ($hp in $allHostPools) {
         $hpScopeMap[$hp.name]      = if ($hp.properties.deploymentScope) { [string]$hp.properties.deploymentScope } else { 'Geographical' }
         $hpLocationMap[$hp.name]   = if ($hp.location) { [string]$hp.location } else { '' }
@@ -972,6 +974,95 @@ $dataScript = {
             'EnabledForSessionHostsOnly' { 'Hosts Only'   }
             'EnabledForClientsOnly'      { 'Clients Only' }
             default                      { 'Public'       }
+        }
+    }
+
+    # -------------------------------------------------------------------------
+    # Private Endpoint maps
+    #
+    # Azure AVD host pools support Private Link. When a private endpoint is
+    # attached, it appears under $hp.properties.privateEndpointConnections[]
+    # directly on the host pool ARM resource — no separate API call is needed.
+    #
+    # Two maps are built here:
+    #   $hpPrivateEndpointMap     : hostpool name -> count (shown in the grid column)
+    #   $hpPrivateEndpointDetails : hostpool name -> list of PSCustomObjects with
+    #                               the PE connection name, displayed in the right-
+    #                               click "Private Endpoints" popup.
+    #
+    # Note: the PE connection name is extracted from the 'name' property of each
+    # sub-resource; if that is absent (older API versions), the last segment of
+    # the 'id' field is used as a fallback.
+    #
+    # IMPORTANT: these maps are local variables inside $dataScript (which runs in
+    # a background runspace). They are passed back to the main thread via the
+    # return object (PrivateEndpointDetails) and stored into $script: scope by
+    # Update-UI. Script-scope assignments made inside a runspace are NOT visible
+    # on the main thread — hence the explicit pass-through via the Data object.
+    # -------------------------------------------------------------------------
+    # ── Phase 1: collect PE connection names and ARM resource IDs ────────────────
+    # Each privateEndpointConnection sub-resource carries the ARM id of the actual
+    # PE resource in properties.privateEndpoint.id. We collect these so we can
+    # look up the PE resource location in Phase 2.
+    $allPeIds = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+    foreach ($hp in $allHostPools) {
+        $peConns = @($hp.properties.privateEndpointConnections)
+
+        # Count for the "Private Endpoints" grid column
+        $hpPrivateEndpointMap[$hp.name] = $peConns.Count
+
+        # Build initial detail rows (location filled in after the parallel fetch)
+        $hpPrivateEndpointDetails[$hp.name] = @($peConns | ForEach-Object {
+            $peName = if ([string]$_.name) { [string]$_.name } `
+                      elseif ([string]$_.id) { ([string]$_.id).Split('/')[-1] } `
+                      else { 'Unknown' }
+            $peResourceId = [string]$_.properties.privateEndpoint.id
+            # Track every unique PE resource id so we can resolve its location
+            if ($peResourceId) {
+                [void]$allPeIds.Add([PSCustomObject]@{ HpName = $hp.name; PeName = $peName; PeResourceId = $peResourceId })
+            }
+            [PSCustomObject]@{ Name = $peName; Region = '' }
+        })
+    }
+
+    # ── Phase 2: resolve PE resource locations in parallel ───────────────────────
+    # GET each PE resource by its full ARM id to retrieve the 'location' property.
+    # Uses $MetaPool (already available in this scope) to fan out concurrently.
+    # Failures are non-fatal — the Region column will show blank for that PE.
+    if ($allPeIds.Count -gt 0) {
+        $peLocationScript = [scriptblock]::Create($RestHelperDef + @'
+            $tok = $args[0]; $peId = $args[1]; $LogFile = $args[2]
+            try {
+                $r = Invoke-Arm -Path $peId -Token $tok -ApiVersion '2024-01-01'
+                [PSCustomObject]@{ PeResourceId = $peId; Location = if ($r.location) { [string]$r.location } else { '' } }
+            } catch {
+                [PSCustomObject]@{ PeResourceId = $peId; Location = '' }
+            }
+'@)
+
+        $peJobs = foreach ($pe in $allPeIds) {
+            $ps = [System.Management.Automation.PowerShell]::Create()
+            $ps.RunspacePool = $metaPool
+            [void]$ps.AddScript($peLocationScript).AddArgument($ArmToken).AddArgument($pe.PeResourceId).AddArgument($LogFile)
+            [PSCustomObject]@{ PS = $ps; Handle = $ps.BeginInvoke(); HpName = $pe.HpName; PeName = $pe.PeName; PeResourceId = $pe.PeResourceId }
+        }
+
+        # Collect results and build a resourceId -> location lookup
+        $peLocationMap = @{}
+        foreach ($job in $peJobs) {
+            try {
+                $result = $job.PS.EndInvoke($job.Handle)
+                if ($result -and $result.Location) { $peLocationMap[$job.PeResourceId] = $result.Location }
+            } catch {}
+            $job.PS.Dispose()
+        }
+
+        # Merge locations back into $hpPrivateEndpointDetails
+        foreach ($pe in $allPeIds) {
+            $loc = if ($peLocationMap.ContainsKey($pe.PeResourceId)) { $peLocationMap[$pe.PeResourceId] } else { '' }
+            $row = $hpPrivateEndpointDetails[$pe.HpName] | Where-Object { $_.Name -eq $pe.PeName } | Select-Object -First 1
+            if ($row) { $row.Region = $loc }
         }
     }
 
@@ -1068,6 +1159,7 @@ $dataScript = {
             # no VMs to derive a region from.
             $results.Add([PSCustomObject]@{
                 "Host Pool"      = $hpName                                                              # Host pool display name
+                "HP Region"      = if ($hpLocationMap[$hpName]) { $hpLocationMap[$hpName] } else { '' } # Azure region of the host pool resource
                 "Workspace"      = if ($hpWorkspaceMap.ContainsKey($hpName)) { $hpWorkspaceMap[$hpName] } else { "" } # Linked workspace
                 "VM Region"      = "N/A"                                                                # No VMs -> no region
                 "Image Version A" = ""                                                                  # No VMs -> no image
@@ -1085,7 +1177,8 @@ $dataScript = {
                 "Load Balancer"  = if ($hpLBTypeMap[$hpName]) { $hpLBTypeMap[$hpName] } else { "" }
                 "Validation"     = if ($hpValidationMap[$hpName]) { $hpValidationMap[$hpName] } else { "No" }
                 "Start VM on Connect" = if ($hpStartVMMap[$hpName]) { $hpStartVMMap[$hpName] } else { "No" }
-                "Network Access" = if ($hpNetworkMap[$hpName]) { $hpNetworkMap[$hpName] } else { "Public" } # publicNetworkAccess: Public / Private / Hosts Only / Clients Only
+                "Network Access"    = if ($hpNetworkMap[$hpName]) { $hpNetworkMap[$hpName] } else { "Public" } # publicNetworkAccess: Public / Private / Hosts Only / Clients Only
+                "Private Endpoints" = if ($hpPrivateEndpointMap.ContainsKey($hpName)) { [string]$hpPrivateEndpointMap[$hpName] } else { '0' }
                 "Host Pool RG"   = $hpRg                                                                # Resource group of the host pool resource
                 "_VMRG"          = ""                                                                   # Session host VM resource group (empty — no VMs)
                 "_ScalingPlanId" = if ($hpScalingPlanIdMap.ContainsKey($hpName)) { $hpScalingPlanIdMap[$hpName] } else { '' } # ARM resource ID of the attached scaling plan
@@ -1173,6 +1266,7 @@ $dataScript = {
             # VMs across two regions (e.g. ukwest and francecentral) produces two rows.
             $results.Add([PSCustomObject]@{
                 "Host Pool"      = $hpName                                                              # Host pool display name
+                "HP Region"      = if ($hpLocationMap[$hpName]) { $hpLocationMap[$hpName] } else { '' } # Azure region of the host pool resource
                 "Workspace"      = if ($hpWorkspaceMap.ContainsKey($hpName)) { $hpWorkspaceMap[$hpName] } else { "" } # Linked workspace
                 "VM Region"      = $loc                                                                 # Azure region where the session host VMs are deployed
                 "Image Version A" = ""                                                                  # Populated later from VM metadata (image reference query)
@@ -1191,7 +1285,8 @@ $dataScript = {
                 "Load Balancer"  = if ($hpLBTypeMap[$hpName]) { $hpLBTypeMap[$hpName] } else { "" }
                 "Validation"     = if ($hpValidationMap[$hpName]) { $hpValidationMap[$hpName] } else { "No" }
                 "Start VM on Connect" = if ($hpStartVMMap[$hpName]) { $hpStartVMMap[$hpName] } else { "No" }
-                "Network Access" = if ($hpNetworkMap[$hpName]) { $hpNetworkMap[$hpName] } else { "Public" } # publicNetworkAccess: Public / Private / Hosts Only / Clients Only
+                "Network Access"    = if ($hpNetworkMap[$hpName]) { $hpNetworkMap[$hpName] } else { "Public" } # publicNetworkAccess: Public / Private / Hosts Only / Clients Only
+                "Private Endpoints" = if ($hpPrivateEndpointMap.ContainsKey($hpName)) { [string]$hpPrivateEndpointMap[$hpName] } else { '0' }
                 "Host Pool RG"   = $hpRg                                                                # Resource group of the host pool resource
                 "_VMRG"          = $grp.Name                                                            # Session host VM resource group
                 "_ScalingPlanId" = if ($hpScalingPlanIdMap.ContainsKey($hpName)) { $hpScalingPlanIdMap[$hpName] } else { '' } # ARM resource ID of the attached scaling plan
@@ -1389,8 +1484,12 @@ $dataScript = {
         TotalSessions  = $totSes
         Subscription      = $SubscriptionName
         Timestamp         = Get-Date
-        NewRgLocations    = $newRgLocations
-        VmRgMap           = $vmRgMap
+        NewRgLocations         = $newRgLocations
+        VmRgMap                = $vmRgMap
+        # Passed to Update-UI so the main thread can store it in $script: scope.
+        # Cannot write $script: directly from inside a runspace — it would target
+        # the runspace's own script scope, not the main thread's.
+        PrivateEndpointDetails = $hpPrivateEndpointDetails
     }
 }
 
@@ -2246,6 +2345,73 @@ function Invoke-PoolScalingPlanToggle {
 }
 
 # =============================================================================
+# PoolGrid - Context menu: Private Endpoints
+# =============================================================================
+
+# Show-PrivateEndpoints
+# ---------------------
+# Displays a modal popup listing all private endpoint connections attached to
+# the specified AVD host pool, including the real Azure region of each PE.
+#
+# PE data is sourced from $script:hpPrivateEndpointDetails, populated during the
+# refresh cycle in two phases:
+#   Phase 1 — PE connection names read from $hp.properties.privateEndpointConnections
+#   Phase 2 — PE resource locations resolved via parallel GET calls against each
+#              PE's ARM resource id (properties.privateEndpoint.id), using the
+#              Microsoft.Network API version 2024-01-01
+#
+# No additional API calls are made at popup time — all data is pre-fetched.
+#
+# The PE connection name is the Azure sub-resource name (e.g. "mypool-pe1.abc123")
+# matching what is shown in the Azure Portal under:
+#   Host Pool > Networking > Private endpoint connections
+function Show-PrivateEndpoints {
+    param([string]$HostPool)
+
+    # Look up pre-fetched PE details for this host pool
+    $details = $script:hpPrivateEndpointDetails[$HostPool]
+    if (-not $details -or $details.Count -eq 0) {
+        # Either no PEs are configured, or data has not loaded yet
+        [System.Windows.MessageBox]::Show("No private endpoints found for $HostPool.", "Private Endpoints", "OK", "Information")
+        return
+    }
+
+    # Build a simple modal window with a single-column DataGrid listing PE names
+    $popXaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Private Endpoints - $HostPool"
+        Width="560" Height="240"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
+        Background="#F5F6FA" FontFamily="Segoe UI">
+    <DockPanel Margin="12">
+        <DataGrid x:Name="PE_Grid"
+                  AutoGenerateColumns="False" IsReadOnly="True"
+                  CanUserSortColumns="True" GridLinesVisibility="Horizontal"
+                  Background="White" RowBackground="White"
+                  AlternatingRowBackground="#F0F4FA"
+                  BorderThickness="1" BorderBrush="#CCC"
+                  HeadersVisibility="Column" SelectionMode="Single">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Name"   Binding="{Binding Name}"   Width="*"/>
+                <DataGridTextColumn Header="Region" Binding="{Binding Region}" Width="120"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</Window>
+"@
+    $popReader = [System.Xml.XmlNodeReader]::new([xml]$popXaml)
+    $popWin    = [System.Windows.Markup.XamlReader]::Load($popReader)
+    $popWin.Owner = $script:MainWindow
+
+    # Bind the pre-fetched PE detail list to the grid
+    $peGrid = $popWin.FindName('PE_Grid')
+    $peGrid.ItemsSource = $details
+
+    [void]$popWin.ShowDialog()
+}
+
+# =============================================================================
 # PoolGrid - Context menu: Scaling Plan History
 # =============================================================================
 
@@ -2566,6 +2732,13 @@ $menuPoolScale.Header = "Scaling Plan History (24h)"
 $menuPoolStartVm = New-Object System.Windows.Controls.MenuItem
 $menuPoolStartVm.Header = "Start VM History (24h)"
 [void]$poolCtxMenu.Items.Add($menuPoolStartVm)
+# "Private Endpoints" menu item — opens a popup listing all PE connection names
+# for the selected host pool. The PE data is pre-fetched during the refresh cycle
+# from $hp.properties.privateEndpointConnections and stored in
+# $script:hpPrivateEndpointDetails (keyed by host pool name).
+$menuPoolPrivateEndpoints = New-Object System.Windows.Controls.MenuItem
+$menuPoolPrivateEndpoints.Header = "Private Endpoints"
+[void]$poolCtxMenu.Items.Add($menuPoolPrivateEndpoints)
 
 # Select the row under the cursor on right-click (mirrors Session Hosts pattern)
 $script:PoolGrid.Add_PreviewMouseRightButtonDown({
@@ -2583,8 +2756,9 @@ $script:PoolGrid.Add_PreviewMouseRightButtonDown({
 $script:PoolGrid.Add_ContextMenuOpening({
     $sel    = @($script:PoolGrid.SelectedItems)
     $hasOne = $sel.Count -gt 0 -and $null -ne $sel[0]
-    $menuPoolScale.IsEnabled         = $hasOne
-    $menuPoolStartVm.IsEnabled       = $hasOne
+    $menuPoolScale.IsEnabled              = $hasOne
+    $menuPoolStartVm.IsEnabled            = $hasOne
+    $menuPoolPrivateEndpoints.IsEnabled   = $hasOne
     $hasScalingPlan = $hasOne -and -not [string]::IsNullOrWhiteSpace([string]$sel[0]['_ScalingPlanId'])
     $scalingEnabled = $hasOne -and ([string]$sel[0]['Scaling Plan'] -eq 'Yes')
     $menuPoolToggleScaling.IsEnabled = $hasScalingPlan
@@ -2608,6 +2782,13 @@ $menuPoolToggleScaling.Add_Click({
     if ($sel.Count -eq 0 -or $null -eq $sel[0]) { return }
     $enable = ([string]$sel[0]['Scaling Plan'] -ne 'Yes')
     Invoke-PoolScalingPlanToggle -HostPoolName ([string]$sel[0]['Host Pool']) -ScalingPlanId ([string]$sel[0]['_ScalingPlanId']) -Enable $enable
+}.GetNewClosure())
+
+# Opens the Private Endpoints popup for the selected host pool row
+$menuPoolPrivateEndpoints.Add_Click({
+    $sel = @($script:PoolGrid.SelectedItems)
+    if ($sel.Count -eq 0 -or $null -eq $sel[0]) { return }
+    Show-PrivateEndpoints -HostPool ([string]$sel[0]['Host Pool'])
 }.GetNewClosure())
 
 $script:PoolGrid.ContextMenu = $poolCtxMenu
@@ -2668,6 +2849,13 @@ function Update-UI {
         foreach ($kv in $Data.VmRgMap.GetEnumerator()) {
             $script:vmRgMap[$kv.Key] = $kv.Value
         }
+    }
+    # Store PE details on the main thread so Show-PrivateEndpoints can read them.
+    # The map originates in the background runspace ($dataScript) and is carried
+    # here via the Data return object — direct $script: writes from the runspace
+    # are invisible to the main thread.
+    if ($Data.PrivateEndpointDetails) {
+        $script:hpPrivateEndpointDetails = $Data.PrivateEndpointDetails
     }
     $ts = $Data.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")
     $script:StatusText.Text = "Last updated : $ts"
@@ -3191,6 +3379,7 @@ $script:CardTotalBorder.Add_MouseLeftButtonUp({
                            FontSize="11" Foreground="#888" Margin="0,0,0,8"/>
                 <WrapPanel Margin="0,0,0,4">
                     <CheckBox x:Name="HColHostPool"       Content="Host Pool"        FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColHPRegion"       Content="HP Region"        FontSize="12" Margin="0,0,16,4"/>
                     <CheckBox x:Name="HColWorkspace"      Content="Workspace"        FontSize="12" Margin="0,0,16,4"/>
                     <CheckBox x:Name="HColVMRegion"       Content="VM Region"        FontSize="12" Margin="0,0,16,4"/>
                     <CheckBox x:Name="HColImageVersionA"  Content="Image Version A"  FontSize="12" Margin="0,0,16,4"/>
@@ -3208,8 +3397,9 @@ $script:CardTotalBorder.Add_MouseLeftButtonUp({
                     <CheckBox x:Name="HColValidation"     Content="Validation"       FontSize="12" Margin="0,0,16,4"/>
                     <CheckBox x:Name="HColStartVMOnConnect" Content="Start VM on Connect" FontSize="12" Margin="0,0,16,4"/>
                     <CheckBox x:Name="HColRGVMs"          Content="RG VMs"           FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColNetworkAccess"  Content="Network Access"   FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColHostPoolRG"     Content="Host Pool RG"     FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColNetworkAccess"     Content="Network Access"    FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColPrivateEndpoints" Content="Private Endpoints" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColHostPoolRG"        Content="Host Pool RG"      FontSize="12" Margin="0,0,16,4"/>
                     <CheckBox x:Name="HColScope"          Content="Scope"            FontSize="12" Margin="0,0,16,4"/>
                     <CheckBox x:Name="HColHPLocation"     Content="HP Location"      FontSize="12" Margin="0,0,16,4"/>
                 </WrapPanel>
@@ -3431,6 +3621,7 @@ function Show-Settings {
     # Hidden Columns checkboxes (x:Name maps to column header)
     $hcolMap = @{
         'Host Pool'      = $sWin.FindName("HColHostPool")
+        'HP Region'      = $sWin.FindName("HColHPRegion")
         'Workspace'      = $sWin.FindName("HColWorkspace")
         'VM Region'      = $sWin.FindName("HColVMRegion")
         'Image Version A' = $sWin.FindName("HColImageVersionA")
@@ -3448,8 +3639,9 @@ function Show-Settings {
         'Validation'     = $sWin.FindName("HColValidation")
         'Start VM on Connect' = $sWin.FindName("HColStartVMOnConnect")
         'RG VMs'         = $sWin.FindName("HColRGVMs")
-        'Network Access' = $sWin.FindName("HColNetworkAccess")
-        'Host Pool RG'   = $sWin.FindName("HColHostPoolRG")
+        'Network Access'    = $sWin.FindName("HColNetworkAccess")
+        'Private Endpoints' = $sWin.FindName("HColPrivateEndpoints")
+        'Host Pool RG'      = $sWin.FindName("HColHostPoolRG")
         'Scope'          = $sWin.FindName("HColScope")
         'HP Location'    = $sWin.FindName("HColHPLocation")
     }

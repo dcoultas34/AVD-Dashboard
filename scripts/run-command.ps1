@@ -136,6 +136,11 @@ function Show-RunCommandPicker {
     $win.ResizeMode             = 'CanResize'
     $win.WindowStartupLocation  = 'CenterOwner'
     $win.Owner                  = [System.Windows.Application]::Current.MainWindow
+    $icoPath = Join-Path $PSScriptRoot '..\data\avd-dashboard.ico'
+    if (Test-Path $icoPath) {
+        $win.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create(
+            [System.Uri]([System.IO.Path]::GetFullPath($icoPath)))
+    }
 
     # Wrap in a single-element array so closures capture the reference object,
     # and Reload can swap .Value while all handlers see the update.

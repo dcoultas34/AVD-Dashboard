@@ -34,7 +34,7 @@
         @{
             Name        = 'Run GPUpdate'
             Description = 'Forces an immediate Group Policy refresh (gpupdate /force).'
-            Script      = 'gpupdate /force'
+            Script      = '& gpupdate.exe /force 2>&1 | Out-String'
         }
         @{
             Name        = 'Check Disk Space'

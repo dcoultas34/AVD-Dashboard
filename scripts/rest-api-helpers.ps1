@@ -522,6 +522,12 @@ function Get-ArmNetworkInterface {
         -Token $Token -ApiVersion $script:ApiVersions.Network -FullResponse
 }
 
+function Get-ArmPrivateEndpoints {
+    param([string]$SubscriptionId, [string]$Token)
+    Invoke-ArmRestMethod -Path "/subscriptions/$SubscriptionId/providers/Microsoft.Network/privateEndpoints" `
+        -Token $Token -ApiVersion $script:ApiVersions.Network
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Resource-specific wrappers - Storage (ARM management plane)
 # ─────────────────────────────────────────────────────────────────────────────

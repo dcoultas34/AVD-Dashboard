@@ -1,5 +1,31 @@
 # AVD Live Dashboard - Changelog
 
+## 2026-04-28
+- Per Host Pool tab: added "Private Endpoints" right-click context menu item. Opens a popup
+  listing the name and Azure region of each private endpoint connection for the selected host
+  pool. PE names are read from the host pool ARM resource; regions are resolved via parallel
+  GET calls against each PE resource (Microsoft.Network API) during the refresh cycle.
+- Run Command: fixed GPUpdate command — changed from bare `gpupdate /force` to
+  `& gpupdate.exe /force 2>&1 | Out-String` so output is captured and displayed correctly
+  in the results window.
+- Run Command: window now shows the AVD dashboard icon (avd-dashboard.ico) in the title bar.
+
+## 2026-04-27
+- Per Host Pool tab: added "HP Region" column (immediately after Host Pool name) showing
+  the Azure region of the host pool resource itself.
+- Per Host Pool tab: added "Private Endpoints" column showing the count of private endpoints
+  configured for each host pool. Fetched in parallel with other metadata at startup.
+- Per Host Pool tab: added "Enable/Disable Scaling Plan" single toggle right-click menu item.
+  Label updates dynamically based on current state; greyed out when no scaling plan attached.
+- Azure DevOps tab: clicking the "X Running" tile now opens a popup listing all in-progress
+  and not-started pipeline runs.
+- Azure DevOps tab: fixed pipeline Run action — stagesToSkip was serialised as a PowerShell
+  object rather than a JSON array, causing ADO to return BuildId=0. Fixed by skipping
+  ConvertFrom-Json on empty arrays.
+- Azure DevOps tab: fixed Organisation URL not persisting to registry — registry path
+  ($script:RegPath) was null inside the GetNewClosure handler; now uses hardcoded path.
+  URL is now always written on save regardless of whether it changed.
+
 ## 2026-04-23
 - Session Hosts tab: power action skip logic now uses the Azure `Power State` column
   (Running / Deallocated / Stopped from Resource Graph) instead of the AVD `Status`
