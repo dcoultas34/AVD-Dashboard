@@ -96,10 +96,11 @@ $MonitoringTab_Xaml = @'
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <Button x:Name="MonitoringPortalButton" Grid.Column="0"
                     Content="Open AVD Insights in Azure Portal"
-                    Background="#0078D4" Foreground="White"
+                    Background="{DynamicResource Avd.Btn.Accent.Bg}" Foreground="White"
                     BorderThickness="0" FontSize="12"
                     FontWeight="SemiBold" Cursor="Hand"
                     Padding="16,8" Margin="0,0,20,0">
@@ -111,7 +112,7 @@ $MonitoringTab_Xaml = @'
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#005A9E"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Accent.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Bd" Property="Background" Value="#003D6B"/>
@@ -120,7 +121,7 @@ $MonitoringTab_Xaml = @'
                     </ControlTemplate>
                 </Button.Template>
             </Button>
-            <TextBlock Grid.Column="1" Text="Time Range:" FontSize="12" Foreground="#555"
+            <TextBlock Grid.Column="1" Text="Time Range:" FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}"
                        VerticalAlignment="Center" Margin="0,0,6,0"/>
             <ComboBox x:Name="MonWinlogonTimeRange" Grid.Column="2" Width="140" FontSize="12"
                       SelectedIndex="5">
@@ -134,20 +135,20 @@ $MonitoringTab_Xaml = @'
                 <ComboBoxItem Content="Last 30 Days"   Tag="30d"/>
                 <ComboBoxItem Content="Custom Range..." Tag="custom"/>
             </ComboBox>
-            <TextBlock Grid.Column="3" Text="Host Pool:" FontSize="12" Foreground="#555"
+            <TextBlock Grid.Column="3" Text="Host Pool:" FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}"
                        VerticalAlignment="Center" Margin="16,0,6,0"/>
-            <ComboBox x:Name="MonWinlogonHostPool" Grid.Column="4" Width="220" FontSize="12">
+            <ComboBox x:Name="MonWinlogonHostPool" Grid.Column="4" Width="140" FontSize="12">
                 <ComboBoxItem Content="All Host Pools" IsSelected="True"/>
             </ComboBox>
             <!-- Selected range display -->
-            <TextBlock x:Name="MonRangeDisplay" Grid.Column="5" FontSize="11" Foreground="#555"
+            <TextBlock x:Name="MonRangeDisplay" Grid.Column="5" FontSize="11" Foreground="{DynamicResource Avd.Fg.Secondary}"
                        VerticalAlignment="Center" Margin="12,0,0,0" HorizontalAlignment="Left"/>
             <!-- Legend -->
             <StackPanel Grid.Column="6" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="16,0,16,0">
                 <Rectangle Width="14" Height="14" Fill="#E91E63" Margin="0,0,4,0" RadiusX="2" RadiusY="2"/>
-                <TextBlock Text="P95" FontSize="11" Foreground="#333" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="P95" FontSize="11" Foreground="{DynamicResource Avd.Fg.Label}" VerticalAlignment="Center" Margin="0,0,12,0"/>
                 <Rectangle Width="14" Height="14" Fill="#B0BEC5" Margin="0,0,4,0" RadiusX="2" RadiusY="2"/>
-                <TextBlock Text="P50" FontSize="11" Foreground="#333" VerticalAlignment="Center"/>
+                <TextBlock Text="P50" FontSize="11" Foreground="{DynamicResource Avd.Fg.Label}" VerticalAlignment="Center"/>
             </StackPanel>
             <Button x:Name="MonWinlogonRefreshBtn" Grid.Column="7"
                     Content="Refresh" Background="#4CAF50" Foreground="White"
@@ -170,11 +171,33 @@ $MonitoringTab_Xaml = @'
                     </ControlTemplate>
                 </Button.Template>
             </Button>
+            <Button x:Name="MonCustomQueryBtn" Grid.Column="8"
+                    Content="Custom Query"
+                    Background="{DynamicResource Avd.Btn.Accent.Bg}" Foreground="White"
+                    BorderThickness="0" FontSize="12" FontWeight="SemiBold"
+                    Cursor="Hand" Padding="16,8" Margin="8,0,0,0">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Accent.Hover}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#003D6B"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
         </Grid>
 
         <!-- Status bar at bottom -->
         <TextBlock x:Name="MonWinlogonStatus" DockPanel.Dock="Bottom"
-                   FontSize="11" Foreground="#777" Margin="0,6,0,0"/>
+                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,6,0,0"/>
 
         <!-- Main content: scrollable so nothing gets clipped when window is small -->
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -194,14 +217,14 @@ $MonitoringTab_Xaml = @'
                 <RowDefinition Height="220"/>
             </Grid.RowDefinitions>
 
-            <!-- Session History heading — full width at top -->
+            <!-- Session History heading - full width at top -->
             <TextBlock Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3"
                        Text="Session History" FontSize="16" FontWeight="SemiBold"
-                       Foreground="#1A1A2E" Margin="0,0,0,6"/>
+                       Foreground="{DynamicResource Avd.Window.Fg}" Margin="0,0,0,6"/>
 
             <!-- Session History line chart canvas -->
             <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3"
-                    Background="White" BorderBrush="#DDE1E7" BorderThickness="1" CornerRadius="4">
+                    Background="{DynamicResource Avd.Card.Bg}" BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" CornerRadius="4">
                 <Canvas x:Name="MonSessionHistoryCanvas" ClipToBounds="True"/>
             </Border>
 
@@ -209,29 +232,31 @@ $MonitoringTab_Xaml = @'
             <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3"
                         Orientation="Horizontal" Margin="0,4,0,0">
                 <Rectangle Width="14" Height="14" Fill="#1976D2" Margin="0,0,4,0" RadiusX="2" RadiusY="2"/>
-                <TextBlock Text="Active" FontSize="11" Foreground="#333" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Active" FontSize="11" Foreground="{DynamicResource Avd.Fg.Label}" VerticalAlignment="Center" Margin="0,0,12,0"/>
                 <Rectangle Width="14" Height="14" Fill="#F57C00" Margin="0,0,4,0" RadiusX="2" RadiusY="2"/>
-                <TextBlock Text="Disconnected" FontSize="11" Foreground="#333" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                <TextBlock x:Name="MonSessionHistoryStatus" FontSize="11" Foreground="#777" VerticalAlignment="Center"/>
+                <TextBlock Text="Disconnected" FontSize="11" Foreground="{DynamicResource Avd.Fg.Label}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <Rectangle Width="14" Height="14" Fill="#388E3C" Margin="0,0,4,0" RadiusX="2" RadiusY="2"/>
+                <TextBlock Text="Total" FontSize="11" Foreground="{DynamicResource Avd.Fg.Label}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock x:Name="MonSessionHistoryStatus" FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" VerticalAlignment="Center"/>
             </StackPanel>
 
             <!-- Section headings for Winlogon + RTT -->
             <TextBlock Grid.Row="3" Grid.Column="0" Text="Winlogon Stages" FontSize="16" FontWeight="SemiBold"
-                       Foreground="#1A1A2E" Margin="0,16,0,6"/>
+                       Foreground="{DynamicResource Avd.Window.Fg}" Margin="0,16,0,6"/>
             <StackPanel Grid.Row="3" Grid.Column="2" Orientation="Horizontal" Margin="0,16,0,6">
                 <TextBlock Text="RTT by Gateway Region" FontSize="16" FontWeight="SemiBold"
-                           Foreground="#1A1A2E" VerticalAlignment="Center" Margin="0,0,16,0"/>
-                <TextBlock x:Name="MonRttStatus" FontSize="11" Foreground="#777"
+                           Foreground="{DynamicResource Avd.Window.Fg}" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                <TextBlock x:Name="MonRttStatus" FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                            VerticalAlignment="Center"/>
             </StackPanel>
 
             <!-- Winlogon Stages bar chart (left panel) -->
-            <Border Grid.Row="4" Grid.Column="0" Background="White" BorderBrush="#DDE1E7" BorderThickness="1" CornerRadius="4">
+            <Border Grid.Row="4" Grid.Column="0" Background="{DynamicResource Avd.Card.Bg}" BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" CornerRadius="4">
                 <Canvas x:Name="MonWinlogonCanvas" ClipToBounds="True"/>
             </Border>
 
             <!-- RTT by Gateway Region (right panel) -->
-            <Border Grid.Row="4" Grid.Column="2" Background="White" BorderBrush="#DDE1E7" BorderThickness="1" CornerRadius="4">
+            <Border Grid.Row="4" Grid.Column="2" Background="{DynamicResource Avd.Card.Bg}" BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" CornerRadius="4">
                 <DataGrid x:Name="MonRttGrid"
                           AutoGenerateColumns="False"
                           IsReadOnly="True"
@@ -240,23 +265,24 @@ $MonitoringTab_Xaml = @'
                           CanUserSortColumns="True"
                           HeadersVisibility="Column"
                           GridLinesVisibility="Horizontal"
-                          HorizontalGridLinesBrush="#E8E8E8"
+                          HorizontalGridLinesBrush="{DynamicResource Avd.Border.Grid}"
                           BorderThickness="0"
-                          Background="White"
-                          RowBackground="White"
-                          AlternatingRowBackground="#F8F9FA"
+                          Foreground="{DynamicResource Avd.Window.Fg}"
+                          Background="{DynamicResource Avd.Card.Bg}"
+                          RowBackground="{DynamicResource Avd.Card.Bg}"
+                          AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}"
                           FontSize="12"
                           ColumnHeaderHeight="32"
                           RowHeight="28">
                     <DataGrid.ColumnHeaderStyle>
                         <Style TargetType="DataGridColumnHeader">
-                            <Setter Property="Background" Value="#1A5276"/>
-                            <Setter Property="Foreground" Value="White"/>
+                            <Setter Property="Background" Value="{DynamicResource Avd.ColHeader.Bg}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource Avd.ColHeader.Fg}"/>
                             <Setter Property="FontWeight" Value="SemiBold"/>
                             <Setter Property="FontSize" Value="12"/>
                             <Setter Property="Padding" Value="8,4"/>
                             <Setter Property="BorderThickness" Value="0,0,1,0"/>
-                            <Setter Property="BorderBrush" Value="#2471A3"/>
+                            <Setter Property="BorderBrush" Value="{DynamicResource Avd.ColHeader.Border}"/>
                         </Style>
                     </DataGrid.ColumnHeaderStyle>
                     <DataGrid.Columns>
@@ -376,7 +402,7 @@ function Invoke-WinlogonStagesQuery {
     # STAGES OUTPUT: Others, User Auth., FSLogix, Shell, Group policy
     # Load KQL from external file and replace placeholder tokens with actual values.
     # See data/kql/winlogon-stages.kql for the full query with comments.
-    # Build KQL — for custom range substitute absolute datetime expression
+    # Build KQL - for custom range substitute absolute datetime expression
     if ($CustomFrom -and $CustomTo) {
         $kql = $script:_kqlWinlogonStages `
             -replace 'ago\(\{\{TimeRange\}\}\)', "datetime($CustomFrom)" `
@@ -394,14 +420,9 @@ function Invoke-WinlogonStagesQuery {
         }
     }
 
-    $tok  = Get-ArmToken
-    $body = @{ query = $kql; timespan = $isoTimespan }
-    $resp = Invoke-ArmRestMethod -Method POST `
-                -Path "$($script:LawWorkspaceResourceId)/api/query" `
-                -Token $tok `
-                -ApiVersion '2020-08-01' `
-                -Body $body `
-                -FullResponse
+    $resp = Invoke-LawQuery -Kql $kql -Timespan $isoTimespan `
+                -WorkspaceResourceId $script:LawWorkspaceResourceId `
+                -QueryBaseUrl $script:LawQueryBaseUrl
 
     # Parse the columnar JSON response into a list of stage data objects
     $stages = [System.Collections.Generic.List[PSObject]]::new()
@@ -459,14 +480,9 @@ function Invoke-WinlogonHostPoolsQuery {
     # See data/kql/winlogon-hostpools.kql for the full query with comments.
     $kql = $script:_kqlWinlogonHostPools
 
-    $tok  = Get-ArmToken
-    $body = @{ query = $kql; timespan = 'P7D' }
-    $resp = Invoke-ArmRestMethod -Method POST `
-                -Path "$($script:LawWorkspaceResourceId)/api/query" `
-                -Token $tok `
-                -ApiVersion '2020-08-01' `
-                -Body $body `
-                -FullResponse
+    $resp = Invoke-LawQuery -Kql $kql -Timespan 'P7D' `
+                -WorkspaceResourceId $script:LawWorkspaceResourceId `
+                -QueryBaseUrl $script:LawQueryBaseUrl
 
     $pools = [System.Collections.Generic.List[string]]::new()
     if ($resp.tables -and $resp.tables[0].rows -and $resp.tables[0].rows.Count -gt 0) {
@@ -488,8 +504,8 @@ function Invoke-WinlogonHostPoolsQuery {
 # the X-axis. Y-axis labels show duration in seconds.
 #
 # Colour scheme matches AVD Insights:
-#   P95 = #E91E63 (magenta/pink) — the "worst case" metric
-#   P50 = #B0BEC5 (light blue-grey) — the "typical" metric
+#   P95 = #E91E63 (magenta/pink) - the "worst case" metric
+#   P50 = #B0BEC5 (light blue-grey) - the "typical" metric
 #
 # The chart includes:
 #   - Light background (#FAFAFA)
@@ -503,11 +519,11 @@ function Invoke-WinlogonHostPoolsQuery {
 # 4b. Session History line chart renderer
 #
 # Draws a two-series line chart on a WPF Canvas using WPF Polyline primitives.
-# No external charting libraries — everything is pure WPF drawing.
+# No external charting libraries - everything is pure WPF drawing.
 #
 # SERIES:
-#   Active       = #1976D2 (blue)   — users actively at the keyboard
-#   Disconnected = #F57C00 (orange) — sessions alive but user has disconnected
+#   Active       = #1976D2 (blue)   - users actively at the keyboard
+#   Disconnected = #F57C00 (orange) - sessions alive but user has disconnected
 #
 # VISUAL LAYOUT:
 #   Left margin  (50px) = Y-axis labels (session count)
@@ -516,7 +532,7 @@ function Invoke-WinlogonHostPoolsQuery {
 #   Right margin (16px) = padding to the right of the last data point
 #   Chart area = canvas size minus the four margins above
 #   Y-axis: 0 at bottom, auto-scaled to max value rounded up to a nice number
-#   X-axis: proportional — each point placed by (time - tMin) / (tMax - tMin)
+#   X-axis: proportional - each point placed by (time - tMin) / (tMax - tMin)
 #
 # ZERO-FILL:
 #   KQL only returns rows for bins that contain data. If a bin has zero sessions
@@ -536,9 +552,10 @@ function Invoke-WinlogonHostPoolsQuery {
 function Update-SessionHistoryChart {
     param(
         [System.Windows.Controls.Canvas]$Canvas,
-        [object[]]$SessionsData,              # @(@{ Time=[datetime]; Value=[double] }, ...) — active sessions per bin
-        [object[]]$DisconnectedData = @(),    # @(@{ Time=[datetime]; Value=[double] }, ...) — disconnected sessions per bin
-        [int]$BinMinutes = 60                 # bin width in minutes — used to generate the zero-fill step sequence
+        [object[]]$SessionsData,              # @(@{ Time=[datetime]; Value=[double] }, ...) - active sessions per bin
+        [object[]]$DisconnectedData = @(),    # @(@{ Time=[datetime]; Value=[double] }, ...) - disconnected sessions per bin
+        [object[]]$TotalData        = @(),    # @(@{ Time=[datetime]; Value=[double] }, ...) - total (active+disconnected) per bin
+        [int]$BinMinutes = 60                 # bin width in minutes - used to generate the zero-fill step sequence
     )
 
     $Canvas.Children.Clear()
@@ -553,10 +570,18 @@ function Update-SessionHistoryChart {
 
     $brushConv = New-Object System.Windows.Media.BrushConverter
 
+    # Theme-aware palette
+    $_dark = $script:DarkTheme -eq $true
+    $_chartBg    = if ($_dark) { '#2D2D30' } else { '#FAFAFA' }
+    $_gridLine   = if ($_dark) { '#3F3F46' } else { '#E0E0E0' }
+    $_axisColor  = if ($_dark) { '#5A5A5A' } else { '#999999' }
+    $_labelColor = if ($_dark) { '#9D9D9D' } else { '#666666' }
+    $_noDataColor = if ($_dark) { '#6A6A6A' } else { '#999999' }
+
     # ── Chart background ──────────────────────────────────────────────────
     $bg = New-Object System.Windows.Shapes.Rectangle
     $bg.Width = $cw; $bg.Height = $ch
-    $bg.Fill = $brushConv.ConvertFromString('#FAFAFA')
+    $bg.Fill = $brushConv.ConvertFromString($_chartBg)
     [System.Windows.Controls.Canvas]::SetLeft($bg, $ml)
     [System.Windows.Controls.Canvas]::SetTop($bg, $mt)
     [void]$Canvas.Children.Add($bg)
@@ -567,7 +592,7 @@ function Update-SessionHistoryChart {
         $tb = New-Object System.Windows.Controls.TextBlock
         $tb.Text = $text
         $tb.FontSize = if ($fontSize) { $fontSize } else { 10 }
-        $tb.Foreground = $brushConv.ConvertFromString($(if ($color) { $color } else { '#666' }))
+        $tb.Foreground = $brushConv.ConvertFromString($(if ($color) { $color } else { $_labelColor }))
         if ($alignRight) {
             $tb.TextAlignment = [System.Windows.TextAlignment]::Right
             $tb.Width = $x
@@ -594,9 +619,9 @@ function Update-SessionHistoryChart {
         [void]$Canvas.Children.Add($ln)
     }
 
-    # No data — show placeholder message
+    # No data - show placeholder message
     if (-not $SessionsData -or $SessionsData.Count -eq 0) {
-        & $addText 'No session history data. Click Refresh to query.' ($w / 2 - 140) ($h / 2 - 8) 13 '#999' $false
+        & $addText 'No session history data. Click Refresh to query.' ($w / 2 - 140) ($h / 2 - 8) 13 $_noDataColor $false
         return
     }
 
@@ -605,6 +630,7 @@ function Update-SessionHistoryChart {
     # Round up to a "nice" number so gridline labels are clean integers.
     $allValues = @($SessionsData | ForEach-Object { $_.Value })
     if ($DisconnectedData -and $DisconnectedData.Count -gt 0) { $allValues += $DisconnectedData | ForEach-Object { $_.Value } }
+    if ($TotalData        -and $TotalData.Count        -gt 0) { $allValues += $TotalData        | ForEach-Object { $_.Value } }
     $maxVal = ($allValues | Measure-Object -Maximum).Maximum
     $maxVal = [math]::Max(1, $maxVal)   # avoid div-by-zero on empty/all-zero data
     $yMax = if ($maxVal -le 5)           { [math]::Ceiling($maxVal) }
@@ -616,14 +642,14 @@ function Update-SessionHistoryChart {
     # ── Gridlines and Y-axis labels ───────────────────────────────────────
     foreach ($frac in @(0.25, 0.50, 0.75, 1.0)) {
         $y = $mt + $ch * (1 - $frac)
-        & $addLine $ml $y ($ml + $cw) $y '#E0E0E0' 1 @(4, 4)
-        & $addText ([math]::Round($yMax * $frac, 0).ToString()) ($ml - 4) ($y - 8) 10 '#666' $true
+        & $addLine $ml $y ($ml + $cw) $y $_gridLine 1 @(4, 4)
+        & $addText ([math]::Round($yMax * $frac, 0).ToString()) ($ml - 4) ($y - 8) 10 $_labelColor $true
     }
-    & $addText '0' ($ml - 4) ($mt + $ch - 8) 10 '#666' $true
+    & $addText '0' ($ml - 4) ($mt + $ch - 8) 10 $_labelColor $true
 
     # ── Axes ──────────────────────────────────────────────────────────────
-    & $addLine $ml $mt $ml ($mt + $ch) '#999' 1 $null
-    & $addLine $ml ($mt + $ch) ($ml + $cw) ($mt + $ch) '#999' 1 $null
+    & $addLine $ml $mt $ml ($mt + $ch) $_axisColor 1 $null
+    & $addLine $ml ($mt + $ch) ($ml + $cw) ($mt + $ch) $_axisColor 1 $null
 
     # ── X-axis time labels (~6 evenly spaced) ─────────────────────────────
     # Labels are converted to local time for display (the data is stored as UTC
@@ -642,7 +668,7 @@ function Update-SessionHistoryChart {
             $lt = $tMin.AddSeconds($tSpan * $frac).ToLocalTime()
             $label = $lt.ToString('HH:mm')
             if ($tSpan -gt 86400) { $label = $lt.ToString('dd/MM HH:mm') }
-            & $addText $label $lx ($mt + $ch + 5) 10 '#666' $false
+            & $addText $label $lx ($mt + $ch + 5) 10 $_labelColor $false
         }
     }
 
@@ -705,11 +731,13 @@ function Update-SessionHistoryChart {
         $script:_monSessionHistoryFilled = $filled
     }
 
-    # Draw Disconnected (orange) first so Sessions (blue) renders on top
+    # Draw Disconnected (orange) and Sessions (blue) first, Total (green) on top
     & $drawSeries $DisconnectedData '#F57C00' 2
     $filledDisc     = $script:_monSessionHistoryFilled
     & $drawSeries $SessionsData     '#1976D2' 2
     $filledSessions = $script:_monSessionHistoryFilled
+    & $drawSeries $TotalData        '#388E3C' 2
+    $filledTotal    = $script:_monSessionHistoryFilled
 
     # ── Update hover metadata on canvas Tag ──────────────────────────────
     # MouseMove and MouseLeave are wired once in Initialize-MonitoringTab and
@@ -721,6 +749,7 @@ function Update-SessionHistoryChart {
     $Canvas.Tag = [PSCustomObject]@{
         SessionsPoints      = $filledSessions
         DisconnectedPoints  = $filledDisc
+        TotalPoints         = $filledTotal
         ML                  = $ml; MR = $mr; MT = $mt; MB = $mb
         YMax                = $yMax
         TMin                = if ($filledSessions -and $filledSessions.Count -gt 0) { $filledSessions[0].Time } else { [datetime]::UtcNow }
@@ -730,7 +759,7 @@ function Update-SessionHistoryChart {
     # Re-add the persistent hover overlay elements.
     # Canvas.Children.Clear() at the top of this function removed them along with
     # everything else. They must be re-added on every redraw so they remain visible
-    # on top of the newly drawn lines. The handlers themselves stay wired — only
+    # on top of the newly drawn lines. The handlers themselves stay wired - only
     # the visual elements need to be put back into the canvas child collection.
     if ($script:_monShCrosshair) { [void]$Canvas.Children.Add($script:_monShCrosshair) }
     if ($script:_monShDot)       { [void]$Canvas.Children.Add($script:_monShDot) }
@@ -774,14 +803,9 @@ function Invoke-RttByGatewayQuery {
         }
     }
 
-    $tok  = Get-ArmToken
-    $body = @{ query = $kql; timespan = $isoTimespan }
-    $resp = Invoke-ArmRestMethod -Method POST `
-                -Path "$($script:LawWorkspaceResourceId)/api/query" `
-                -Token $tok `
-                -ApiVersion '2020-08-01' `
-                -Body $body `
-                -FullResponse
+    $resp = Invoke-LawQuery -Kql $kql -Timespan $isoTimespan `
+                -WorkspaceResourceId $script:LawWorkspaceResourceId `
+                -QueryBaseUrl $script:LawQueryBaseUrl
 
     # ── Parse the LAW columnar JSON response ──────────────────────────────
     # The LAW REST API returns data in a columnar format:
@@ -873,12 +897,12 @@ function Get-SessionHistoryCacheTtlMinutes {
 #     This is the same feed the Azure Portal host pool overview reads from.
 #
 # AGGREGATION (two-stage - full details in data/kql/session-history.kql):
-#   Stage 1: per host per bin — percentile(x, 100) returns the maximum value for
+#   Stage 1: per host per bin - percentile(x, 100) returns the maximum value for
 #            that host within the bin. This is equivalent to max() but avoids the
 #            arg_max type confusion seen in this LAW workspace version where
 #            arg_max returns the timestamp value for subsequent columns instead
 #            of the actual field values.
-#   Stage 2: sum across all hosts — fleet-wide total for each bin.
+#   Stage 2: sum across all hosts - fleet-wide total for each bin.
 #   This correctly handles ~60 near-identical rows per host per bin without
 #   inflating counts by summing all rows.
 #
@@ -923,8 +947,8 @@ function Invoke-SessionHistoryQuery {
     )
 
     # ── Bin size selection ────────────────────────────────────────────────────
-    # $binSize  : KQL bin() expression (e.g. '1h') — substituted into the query
-    # $binMins  : same value in minutes — used by the chart renderer for zero-fill
+    # $binSize  : KQL bin() expression (e.g. '1h') - substituted into the query
+    # $binMins  : same value in minutes - used by the chart renderer for zero-fill
     #
     # For custom date ranges the bin size is derived from the span so the chart
     # stays readable regardless of how wide the window is:
@@ -993,7 +1017,7 @@ function Invoke-SessionHistoryQuery {
     # {{BinSize}}, {{HostPoolFilter}}) that are replaced here before sending.
     # For custom ranges we pass explicit datetime() literals. For relative ranges
     # we use ago() / now() so KQL evaluates them at query execution time.
-    # The REST body timespan is always 'P30D' (30 days) — it acts as a safety
+    # The REST body timespan is always 'P30D' (30 days) - it acts as a safety
     # cap; the actual window is controlled by the where clause in the KQL.
     if ($TimeRange -eq 'custom' -and $CustomFrom -and $CustomTo) {
         $displayStart = "datetime($CustomFrom)"
@@ -1015,17 +1039,13 @@ function Invoke-SessionHistoryQuery {
     # POST to the Log Analytics workspace query endpoint. Response is columnar:
     #   { tables: [{ columns: [{name, type}, ...], rows: [[val, val, ...], ...] }] }
     # Column indices are resolved by name so order changes in LAW don't break parsing.
-    $tok  = Get-ArmToken
-    $body = @{ query = $kql; timespan = 'P30D' }
-    $resp = Invoke-ArmRestMethod -Method POST `
-                -Path "$($script:LawWorkspaceResourceId)/api/query" `
-                -Token $tok `
-                -ApiVersion '2020-08-01' `
-                -Body $body `
-                -FullResponse
+    $resp = Invoke-LawQuery -Kql $kql -Timespan 'P30D' `
+                -WorkspaceResourceId $script:LawWorkspaceResourceId `
+                -QueryBaseUrl $script:LawQueryBaseUrl
 
     $activePts       = [System.Collections.Generic.List[PSCustomObject]]::new()
     $disconnectedPts = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $totalPts        = [System.Collections.Generic.List[PSCustomObject]]::new()
 
     if ($resp.tables -and $resp.tables[0].rows -and $resp.tables[0].rows.Count -gt 0) {
         $rowCount = $resp.tables[0].rows.Count
@@ -1040,10 +1060,11 @@ function Invoke-SessionHistoryQuery {
             if (-not $n) { $n = [string]$_ }
             $n.ToLower()
         })
-        $iTime = [array]::IndexOf($cols, 'timegenerated')
-        $iAct  = [array]::IndexOf($cols, 'active')
-        $iDisc = [array]::IndexOf($cols, 'disconnected')
-        Write-Log "[SessionHistory] Column indices: timegenerated=$iTime active=$iAct disconnected=$iDisc"
+        $iTime  = [array]::IndexOf($cols, 'timegenerated')
+        $iAct   = [array]::IndexOf($cols, 'active')
+        $iDisc  = [array]::IndexOf($cols, 'disconnected')
+        $iTotal = [array]::IndexOf($cols, 'total')
+        Write-Log "[SessionHistory] Column indices: timegenerated=$iTime active=$iAct disconnected=$iDisc total=$iTotal"
 
         if ($iTime -ge 0 -and $iAct -ge 0 -and $iDisc -ge 0) {
             foreach ($r in $resp.tables[0].rows) {
@@ -1054,9 +1075,13 @@ function Invoke-SessionHistoryQuery {
                 # actually consecutive UTC hours have different string representations.
                 # Without .ToUniversalTime() the zero-fill lookup (keyed on ticks) fails
                 # for all bins after the DST transition, producing a flat line at zero.
-                $t = ([datetime]$r[$iTime]).ToUniversalTime()
-                $activePts.Add([PSCustomObject]@{       Time = $t; Value = [double]$r[$iAct]  })
-                $disconnectedPts.Add([PSCustomObject]@{ Time = $t; Value = [double]$r[$iDisc] })
+                $t    = ([datetime]$r[$iTime]).ToUniversalTime()
+                $act  = [double]$r[$iAct]
+                $disc = [double]$r[$iDisc]
+                $tot  = if ($iTotal -ge 0) { [double]$r[$iTotal] } else { $act + $disc }
+                $activePts.Add([PSCustomObject]@{       Time = $t; Value = $act  })
+                $disconnectedPts.Add([PSCustomObject]@{ Time = $t; Value = $disc })
+                $totalPts.Add([PSCustomObject]@{        Time = $t; Value = $tot  })
             }
         } else {
             Write-Log "[SessionHistory] ERROR - expected columns not found. Available: $($cols -join ', ')"
@@ -1072,6 +1097,7 @@ function Invoke-SessionHistoryQuery {
     # so we reverse here after parsing.
     $activePts       = [System.Collections.Generic.List[PSCustomObject]]($activePts       | Sort-Object Time)
     $disconnectedPts = [System.Collections.Generic.List[PSCustomObject]]($disconnectedPts | Sort-Object Time)
+    $totalPts        = [System.Collections.Generic.List[PSCustomObject]]($totalPts        | Sort-Object Time)
 
     Write-Log "[SessionHistory] Parsed $($activePts.Count) bins. binMins=$binMins"
     if ($activePts.Count -gt 0) {
@@ -1085,7 +1111,7 @@ function Invoke-SessionHistoryQuery {
     # Store the result so repeat views of the same range don't re-query LAW.
     # The cache key covers all four query parameters so different ranges/host
     # pools are cached independently. TTL is enforced on the next read.
-    $result = @{ Sessions = @($activePts); Disconnected = @($disconnectedPts); BinMins = $binMins }
+    $result = @{ Sessions = @($activePts); Disconnected = @($disconnectedPts); Total = @($totalPts); BinMins = $binMins }
     if ($null -ne $script:_monShCache) {
         $script:_monShCache[$cacheKey] = @{ Data = $result; FetchedAt = [datetime]::UtcNow }
         Write-Log "[SessionHistory] Cached '$cacheKey' ($($activePts.Count) bins, TTL $ttlMins m)"
@@ -1103,8 +1129,8 @@ function Invoke-SessionHistoryQuery {
 # VISUAL LAYOUT:
 #   - Each logon stage gets a "slot" (equal-width column) across the X-axis
 #   - Within each slot, two vertical bars are drawn side-by-side:
-#       Left bar  = P95 (magenta #E91E63) — worst-case 95th percentile
-#       Right bar = P50 (blue-grey #B0BEC5) — typical median experience
+#       Left bar  = P95 (magenta #E91E63) - worst-case 95th percentile
+#       Right bar = P50 (blue-grey #B0BEC5) - typical median experience
 #   - Value labels appear above each bar showing the duration in seconds
 #   - Stage names appear below the X-axis, centred under their bar pair
 #   - Y-axis shows duration in seconds with auto-scaled nice numbers
@@ -1112,8 +1138,8 @@ function Invoke-SessionHistoryQuery {
 #   - P95 total logon time summary in the top-right corner
 #
 # COLOUR SCHEME (matches AVD Insights):
-#   P95 = #E91E63 (magenta/pink) — the "worst case" metric
-#   P50 = #B0BEC5 (light blue-grey) — the "typical" metric
+#   P95 = #E91E63 (magenta/pink) - the "worst case" metric
+#   P50 = #B0BEC5 (light blue-grey) - the "typical" metric
 #
 # COORDINATE SYSTEM:
 #   Left margin (55px) = Y-axis labels
@@ -1145,6 +1171,15 @@ function Update-WinlogonChart {
     $ch = $h - $mt - $mb    # chart area height
 
     $brushConv = New-Object System.Windows.Media.BrushConverter
+
+    # Theme-aware palette
+    $_dark = $script:DarkTheme -eq $true
+    $_chartBg    = if ($_dark) { '#2D2D30' } else { '#FAFAFA' }
+    $_gridLine   = if ($_dark) { '#3F3F46' } else { '#E0E0E0' }
+    $_axisColor  = if ($_dark) { '#5A5A5A' } else { '#999999' }
+    $_labelColor = if ($_dark) { '#9D9D9D' } else { '#666666' }
+    $_noDataColor = if ($_dark) { '#6A6A6A' } else { '#999999' }
+    $_stageLabelColor = if ($_dark) { '#CCCCCC' } else { '#555555' }
 
     # ── Helper: add a Rectangle bar to the Canvas ──────────────────────────
     $addBar = {
@@ -1181,7 +1216,7 @@ function Update-WinlogonChart {
         $tb = New-Object System.Windows.Controls.TextBlock
         $tb.Text = $text
         $tb.FontSize = if ($fontSize) { $fontSize } else { 10 }
-        $tb.Foreground = $brushConv.ConvertFromString($(if ($color) { $color } else { '#666' }))
+        $tb.Foreground = $brushConv.ConvertFromString($(if ($color) { $color } else { $_labelColor }))
         [System.Windows.Controls.Canvas]::SetLeft($tb, $x)
         [System.Windows.Controls.Canvas]::SetTop($tb, $y)
         if ($hAlign -eq 'Right') {
@@ -1197,14 +1232,14 @@ function Update-WinlogonChart {
 
     # If no data, show a message
     if (-not $StageData -or $StageData.Count -eq 0) {
-        & $addText 'No winlogon stage data available. Click Refresh to query.' ($w / 2 - 150) ($h / 2 - 10) 13 '#999' $null
+        & $addText 'No winlogon stage data available. Click Refresh to query.' ($w / 2 - 150) ($h / 2 - 10) 13 $_noDataColor $null
         return
     }
 
     # ── Chart background ───────────────────────────────────────────────────
     $bg = New-Object System.Windows.Shapes.Rectangle
     $bg.Width = $cw; $bg.Height = $ch
-    $bg.Fill = $brushConv.ConvertFromString('#FAFAFA')
+    $bg.Fill = $brushConv.ConvertFromString($_chartBg)
     [System.Windows.Controls.Canvas]::SetLeft($bg, $ml)
     [System.Windows.Controls.Canvas]::SetTop($bg, $mt)
     [void]$Canvas.Children.Add($bg)
@@ -1224,19 +1259,19 @@ function Update-WinlogonChart {
     # ── Horizontal gridlines ───────────────────────────────────────────────
     foreach ($frac in @(0.25, 0.50, 0.75)) {
         $y = $mt + $ch * (1 - $frac)
-        & $addLine $ml $y ($ml + $cw) $y '#E0E0E0' 1 @(4, 4)
+        & $addLine $ml $y ($ml + $cw) $y $_gridLine 1 @(4, 4)
     }
 
     # ── Y-axis labels (duration in seconds) ────────────────────────────────
     foreach ($frac in @(0, 0.25, 0.50, 0.75, 1.0)) {
         $y = $mt + $ch * (1 - $frac) - 7
         $label = [math]::Round($yMax * $frac, 0).ToString() + 's'
-        & $addText $label ($ml - 5) $y 10 '#666' 'Right'
+        & $addText $label ($ml - 5) $y 10 $_labelColor 'Right'
     }
 
     # ── Axes ───────────────────────────────────────────────────────────────
-    & $addLine $ml $mt $ml ($mt + $ch) '#999' 1 $null              # Y-axis
-    & $addLine $ml ($mt + $ch) ($ml + $cw) ($mt + $ch) '#999' 1 $null  # X-axis
+    & $addLine $ml $mt $ml ($mt + $ch) $_axisColor 1 $null              # Y-axis
+    & $addLine $ml ($mt + $ch) ($ml + $cw) ($mt + $ch) $_axisColor 1 $null  # X-axis
 
     # ── Bar layout calculations ────────────────────────────────────────────
     # Each stage gets a "slot" with two bars (P95, P50) and padding between slots
@@ -1288,7 +1323,7 @@ function Update-WinlogonChart {
         $tb = New-Object System.Windows.Controls.TextBlock
         $tb.Text = $stage.Stage
         $tb.FontSize = 11
-        $tb.Foreground = $brushConv.ConvertFromString('#555')
+        $tb.Foreground = $brushConv.ConvertFromString($_stageLabelColor)
         $tb.TextAlignment = [System.Windows.TextAlignment]::Center
         $tb.Width = 80
         $tb.TextWrapping = [System.Windows.TextWrapping]::Wrap
@@ -1402,7 +1437,7 @@ function Initialize-MonitoringTab {
     $script:_monShTooltip.IsHitTestVisible = $false
     $script:_monShTooltip.Child = $script:_monShTtText
 
-    # Wire MouseMove once — reads layout info from Canvas.Tag updated by each redraw
+    # Wire MouseMove once - reads layout info from Canvas.Tag updated by each redraw
     $script:monSessionHistoryCanvas.Add_MouseMove({
         param($s, $e)
         $info = $s.Tag
@@ -1457,8 +1492,17 @@ function Initialize-MonitoringTab {
 
         $tLocal  = $nearest.Time.ToLocalTime()
         $timeFmt = if ($tSpanSec -gt 86400) { $tLocal.ToString('dd/MM HH:mm') } else { $tLocal.ToString('HH:mm') }
-        $discVal = if ($nearestDisc) { [int]$nearestDisc.Value } else { 0 }
-        $script:_monShTtText.Text = "$timeFmt  |  Active: $([int]$nearest.Value)  |  Disconnected: $discVal"
+        $nearestTotal = $null
+        if ($info.TotalPoints -and $info.TotalPoints.Count -gt 0) {
+            $bestTotDiff = [double]::MaxValue
+            foreach ($pt in $info.TotalPoints) {
+                $diff = [math]::Abs(($pt.Time - $nearest.Time).TotalSeconds)
+                if ($diff -lt $bestTotDiff) { $bestTotDiff = $diff; $nearestTotal = $pt }
+            }
+        }
+        $discVal  = if ($nearestDisc)  { [int]$nearestDisc.Value  } else { 0 }
+        $totalVal = if ($nearestTotal) { [int]$nearestTotal.Value } else { 0 }
+        $script:_monShTtText.Text = "$timeFmt  |  Active: $([int]$nearest.Value)  |  Disconnected: $discVal  |  Total: $totalVal"
 
         $s.UpdateLayout()
         $ttW = $script:_monShTooltip.ActualWidth
@@ -1486,6 +1530,7 @@ function Initialize-MonitoringTab {
             Update-SessionHistoryChart -Canvas $script:monSessionHistoryCanvas `
                 -SessionsData      $script:_monSessionHistoryData.Sessions `
                 -DisconnectedData  $script:_monSessionHistoryData.Disconnected `
+                -TotalData         $script:_monSessionHistoryData.Total `
                 -BinMinutes        $script:_monSessionHistoryBinMins
         }
     })
@@ -1628,11 +1673,13 @@ function Initialize-MonitoringTab {
                 Update-SessionHistoryChart -Canvas $script:monSessionHistoryCanvas `
                     -SessionsData     $shData.Sessions `
                     -DisconnectedData $shData.Disconnected `
+                    -TotalData        $shData.Total `
                     -BinMinutes       $script:_monSessionHistoryBinMins
                 $pts = if ($shData.Sessions) { $shData.Sessions.Count } else { 0 }
                 if ($pts -gt 0) {
                     $maxSessions = [int](($shData.Sessions | Measure-Object Value -Maximum).Maximum)
-                    $script:monSessionHistoryStatus.Text = "Peak Active: $maxSessions"
+                    $maxTotal    = if ($shData.Total) { [int](($shData.Total | Measure-Object Value -Maximum).Maximum) } else { 0 }
+                    $script:monSessionHistoryStatus.Text = "Peak Active: $maxSessions  |  Peak Total: $maxTotal"
                 } else {
                     if (-not $script:monSessionHistoryStatus.Text.StartsWith('Session History query failed')) {
                         $script:monSessionHistoryStatus.Text = 'No session history data found for the selected time range.'
@@ -1740,23 +1787,23 @@ function Initialize-MonitoringTab {
         <TextBlock Grid.Row="0" Grid.Column="0" Text="From:" VerticalAlignment="Center"/>
         <TextBox x:Name="PopFrom" Grid.Row="0" Grid.Column="1"
                  ToolTip="Format: dd/MM/yyyy HH:mm"
-                 BorderBrush="#ABADB3" BorderThickness="1" Height="28"
+                 BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1" Height="28"
                  VerticalContentAlignment="Center" Padding="4,0"/>
 
         <TextBlock Grid.Row="2" Grid.Column="0" Text="To:" VerticalAlignment="Center"/>
         <TextBox x:Name="PopTo" Grid.Row="2" Grid.Column="1"
                  ToolTip="Format: dd/MM/yyyy HH:mm"
-                 BorderBrush="#ABADB3" BorderThickness="1" Height="28"
+                 BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1" Height="28"
                  VerticalContentAlignment="Center" Padding="4,0"/>
 
         <TextBlock x:Name="PopError" Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2"
-                   FontSize="11" Foreground="#D32F2F"/>
+                   FontSize="11" Foreground="#F44336"/>
 
         <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2"
                     Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="PopCancel" Content="Cancel" Margin="0,0,8,0"
-                    Background="#F0F0F0" Foreground="#333"
-                    BorderBrush="#ABADB3" BorderThickness="1"
+                    Background="{DynamicResource Avd.Btn.Cancel.Bg}" Foreground="{DynamicResource Avd.Window.Fg}"
+                    BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
                     IsCancel="True"/>
             <Button x:Name="PopOk" Content="Apply"
                     Background="#0078D4" Foreground="White" BorderThickness="0"
@@ -1871,11 +1918,13 @@ function Initialize-MonitoringTab {
                 Update-SessionHistoryChart -Canvas $script:monSessionHistoryCanvas `
                     -SessionsData     $shData.Sessions `
                     -DisconnectedData $shData.Disconnected `
+                    -TotalData        $shData.Total `
                     -BinMinutes       $script:_monSessionHistoryBinMins
                 $pts = if ($shData.Sessions) { $shData.Sessions.Count } else { 0 }
                 if ($pts -gt 0) {
                     $maxSessions = [int](($shData.Sessions | Measure-Object Value -Maximum).Maximum)
-                    $script:monSessionHistoryStatus.Text = "Peak Active: $maxSessions"
+                    $maxTotal    = if ($shData.Total) { [int](($shData.Total | Measure-Object Value -Maximum).Maximum) } else { 0 }
+                    $script:monSessionHistoryStatus.Text = "Peak Active: $maxSessions  |  Peak Total: $maxTotal"
                 } else {
                     $script:monSessionHistoryStatus.Text = 'No session history data found.'
                 }
@@ -1896,6 +1945,428 @@ function Initialize-MonitoringTab {
     # ── RTT by Gateway Region controls ─────────────────────────────────────
     $script:monRttGrid   = $Window.FindName('MonRttGrid')
     $script:monRttStatus = $Window.FindName('MonRttStatus')
+
+    # ── Custom KQL Query popup ─────────────────────────────────────────────
+    $script:monCustomQueryBtn = $Window.FindName('MonCustomQueryBtn')
+    $script:_kqlQueriesPath   = Join-Path $env:APPDATA 'AVDDashboard\kql-queries.json'
+    $script:_kqlPopupWin      = $null   # reuse once created
+
+    function script:Get-SavedKqlQueries {
+        if (-not (Test-Path $script:_kqlQueriesPath)) { return @() }
+        try {
+            $raw    = Get-Content $script:_kqlQueriesPath -Raw -ErrorAction Stop
+            $result = $raw | ConvertFrom-Json -ErrorAction Stop
+            if ($null -eq $result) { return @() }
+            return @($result)
+        } catch { return @() }
+    }
+    function script:Save-KqlQueries {
+        param($list)
+        $dir = Split-Path $script:_kqlQueriesPath -Parent
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        @($list) | ConvertTo-Json -Depth 3 | Set-Content $script:_kqlQueriesPath -Encoding UTF8
+    }
+
+    function script:Open-KqlQueryWindow {
+        # If window already open, just bring it to front
+        if ($script:_kqlPopupWin -and $script:_kqlPopupWin.IsVisible) {
+            $script:_kqlPopupWin.Activate()
+            return
+        }
+
+        [xml]$kqlWinXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Custom KQL Query" Width="1000" Height="640"
+        WindowStartupLocation="CenterOwner"
+        FontFamily="Segoe UI" FontSize="12"
+        ShowInTaskbar="False">
+    <DockPanel Margin="12">
+        <!-- Toolbar -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <Button x:Name="KqlRunBtn" DockPanel.Dock="Right" Content="Run"
+                    Width="80" Height="30" FontSize="12" FontWeight="SemiBold"
+                    Background="#4CAF50" Foreground="White" BorderThickness="0" Cursor="Hand">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#388E3C"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2E7D32"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+            <Button x:Name="KqlSaveBtn" DockPanel.Dock="Right" Content="Save"
+                    Width="70" Height="30" FontSize="12"
+                    Background="#0078D4" Foreground="White" BorderThickness="0"
+                    Cursor="Hand" Margin="0,0,8,0">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+            <Button x:Name="KqlNewBtn" DockPanel.Dock="Right" Content="New"
+                    Width="60" Height="30" FontSize="12"
+                    Background="{DynamicResource Avd.Btn.Cancel.Bg}"
+                    Foreground="{DynamicResource Avd.Window.Fg}"
+                    BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
+                    Cursor="Hand" Margin="0,0,8,0">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+            <ComboBox x:Name="KqlSavedCombo" Width="220" Height="30"
+                      FontSize="12" Margin="0,0,8,0" DockPanel.Dock="Left"
+                      ToolTip="Saved queries"/>
+            <Button x:Name="KqlDeleteBtn" Content="Delete" Height="30" Width="60"
+                    FontSize="12" Cursor="Hand" DockPanel.Dock="Left" Margin="0,0,0,0"
+                    Background="{DynamicResource Avd.Btn.Cancel.Bg}"
+                    Foreground="{DynamicResource Avd.Window.Fg}"
+                    BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </DockPanel>
+        <!-- Status bar -->
+        <TextBlock x:Name="KqlStatus" DockPanel.Dock="Bottom"
+                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,0"/>
+        <!-- Main: editor top, results bottom -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="120"/>
+                <RowDefinition Height="6"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Border Grid.Row="0" Background="{DynamicResource Avd.Card.Bg}"
+                    BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" CornerRadius="4">
+                <TextBox x:Name="KqlEditor" AcceptsReturn="True" AcceptsTab="True"
+                         TextWrapping="NoWrap" FontFamily="Consolas" FontSize="12"
+                         Background="{DynamicResource Avd.Card.Bg}"
+                         Foreground="{DynamicResource Avd.Window.Fg}"
+                         BorderThickness="0" Padding="8,6"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Auto"
+                         VerticalContentAlignment="Top"/>
+            </Border>
+            <GridSplitter Grid.Row="1" HorizontalAlignment="Stretch" Height="6"
+                          Background="{DynamicResource Avd.Border.Std}" ResizeBehavior="PreviousAndNext"/>
+            <Border Grid.Row="2" Background="{DynamicResource Avd.Card.Bg}"
+                    BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" CornerRadius="4">
+                <DataGrid x:Name="KqlResultGrid"
+                          AutoGenerateColumns="False" IsReadOnly="True"
+                          CanUserAddRows="False" CanUserDeleteRows="False"
+                          CanUserSortColumns="True" HeadersVisibility="Column"
+                          GridLinesVisibility="Horizontal"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalGridLinesBrush="{DynamicResource Avd.Border.Grid}"
+                          BorderThickness="0"
+                          Foreground="{DynamicResource Avd.Window.Fg}"
+                          Background="{DynamicResource Avd.Card.Bg}"
+                          RowBackground="{DynamicResource Avd.Card.Bg}"
+                          AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}"
+                          FontSize="12" ColumnHeaderHeight="32" RowHeight="28">
+                    <DataGrid.ColumnHeaderStyle>
+                        <Style TargetType="DataGridColumnHeader">
+                            <Setter Property="Background" Value="{DynamicResource Avd.ColHeader.Bg}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource Avd.ColHeader.Fg}"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                            <Setter Property="FontSize" Value="12"/>
+                            <Setter Property="Padding" Value="8,4"/>
+                            <Setter Property="BorderThickness" Value="0,0,1,0"/>
+                            <Setter Property="BorderBrush" Value="{DynamicResource Avd.ColHeader.Border}"/>
+                        </Style>
+                    </DataGrid.ColumnHeaderStyle>
+                </DataGrid>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>
+'@
+        $kqlReader = New-Object System.Xml.XmlNodeReader $kqlWinXaml
+        $kqlWin    = [System.Windows.Markup.XamlReader]::Load($kqlReader)
+        $kqlWin.Owner = $script:_monMainWindow
+        try { Set-WindowIcon -Window $kqlWin -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+
+        # Apply theme resources (same pattern as run-command.ps1)
+        try {
+            $_tc = Get-Content -Raw -Path (Join-Path $PSScriptRoot "..\data\$script:_themeFile-theme.xaml") -ErrorAction Stop
+            $_themeRd = [System.Windows.Markup.XamlReader]::Parse(
+                "<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' " +
+                "xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_tc</ResourceDictionary>")
+            $kqlWin.Resources.MergedDictionaries.Add($_themeRd)
+            $kqlWin.SetResourceReference([System.Windows.Window]::BackgroundProperty, 'Avd.Window.Bg')
+            $kqlWin.SetResourceReference([System.Windows.Window]::ForegroundProperty, 'Avd.Window.Fg')
+        } catch {}
+        if ($script:DarkTheme) {
+            $kqlWin.Add_SourceInitialized({
+                $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($kqlWin)).Handle
+                $v = 1
+                try { [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4) } catch {}
+            })
+        }
+
+        # Store immediately so all event handlers can resolve controls via FindName
+        # (avoids closure variable-capture issues with non-modal Show())
+        $script:_kqlPopupWin = $kqlWin
+
+        # Helper to refresh combo - uses script: ref so it works from any event handler
+        $script:_kqlSyncCombo = {
+            $w = $script:_kqlPopupWin; $c = $w.FindName('KqlSavedCombo')
+            $c.Items.Clear(); [void]$c.Items.Add('')
+            foreach ($q in (Get-SavedKqlQueries)) { [void]$c.Items.Add($q.Name) }
+            $c.SelectedIndex = 0
+        }
+
+        # Seed with sample query on first launch
+        if (-not (Test-Path $script:_kqlQueriesPath)) {
+            Save-KqlQueries @([pscustomobject]@{ Name = 'Sample - recent connections'; Kql = 'WVDConnections | take 10' })
+        }
+
+        # Register combo handler BEFORE initial sync so the first selection drives the editor
+        $kqlWin.FindName('KqlSavedCombo').Add_SelectionChanged({
+            $w = $script:_kqlPopupWin; $sel = $w.FindName('KqlSavedCombo').SelectedItem
+            if ($sel) {
+                $q = Get-SavedKqlQueries | Where-Object { $_.Name -eq $sel }
+                if ($q) { $w.FindName('KqlEditor').Text = $q.Kql; $w.FindName('KqlStatus').Text = '' }
+            }
+        })
+
+        # Populate combo then select the first saved query (drives editor via SelectionChanged)
+        & $script:_kqlSyncCombo
+        $_firstQ = Get-SavedKqlQueries | Select-Object -First 1
+        if ($_firstQ) {
+            $kqlWin.FindName('KqlSavedCombo').SelectedItem = $_firstQ.Name
+        }
+
+        # New
+        $kqlWin.FindName('KqlNewBtn').Add_Click({
+            $w = $script:_kqlPopupWin
+            $w.FindName('KqlSavedCombo').SelectedIndex = 0
+            $w.FindName('KqlEditor').Text = ''
+            $w.FindName('KqlStatus').Text = ''
+            $w.FindName('KqlEditor').Focus()
+        })
+
+        # Save
+        $script:_kqlNameDlg     = $null   # name-entry dialog window
+        $script:_kqlPendingKql  = ''      # KQL text being saved (set before ShowDialog)
+
+        $kqlWin.FindName('KqlSaveBtn').Add_Click({
+            try {
+            $w   = $script:_kqlPopupWin
+            $kql = $w.FindName('KqlEditor').Text.Trim()
+            if ([string]::IsNullOrWhiteSpace($kql)) { $w.FindName('KqlStatus').Text = 'Enter a KQL query before saving.'; return }
+
+            $script:_kqlPendingKql = $kql
+
+            [xml]$ndXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Save Query" Width="320" Height="175"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        ShowInTaskbar="False" FontFamily="Segoe UI" FontSize="12">
+    <Grid Margin="14,14,14,10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="8"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="12"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Query name:"/>
+        <TextBox x:Name="NdInput" Grid.Row="2" Height="28" Padding="4,4"
+                 VerticalContentAlignment="Center" BorderThickness="1"
+                 Background="{DynamicResource Avd.Card.Bg}"
+                 Foreground="{DynamicResource Avd.Window.Fg}"
+                 BorderBrush="{DynamicResource Avd.Border.Input}"/>
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="NdCancel" Content="Cancel" Width="70" Height="28"
+                    Margin="0,0,8,0" IsCancel="True"
+                    Background="{DynamicResource Avd.Btn.Cancel.Bg}"
+                    Foreground="{DynamicResource Avd.Window.Fg}"
+                    BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1" Cursor="Hand">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+            <Button x:Name="NdOk" Content="Save" Width="70" Height="28"
+                    Background="#0078D4" Foreground="White" BorderThickness="0" IsDefault="True" Cursor="Hand">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </StackPanel>
+    </Grid>
+</Window>
+'@
+            $ndReader = New-Object System.Xml.XmlNodeReader $ndXaml
+            $script:_kqlNameDlg = [System.Windows.Markup.XamlReader]::Load($ndReader)
+            $script:_kqlNameDlg.Owner = $script:_kqlPopupWin
+            try { Set-WindowIcon -Window $script:_kqlNameDlg -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+            try {
+                $_tc2 = Get-Content -Raw -Path (Join-Path $PSScriptRoot "..\data\$script:_themeFile-theme.xaml") -ErrorAction Stop
+                $_rd2 = [System.Windows.Markup.XamlReader]::Parse(
+                    "<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' " +
+                    "xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_tc2</ResourceDictionary>")
+                $script:_kqlNameDlg.Resources.MergedDictionaries.Add($_rd2)
+                $script:_kqlNameDlg.SetResourceReference([System.Windows.Window]::BackgroundProperty, 'Avd.Window.Bg')
+                $script:_kqlNameDlg.SetResourceReference([System.Windows.Window]::ForegroundProperty, 'Avd.Window.Fg')
+            } catch {}
+            if ($script:DarkTheme) {
+                $script:_kqlNameDlg.Add_SourceInitialized({
+                    $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($script:_kqlNameDlg)).Handle
+                    $v = 1
+                    try { [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4) } catch {}
+                })
+            }
+
+            $existingName = $script:_kqlPopupWin.FindName('KqlSavedCombo').SelectedItem
+            if ($existingName) { $script:_kqlNameDlg.FindName('NdInput').Text = $existingName }
+            $script:_kqlNameDlg.FindName('NdInput').SelectAll()
+
+            $script:_kqlNameDlg.FindName('NdCancel').Add_Click({
+                $script:_kqlNameDlg.DialogResult = $false; $script:_kqlNameDlg.Close()
+            })
+            $script:_kqlNameDlg.FindName('NdOk').Add_Click({
+                $txt = $script:_kqlNameDlg.FindName('NdInput').Text.Trim()
+                if ([string]::IsNullOrWhiteSpace($txt)) { return }
+                $script:_kqlNameDlg.Tag = $txt
+                $script:_kqlNameDlg.DialogResult = $true
+                $script:_kqlNameDlg.Close()
+            })
+
+            $script:_kqlNameDlg.ShowDialog() | Out-Null
+            $name = [string]$script:_kqlNameDlg.Tag
+            $script:_kqlNameDlg = $null
+
+            if ([string]::IsNullOrWhiteSpace($name)) { return }
+            $kqlToSave = $script:_kqlPendingKql
+            $queries = @(Get-SavedKqlQueries | Where-Object { $_.Name -ne $name })
+            $queries += [pscustomobject]@{ Name = $name; Kql = $kqlToSave }
+            Save-KqlQueries $queries
+            & $script:_kqlSyncCombo
+            $script:_kqlPopupWin.FindName('KqlSavedCombo').SelectedItem = $name
+            $script:_kqlPopupWin.FindName('KqlStatus').Text = "Saved: $name"
+            } catch {
+                [System.Windows.MessageBox]::Show("Save error: $_", "KQL Save Error", 'OK', 'Error') | Out-Null
+            }
+        })
+
+        # Delete
+        $kqlWin.FindName('KqlDeleteBtn').Add_Click({
+            $w   = $script:_kqlPopupWin
+            $sel = $w.FindName('KqlSavedCombo').SelectedItem
+            if (-not $sel) { $w.FindName('KqlStatus').Text = 'Select a saved query to delete.'; return }
+            $queries = @(Get-SavedKqlQueries | Where-Object { $_.Name -ne $sel })
+            Save-KqlQueries $queries; & $script:_kqlSyncCombo
+            $w.FindName('KqlEditor').Text = ''; $w.FindName('KqlStatus').Text = "Deleted: $sel"
+        })
+
+        # Run
+        $kqlWin.FindName('KqlRunBtn').Add_Click({
+            $w   = $script:_kqlPopupWin
+            $kql = $w.FindName('KqlEditor').Text.Trim()
+            if ([string]::IsNullOrWhiteSpace($kql)) { $w.FindName('KqlStatus').Text = 'Enter a KQL query to run.'; return }
+            if (-not $script:LawWorkspaceResourceId) { $w.FindName('KqlStatus').Text = 'Log Analytics Workspace not configured.'; return }
+            $w.FindName('KqlStatus').Text = 'Running...'
+            $grid = $w.FindName('KqlResultGrid')
+            $grid.Columns.Clear(); $grid.ItemsSource = $null
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            try {
+                $resp = Invoke-LawQuery -Kql $kql -Timespan 'P30D' `
+                            -WorkspaceResourceId $script:LawWorkspaceResourceId `
+                            -QueryBaseUrl $script:LawQueryBaseUrl
+                $sw.Stop()
+                if (-not $resp -or -not $resp.tables -or $resp.tables.Count -eq 0 -or
+                    -not $resp.tables[0].rows -or $resp.tables[0].rows.Count -eq 0) {
+                    $w.FindName('KqlStatus').Text = "No rows returned ($([int]$sw.Elapsed.TotalMilliseconds) ms)"; return
+                }
+                $cols = @($resp.tables[0].columns | ForEach-Object { $n = [string]$_.name; if (-not $n) { $n = [string]$_.ColumnName }; $n })
+                $dt = [System.Data.DataTable]::new()
+                foreach ($c in $cols) { [void]$dt.Columns.Add($c) }
+                foreach ($row in $resp.tables[0].rows) {
+                    $dr = $dt.NewRow()
+                    for ($i = 0; $i -lt $cols.Count; $i++) { $dr[$cols[$i]] = [string]$row[$i] }
+                    $dt.Rows.Add($dr)
+                }
+                foreach ($c in $cols) {
+                    $col = [System.Windows.Controls.DataGridTextColumn]::new()
+                    $col.Header  = $c; $col.Binding = [System.Windows.Data.Binding]::new($c)
+                    $col.Width   = [System.Windows.Controls.DataGridLength]::Auto
+                    [void]$grid.Columns.Add($col)
+                }
+                $grid.ItemsSource = $dt.DefaultView
+                $w.FindName('KqlStatus').Text = "$($dt.Rows.Count) row(s) - $([int]$sw.Elapsed.TotalMilliseconds) ms"
+            } catch {
+                $sw.Stop()
+                $w.FindName('KqlStatus').Text = "Error: $_"
+            }
+        })
+
+        $kqlWin.Show()
+        $kqlWin.FindName('KqlEditor').Focus()
+    }
+
+    $script:monCustomQueryBtn.Add_Click({ Open-KqlQueryWindow })
 
     # ── Auto-refresh when the Monitoring tab is selected ───────────────────
     # Uses a one-shot DispatcherTimer (100ms delay) so the tab renders first

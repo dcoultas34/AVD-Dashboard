@@ -20,7 +20,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-04-15
+    Version       : 2026-04-29
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -66,8 +66,26 @@
     Path to an alternative config.psd1 file. Defaults to config\config.psd1
     relative to the script root.
 
+.PARAMETER UseDeviceAuthentication
+    Use device code flow instead of interactive browser sign-in.
+
+.PARAMETER UseExistingContext
+    Skip Connect-AzAccount and reuse an existing Az context from the current
+    PowerShell session. Used when launched from the dashboard or when the user
+    has already authenticated manually.
+
+.PARAMETER UseServicePrincipal
+    Authenticate non-interactively using a DPAPI-encrypted App ID + Client Secret
+    stored in AppData. Requires Azure.TenantId to be set in config.psd1.
+
 .EXAMPLE
     .\Profile-Tools.ps1
+
+.EXAMPLE
+    .\Profile-Tools.ps1 -UseDeviceAuthentication
+
+.EXAMPLE
+    .\Profile-Tools.ps1 -UseExistingContext
 
 .EXAMPLE
     .\Profile-Tools.ps1 -EnableLogging
@@ -75,19 +93,42 @@
 
 param(
     [switch]$EnableLogging,
-    [string]$ConfigFile
+    [string]$ConfigFile,
+    [switch]$UseDeviceAuthentication,
+    [switch]$UseExistingContext,
+    [switch]$UseServicePrincipal,
+    [int]$DashboardTheme = -1
 )
 
 # =============================================================================
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-04-15"
+$ScriptVersion = "2026-04-29"
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
+try {
+    Add-Type -MemberDefinition '[DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);' `
+             -Name 'DwmApiPT' -Namespace 'Win32' -ErrorAction Stop
+} catch {}
+
+# Read dark theme: from dashboard parameter if launched from dashboard, else from registry
+$script:_ptRegPath = 'HKCU:\Software\AVDDashboard'
+$_ptLaunchedFromDashboard = ($DashboardTheme -ge 0)
+$_ptDark = $false
+if ($_ptLaunchedFromDashboard) {
+    $_ptDark = [bool]$DashboardTheme
+} else {
+    try {
+        $_kv = Get-ItemProperty -Path $script:_ptRegPath -Name 'DarkTheme' -ErrorAction Stop
+        $_ptDark = [bool][int]$_kv.DarkTheme
+    } catch {}
+}
+$script:_ptDark = $_ptDark
+
 # =============================================================================
-# Splash / Loading Window - shown immediately so the user knows something is happening
+# Splash / Loading Window - shown after auth completes
 # =============================================================================
 
 [xml]$splashXaml = @'
@@ -122,11 +163,23 @@ $splashReader    = New-Object System.Xml.XmlNodeReader $splashXaml
 $splashWin       = [Windows.Markup.XamlReader]::Load($splashReader)
 $splashStatus    = $splashWin.FindName("SplashStatus")
 $splashProgress  = $splashWin.FindName("SplashProgress")
-$splashWin.Show()
-$splashWin.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+if ($_ptDark) {
+    $splashBorder = $splashWin.Content
+    $splashBorder.Background  = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x25,0x25,0x26)
+    $splashBorder.BorderBrush = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x3F,0x3F,0x46)
+    $splashStatus.Foreground  = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x9D,0x9D,0x9D)
+    try {
+        $splashWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($splashWin)).Handle
+            $v = 1
+            [void][Win32.DwmApiPT]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    } catch {}
+}
 
 function Set-SplashStatus {
     param([string]$Text, [int]$Progress = -1)
+    if (-not $splashWin.IsVisible) { return }
     $splashWin.Dispatcher.Invoke([Action]{
         $splashStatus.Text = $Text
         if ($Progress -ge 0) { $splashProgress.Value = $Progress }
@@ -222,9 +275,9 @@ if ($missingModules) {
 # Dot-source REST API helpers (provides Invoke-ArmRestMethod, Get-ArmToken)
 # =============================================================================
 
-Set-SplashStatus "Loading REST API helpers..." -Progress 10
 . (Join-Path $PSScriptRoot 'scripts\rest-api-helpers.ps1')
 . (Join-Path $PSScriptRoot 'scripts\audit-log.ps1')
+. (Join-Path $PSScriptRoot 'scripts\connect-azure.ps1')
 
 # Set the audit log directory to the project root (logs/ subfolder sits here)
 $script:AuditLogDir = $PSScriptRoot
@@ -237,18 +290,25 @@ if ($EnableLogging) {
 }
 
 # =============================================================================
-# Azure auth check
+# Azure authentication
 # =============================================================================
 
-Set-SplashStatus "Checking Azure connection..." -Progress 25
-try { $azContext = Get-AzContext -ErrorAction Stop } catch { $azContext = $null }
+$_cfgBase = [System.IO.Path]::GetFileNameWithoutExtension($_configFile)
+$_authTenantId = if ($_cfg.Azure.TenantId)      { [string]$_cfg.Azure.TenantId }      else { '' }
+$_authSubId    = if ($_cfg.Azure.SubscriptionId) { [string]$_cfg.Azure.SubscriptionId } else { '' }
+$azContext = Connect-AzureDashboard `
+    -TenantId        $_authTenantId `
+    -SubscriptionId  $_authSubId `
+    -UseDeviceAuthentication:$UseDeviceAuthentication `
+    -UseExistingContext:$UseExistingContext `
+    -UseServicePrincipal:$UseServicePrincipal `
+    -CredentialTag   $_cfgBase `
+    -LogCallback     { param($m); if ($script:LogFile) { Write-Log $m } else { Write-Host $m } }
 
-if (-not $azContext -or -not $azContext.Account) {
-    [System.Windows.MessageBox]::Show(
-        "You are not connected to Azure.`n`nPlease run Connect-AzAccount in this PowerShell session and then re-run the script.",
-        "Not Connected to Azure", "OK", "Warning") | Out-Null
-    exit 1
-}
+# Auth complete - show splash now (same pattern as live dashboard: auth first, then UI)
+$splashWin.Show()
+$splashWin.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+Set-SplashStatus "Connecting to Azure..." -Progress 25
 
 # =============================================================================
 # Azure context + storage OAuth setup
@@ -297,7 +357,7 @@ Set-SplashStatus "Building UI..." -Progress 85
 # XAML Window
 # =============================================================================
 
-[xml]$xaml = @'
+$_ptXamlRaw = @'
 <Window
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -305,7 +365,8 @@ Set-SplashStatus "Building UI..." -Progress 85
     Height="680" Width="860"
     MinHeight="500" MinWidth="640"
     WindowStartupLocation="CenterScreen"
-    Background="#F4F6F9"
+    Background="{DynamicResource Avd.Window.Bg}"
+    Foreground="{DynamicResource Avd.Window.Fg}"
     FontFamily="Segoe UI"
     UseLayoutRounding="True">
 
@@ -346,16 +407,16 @@ Set-SplashStatus "Building UI..." -Progress 85
 
         <!-- Danger button -->
         <Style x:Key="DangerBtn" TargetType="Button" BasedOn="{StaticResource PrimaryBtn}">
-            <Setter Property="Background" Value="#D83B01"/>
+            <Setter Property="Background" Value="{DynamicResource Avd.Btn.Danger.Bg}"/>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#B33200"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Btn.Danger.Hover}"/>
                 </Trigger>
                 <Trigger Property="IsPressed"   Value="True">
-                    <Setter Property="Background" Value="#8C2600"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Btn.Danger.Press}"/>
                 </Trigger>
                 <Trigger Property="IsEnabled"   Value="False">
-                    <Setter Property="Background" Value="#E8A88A"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Btn.Danger.Disabled}"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -375,7 +436,7 @@ Set-SplashStatus "Building UI..." -Progress 85
 
         <!-- Card border -->
         <Style x:Key="CardBorder" TargetType="Border">
-            <Setter Property="Background"   Value="White"/>
+            <Setter Property="Background"   Value="{DynamicResource Avd.Card.Bg}"/>
             <Setter Property="CornerRadius" Value="8"/>
             <Setter Property="Padding"      Value="20,16"/>
             <Setter Property="Effect">
@@ -389,9 +450,10 @@ Set-SplashStatus "Building UI..." -Progress 85
         <Style x:Key="InputBox" TargetType="TextBox">
             <Setter Property="FontSize"         Value="13"/>
             <Setter Property="Padding"          Value="10,8"/>
-            <Setter Property="BorderBrush"      Value="#C8CDD3"/>
+            <Setter Property="BorderBrush"      Value="{DynamicResource Avd.Border.Input2}"/>
             <Setter Property="BorderThickness"  Value="1"/>
-            <Setter Property="Background"       Value="White"/>
+            <Setter Property="Background"       Value="{DynamicResource Avd.Input.Bg}"/>
+            <Setter Property="Foreground"       Value="{DynamicResource Avd.Window.Fg}"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Style.Triggers>
                 <Trigger Property="IsFocused" Value="True">
@@ -438,12 +500,38 @@ Set-SplashStatus "Building UI..." -Progress 85
             </Setter>
         </Style>
 
+        <!-- THEME_SLOT -->
+        <Style TargetType="TextBox">
+            <Setter Property="Foreground" Value="{DynamicResource Avd.Window.Fg}"/>
+        </Style>
+        <Style x:Key="ToggleSwitch" TargetType="ToggleButton">
+            <Setter Property="Width"  Value="40"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Track" CornerRadius="11" Background="#AAAAAA">
+                            <Ellipse x:Name="Thumb" Width="16" Height="16" Fill="White"
+                                     HorizontalAlignment="Left" Margin="3,0"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="#0078D4"/>
+                                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </Window.Resources>
 
     <DockPanel>
 
         <!-- == Status Bar == -->
-        <Border DockPanel.Dock="Bottom" Background="#0078D4" Height="32">
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.StatusBar.Bg}" Height="32">
             <Grid Margin="12,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -466,19 +554,30 @@ Set-SplashStatus "Building UI..." -Progress 85
         </Border>
 
         <!-- == Header == -->
-        <Border DockPanel.Dock="Top" Background="White" Padding="20,14,20,14">
+        <Border DockPanel.Dock="Top" Background="{DynamicResource Avd.Header.Bg}" Padding="20,14,20,14">
             <Border.Effect>
                 <DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.10" Color="#000000"/>
             </Border.Effect>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="" FontSize="22" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                <StackPanel>
-                    <TextBlock Text="Profile Tools"
-                               FontSize="20" FontWeight="Bold" Foreground="#0078D4"/>
-                    <TextBlock x:Name="SubText"
-                               FontSize="12" Foreground="#666"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="" FontSize="22" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <StackPanel>
+                        <TextBlock Text="Profile Tools"
+                                   FontSize="20" FontWeight="Bold" Foreground="#0078D4"/>
+                        <TextBlock x:Name="SubText"
+                                   FontSize="12" Foreground="{DynamicResource Avd.Fg.Muted}"/>
+                    </StackPanel>
                 </StackPanel>
-            </StackPanel>
+                <StackPanel x:Name="DarkTogglePanel" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
+                    <TextBlock Text="Dark" Foreground="{DynamicResource Avd.Fg.Muted}" FontSize="12"
+                               VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <ToggleButton x:Name="DarkToggle" Style="{StaticResource ToggleSwitch}"/>
+                </StackPanel>
+            </Grid>
         </Border>
 
         <!-- == Tab Control == -->
@@ -489,7 +588,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                     <Setter Property="FontSize"   Value="13"/>
                     <Setter Property="FontWeight" Value="SemiBold"/>
                     <Setter Property="Padding"    Value="16,8"/>
-                    <Setter Property="Foreground" Value="#555"/>
+                    <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Secondary}"/>
                     <Setter Property="Template">
                         <Setter.Value>
                             <ControlTemplate TargetType="TabItem">
@@ -510,7 +609,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                         <Setter Property="Foreground" Value="#0078D4"/>
                                     </Trigger>
                                     <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="TabBorder" Property="Background" Value="#F0F4F8"/>
+                                        <Setter TargetName="TabBorder" Property="Background" Value="{DynamicResource Avd.TabHover.Bg}"/>
                                     </Trigger>
                                 </ControlTemplate.Triggers>
                             </ControlTemplate>
@@ -543,10 +642,10 @@ Set-SplashStatus "Building UI..." -Progress 85
 
                             <StackPanel Grid.Row="0">
                                 <TextBlock Text="FSLogix Profile Folder Name"
-                                           FontSize="13" FontWeight="SemiBold" Foreground="#1F2937"
+                                           FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource Avd.Window.Fg}"
                                            Margin="0,0,0,4"/>
                                 <TextBlock Text="Enter the profile folder name exactly as it appears on the file share (e.g. JSmith_S-1-5-21-1234567890-...)."
-                                           FontSize="11" Foreground="#6B7280" TextWrapping="Wrap"/>
+                                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" TextWrapping="Wrap"/>
                             </StackPanel>
 
                             <Grid Grid.Row="2">
@@ -576,7 +675,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                 <StackPanel x:Name="PairSelectPanel" Orientation="Horizontal" Margin="0,0,0,6" Visibility="Collapsed"/>
                                 <TextBlock x:Name="StorageAccountsLabel"
                                            Text="Storage accounts to check:"
-                                           FontSize="11" Foreground="#6B7280" Margin="0,8,0,4"/>
+                                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" Margin="0,8,0,4"/>
                                 <StackPanel x:Name="StorageAccountPanel" Orientation="Horizontal"/>
                             </StackPanel>
 
@@ -643,10 +742,10 @@ Set-SplashStatus "Building UI..." -Progress 85
 
                             <StackPanel Grid.Row="0">
                                 <TextBlock Text="FSLogix Profile Folder Name"
-                                           FontSize="13" FontWeight="SemiBold" Foreground="#1F2937"
+                                           FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource Avd.Window.Fg}"
                                            Margin="0,0,0,4"/>
                                 <TextBlock Text="Check for and remove FSLogix lock files and open file handles without deleting the profile folder. Use this to unlock a stuck profile."
-                                           FontSize="11" Foreground="#6B7280" TextWrapping="Wrap"/>
+                                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" TextWrapping="Wrap"/>
                             </StackPanel>
 
                             <Grid Grid.Row="2">
@@ -674,7 +773,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                             <StackPanel Grid.Row="4" Orientation="Vertical">
                                 <StackPanel x:Name="UnlockPairSelectPanel" Orientation="Horizontal" Margin="0,0,0,6" Visibility="Collapsed"/>
                                 <TextBlock Text="Storage accounts to check:"
-                                           FontSize="11" Foreground="#6B7280" Margin="0,8,0,4"/>
+                                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" Margin="0,8,0,4"/>
                                 <StackPanel x:Name="UnlockStorageAccountPanel" Orientation="Horizontal"/>
                             </StackPanel>
                         </Grid>
@@ -729,9 +828,9 @@ Set-SplashStatus "Building UI..." -Progress 85
                     <Border Grid.Row="0" Style="{StaticResource CardBorder}">
                         <StackPanel>
                             <TextBlock Text="Azure File Share Locations"
-                                       FontSize="13" FontWeight="SemiBold" Foreground="#1F2937"
+                                       FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource Avd.Window.Fg}"
                                        Margin="0,0,0,4"/>
-                            <TextBlock FontSize="11" Foreground="#6B7280" TextWrapping="Wrap">
+                            <TextBlock FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" TextWrapping="Wrap">
                                 Quick links to the FSLogix profile share locations for each configured storage account.
                                 Click <Bold>Open in Explorer</Bold> to browse the share directly, or
                                 <Bold>Copy Path</Bold> to copy the UNC path to your clipboard.
@@ -773,10 +872,10 @@ Set-SplashStatus "Building UI..." -Progress 85
 
                             <StackPanel Grid.Row="0">
                                 <TextBlock Text="Profile Folder Sizes"
-                                           FontSize="13" FontWeight="SemiBold" Foreground="#1F2937"
+                                           FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource Avd.Window.Fg}"
                                            Margin="0,0,0,4"/>
                                 <TextBlock Text="Select the storage accounts to scan then click Scan. Double-click any row to open that folder in Explorer."
-                                           FontSize="11" Foreground="#6B7280" TextWrapping="Wrap"/>
+                                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" TextWrapping="Wrap"/>
                             </StackPanel>
 
                             <Grid Grid.Row="2">
@@ -794,7 +893,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                             <StackPanel Grid.Row="4" Orientation="Vertical">
                                 <StackPanel x:Name="SizePairSelectPanel" Orientation="Horizontal" Margin="0,0,0,6" Visibility="Collapsed"/>
                                 <TextBlock Text="Storage accounts to scan:"
-                                           FontSize="11" Foreground="#6B7280" Margin="0,8,0,4"/>
+                                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" Margin="0,8,0,4"/>
                                 <StackPanel x:Name="SizeStorageAccountPanel" Orientation="Horizontal"/>
                             </StackPanel>
                         </Grid>
@@ -842,9 +941,10 @@ Set-SplashStatus "Building UI..." -Progress 85
                                       IsReadOnly="True"
                                       SelectionMode="Single"
                                       GridLinesVisibility="Horizontal"
-                                      HorizontalGridLinesBrush="#F0F2F4"
-                                      RowBackground="White"
-                                      AlternatingRowBackground="#F8FAFC"
+                                      HorizontalGridLinesBrush="{DynamicResource Avd.Border.Grid}"
+                                      Background="{DynamicResource Avd.Grid.Bg}"
+                                      RowBackground="{DynamicResource Avd.Grid.Bg}"
+                                      AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}"
                                       BorderThickness="0"
                                       CanUserReorderColumns="False"
                                       CanUserResizeRows="False"
@@ -859,11 +959,11 @@ Set-SplashStatus "Building UI..." -Progress 85
                                         <Setter Property="BorderThickness"  Value="0"/>
                                         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
                                         <Setter Property="Background"       Value="Transparent"/>
-                                        <Setter Property="Foreground"       Value="#1F2937"/>
+                                        <Setter Property="Foreground"       Value="{DynamicResource Avd.Window.Fg}"/>
                                         <Style.Triggers>
                                             <Trigger Property="IsSelected" Value="True">
-                                                <Setter Property="Background" Value="#CCE4F7"/>
-                                                <Setter Property="Foreground" Value="#1F2937"/>
+                                                <Setter Property="Background" Value="{DynamicResource Avd.Selected.Bg}"/>
+                                                <Setter Property="Foreground" Value="{DynamicResource Avd.Window.Fg}"/>
                                                 <Setter Property="BorderBrush" Value="Transparent"/>
                                             </Trigger>
                                         </Style.Triggers>
@@ -877,7 +977,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Padding"           Value="14,0,0,0"/>
                                                 <Setter Property="VerticalAlignment" Value="Center"/>
-                                                <Setter Property="Foreground"        Value="#1F2937"/>
+                                                <Setter Property="Foreground"        Value="{DynamicResource Avd.Window.Fg}"/>
                                             </Style>
                                         </DataGridTextColumn.ElementStyle>
                                     </DataGridTextColumn>
@@ -888,7 +988,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="VerticalAlignment" Value="Center"/>
                                                 <Setter Property="Padding"           Value="0,0,10,0"/>
-                                                <Setter Property="Foreground"        Value="#6B7280"/>
+                                                <Setter Property="Foreground"        Value="{DynamicResource Avd.Fg.Muted}"/>
                                                 <Setter Property="FontFamily"        Value="Consolas"/>
                                                 <Setter Property="FontSize"          Value="11"/>
                                             </Style>
@@ -916,7 +1016,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                                 <Setter Property="HorizontalAlignment" Value="Right"/>
                                                 <Setter Property="VerticalAlignment"   Value="Center"/>
                                                 <Setter Property="Padding"             Value="0,0,10,0"/>
-                                                <Setter Property="Foreground"          Value="#6B7280"/>
+                                                <Setter Property="Foreground"          Value="{DynamicResource Avd.Fg.Muted}"/>
                                             </Style>
                                         </DataGridTextColumn.ElementStyle>
                                     </DataGridTextColumn>
@@ -937,9 +1037,9 @@ Set-SplashStatus "Building UI..." -Progress 85
 
                             <!-- Summary footer -->
                             <Border Grid.Row="2"
-                                    Background="#F8FAFC"
+                                    Background="{DynamicResource Avd.NearWhite.Bg}"
                                     CornerRadius="0,0,8,8"
-                                    BorderBrush="#E5E7EB"
+                                    BorderBrush="{DynamicResource Avd.Border.Std}"
                                     BorderThickness="0,1,0,0"
                                     Padding="14,10">
                                 <Grid>
@@ -949,12 +1049,12 @@ Set-SplashStatus "Building UI..." -Progress 85
                                     </Grid.ColumnDefinitions>
                                     <TextBlock x:Name="SizeSummaryText"
                                                Grid.Column="0"
-                                               FontSize="11" Foreground="#6B7280"
+                                               FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}"
                                                VerticalAlignment="Center"
                                                Text="No scan run yet.  Select storage accounts and click Scan."/>
                                     <StackPanel Grid.Column="1" Orientation="Horizontal">
                                         <TextBlock x:Name="SizeScanTimeText"
-                                                   FontSize="11" Foreground="#9CA3AF"
+                                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                                    VerticalAlignment="Center"
                                                    Margin="0,0,12,0"/>
                                         <Button x:Name="ExportSizesBtn"
@@ -995,10 +1095,10 @@ Set-SplashStatus "Building UI..." -Progress 85
 
                             <StackPanel Grid.Row="0">
                                 <TextBlock Text="Stale Profile Detection"
-                                           FontSize="13" FontWeight="SemiBold" Foreground="#1F2937"
+                                           FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource Avd.Window.Fg}"
                                            Margin="0,0,0,4"/>
                                 <TextBlock Text="Scans for profile folders with no file activity within the threshold. Review results carefully before removing any folders."
-                                           FontSize="11" Foreground="#6B7280" TextWrapping="Wrap"/>
+                                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" TextWrapping="Wrap"/>
                             </StackPanel>
 
                             <Grid Grid.Row="2">
@@ -1013,7 +1113,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="Flag folders inactive for more than"
-                                           FontSize="12" Foreground="#374151"
+                                           FontSize="12" Foreground="{DynamicResource Avd.Fg.Label}"
                                            VerticalAlignment="Center"/>
                                 <TextBox x:Name="CleanupThresholdBox"
                                          Grid.Column="2"
@@ -1021,7 +1121,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                          Text="90"
                                          TextAlignment="Center"/>
                                 <TextBlock Grid.Column="4" Text="days"
-                                           FontSize="12" Foreground="#374151"
+                                           FontSize="12" Foreground="{DynamicResource Avd.Fg.Label}"
                                            VerticalAlignment="Center"/>
                                 <Button x:Name="ScanCleanupBtn"
                                         Grid.Column="6"
@@ -1032,7 +1132,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                             <StackPanel Grid.Row="4" Orientation="Vertical">
                                 <StackPanel x:Name="CleanupPairSelectPanel" Orientation="Horizontal" Margin="0,0,0,6" Visibility="Collapsed"/>
                                 <TextBlock Text="Storage accounts to scan:"
-                                           FontSize="11" Foreground="#6B7280" Margin="0,8,0,4"/>
+                                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" Margin="0,8,0,4"/>
                                 <StackPanel x:Name="CleanupStorageAccountPanel" Orientation="Horizontal"/>
                             </StackPanel>
                         </Grid>
@@ -1049,8 +1149,8 @@ Set-SplashStatus "Building UI..." -Progress 85
                             </Grid.RowDefinitions>
 
                             <!-- Filter bar -->
-                            <Border Grid.Row="0" Background="#F3F4F6" CornerRadius="8,8,0,0"
-                                    BorderBrush="#E5E7EB" BorderThickness="0,0,0,1" Padding="14,8">
+                            <Border Grid.Row="0" Background="{DynamicResource Avd.NearWhite.Bg}" CornerRadius="8,8,0,0"
+                                    BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,0,1" Padding="14,8">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
@@ -1060,7 +1160,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Filter:" FontSize="11"
-                                               Foreground="#6B7280" VerticalAlignment="Center"/>
+                                               Foreground="{DynamicResource Avd.Fg.Muted}" VerticalAlignment="Center"/>
                                     <TextBox x:Name="CleanupFilterBox" Grid.Column="2"
                                              Style="{StaticResource InputBox}"
                                              Padding="8,4" FontSize="11" VerticalContentAlignment="Center"/>
@@ -1118,9 +1218,10 @@ Set-SplashStatus "Building UI..." -Progress 85
                                       IsReadOnly="True"
                                       SelectionMode="Extended"
                                       GridLinesVisibility="Horizontal"
-                                      HorizontalGridLinesBrush="#F0F2F4"
-                                      RowBackground="White"
-                                      AlternatingRowBackground="#F8FAFC"
+                                      HorizontalGridLinesBrush="{DynamicResource Avd.Border.Grid}"
+                                      Background="{DynamicResource Avd.Grid.Bg}"
+                                      RowBackground="{DynamicResource Avd.Grid.Bg}"
+                                      AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}"
                                       BorderThickness="0"
                                       CanUserReorderColumns="False"
                                       CanUserResizeRows="False"
@@ -1136,11 +1237,11 @@ Set-SplashStatus "Building UI..." -Progress 85
                                         <Setter Property="BorderThickness"  Value="0"/>
                                         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
                                         <Setter Property="Background"       Value="Transparent"/>
-                                        <Setter Property="Foreground"       Value="#1F2937"/>
+                                        <Setter Property="Foreground"       Value="{DynamicResource Avd.Window.Fg}"/>
                                         <Style.Triggers>
                                             <Trigger Property="IsSelected" Value="True">
                                                 <Setter Property="Background" Value="#FDE8E8"/>
-                                                <Setter Property="Foreground" Value="#1F2937"/>
+                                                <Setter Property="Foreground" Value="{DynamicResource Avd.Window.Fg}"/>
                                                 <Setter Property="BorderBrush" Value="Transparent"/>
                                             </Trigger>
                                         </Style.Triggers>
@@ -1154,7 +1255,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Padding"           Value="14,0,0,0"/>
                                                 <Setter Property="VerticalAlignment" Value="Center"/>
-                                                <Setter Property="Foreground"        Value="#1F2937"/>
+                                                <Setter Property="Foreground"        Value="{DynamicResource Avd.Window.Fg}"/>
                                             </Style>
                                         </DataGridTextColumn.ElementStyle>
                                     </DataGridTextColumn>
@@ -1165,7 +1266,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="VerticalAlignment" Value="Center"/>
                                                 <Setter Property="Padding"           Value="0,0,10,0"/>
-                                                <Setter Property="Foreground"        Value="#6B7280"/>
+                                                <Setter Property="Foreground"        Value="{DynamicResource Avd.Fg.Muted}"/>
                                                 <Setter Property="FontFamily"        Value="Consolas"/>
                                                 <Setter Property="FontSize"          Value="11"/>
                                             </Style>
@@ -1178,7 +1279,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="VerticalAlignment" Value="Center"/>
                                                 <Setter Property="Padding"           Value="0,0,10,0"/>
-                                                <Setter Property="Foreground"        Value="#6B7280"/>
+                                                <Setter Property="Foreground"        Value="{DynamicResource Avd.Fg.Muted}"/>
                                                 <Setter Property="FontFamily"        Value="Consolas"/>
                                                 <Setter Property="FontSize"          Value="11"/>
                                             </Style>
@@ -1206,7 +1307,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                                 <Setter Property="HorizontalAlignment" Value="Right"/>
                                                 <Setter Property="VerticalAlignment"   Value="Center"/>
                                                 <Setter Property="Padding"             Value="0,0,10,0"/>
-                                                <Setter Property="Foreground"          Value="#6B7280"/>
+                                                <Setter Property="Foreground"          Value="{DynamicResource Avd.Fg.Muted}"/>
                                             </Style>
                                         </DataGridTextColumn.ElementStyle>
                                     </DataGridTextColumn>
@@ -1227,9 +1328,9 @@ Set-SplashStatus "Building UI..." -Progress 85
 
                             <!-- Summary footer with Delete button -->
                             <Border Grid.Row="3"
-                                    Background="#F8FAFC"
+                                    Background="{DynamicResource Avd.NearWhite.Bg}"
                                     CornerRadius="0,0,8,8"
-                                    BorderBrush="#E5E7EB"
+                                    BorderBrush="{DynamicResource Avd.Border.Std}"
                                     BorderThickness="0,1,0,0"
                                     Padding="14,10">
                                 <Grid>
@@ -1239,7 +1340,7 @@ Set-SplashStatus "Building UI..." -Progress 85
                                     </Grid.ColumnDefinitions>
                                     <TextBlock x:Name="CleanupSummaryText"
                                                Grid.Column="0"
-                                               FontSize="11" Foreground="#6B7280"
+                                               FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}"
                                                VerticalAlignment="Center"
                                                TextTrimming="CharacterEllipsis"
                                                Text="No scan run yet.  Select storage accounts and click Scan."/>
@@ -1272,6 +1373,12 @@ Set-SplashStatus "Building UI..." -Progress 85
 # =============================================================================
 # Parse XAML and wire up controls
 # =============================================================================
+
+# Inject initial theme
+$_ptThemeFile = if ($script:_ptDark) { 'dark' } else { 'light' }
+$_ptThemeContent = Get-Content -Raw -Path (Join-Path $PSScriptRoot "data\$_ptThemeFile-theme.xaml") -ErrorAction Stop
+$_ptXamlParsed = $_ptXamlRaw -replace '<!-- THEME_SLOT -->', $_ptThemeContent
+[xml]$xaml = $_ptXamlParsed
 
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
@@ -1317,6 +1424,25 @@ $DeleteCleanupBtn           = $window.FindName("DeleteCleanupBtn")
 $DeleteAllCleanupBtn        = $window.FindName("DeleteAllCleanupBtn")
 $SettingsBtn                = $window.FindName("SettingsBtn")
 $AboutBtn                   = $window.FindName("AboutBtn")
+
+# =============================================================================
+# Theme support
+# =============================================================================
+
+function Switch-ProfileTheme {
+    param([bool]$Dark)
+    $script:_ptDark = $Dark
+    $_tf = if ($Dark) { 'dark' } else { 'light' }
+    $_tc = Get-Content -Raw -Path (Join-Path $PSScriptRoot "data\$_tf-theme.xaml") -ErrorAction Stop
+    $_rdXaml = "<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_tc</ResourceDictionary>"
+    $_rd = [Windows.Markup.XamlReader]::Parse($_rdXaml)
+    foreach ($_key in @($_rd.Keys)) { $window.Resources[$_key] = $_rd[$_key] }
+    try {
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+        $v = [int]$Dark
+        [void][Win32.DwmApiPT]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+    } catch {}
+}
 
 # =============================================================================
 # Registry Settings
@@ -1384,8 +1510,13 @@ function Add-PairCheckboxes {
 
         # Coloured box
         $box                 = New-Object System.Windows.Controls.Border
-        $box.Background      = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0xEE, 0xF4, 0xFC)
-        $box.BorderBrush     = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0xB8, 0xD0, 0xEB)
+        if ($script:_ptDark) {
+            $box.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'Avd.Input.Bg')
+            $box.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty,  'Avd.Border.Std')
+        } else {
+            $box.Background  = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0xEE, 0xF4, 0xFC)
+            $box.BorderBrush = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0xB8, 0xD0, 0xEB)
+        }
         $box.BorderThickness = [System.Windows.Thickness]::new(1)
         $box.CornerRadius    = [System.Windows.CornerRadius]::new(4)
         $box.Padding         = [System.Windows.Thickness]::new(6, 2, 6, 2)
@@ -1395,7 +1526,7 @@ function Add-PairCheckboxes {
         $row.Orientation = [System.Windows.Controls.Orientation]::Horizontal
         $row.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
 
-        # Radio button (no label — mutual exclusion handled by GroupName)
+        # Radio button (no label - mutual exclusion handled by GroupName)
         $rb               = New-Object System.Windows.Controls.RadioButton
         $rb.GroupName     = $groupName
         $rb.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
@@ -1414,7 +1545,11 @@ function Add-PairCheckboxes {
         foreach ($acct in $capturedAccounts) {
             if ($AccountMap.ContainsKey($acct)) {
                 $AccountMap[$acct].FontSize          = 11
-                $AccountMap[$acct].Foreground        = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x1E, 0x40, 0x6E)
+                if ($script:_ptDark) {
+                    $AccountMap[$acct].SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, 'Avd.Fg.Label')
+                } else {
+                    $AccountMap[$acct].Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x1E, 0x40, 0x6E)
+                }
                 $AccountMap[$acct].VerticalAlignment = [System.Windows.VerticalAlignment]::Center
                 $AccountMap[$acct].Margin            = [System.Windows.Thickness]::new(0, 0, 10, 0)
                 [void]$row.Children.Add($AccountMap[$acct])
@@ -1527,7 +1662,7 @@ foreach ($saName in $StorageAccountShareMap.Keys) {
 
     # -- Outer card border ----------------------------------------------------
     $cardBorder = New-Object System.Windows.Controls.Border
-    $cardBorder.Background   = [System.Windows.Media.Brushes]::White
+    $cardBorder.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'Avd.Card.Bg')
     $cardBorder.CornerRadius = [System.Windows.CornerRadius]::new(8)
     $cardBorder.Margin       = [System.Windows.Thickness]::new(0, 0, 0, 12)
     $cardBorder.Effect = New-Object System.Windows.Media.Effects.DropShadowEffect
@@ -1572,7 +1707,7 @@ foreach ($saName in $StorageAccountShareMap.Keys) {
     $nameBlock.Text       = $saName
     $nameBlock.FontSize   = 14
     $nameBlock.FontWeight = [System.Windows.FontWeights]::SemiBold
-    $nameBlock.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#1F2937"))
+    $nameBlock.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Window.Fg')
     $nameBlock.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
 
     # Region badge
@@ -1595,7 +1730,7 @@ foreach ($saName in $StorageAccountShareMap.Keys) {
 
     # -- Row 2: UNC path display ----------------------------------------------
     $pathBorder = New-Object System.Windows.Controls.Border
-    $pathBorder.Background   = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#F3F4F6"))
+    $pathBorder.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'Avd.Input.Bg')
     $pathBorder.CornerRadius = [System.Windows.CornerRadius]::new(5)
     $pathBorder.Padding      = [System.Windows.Thickness]::new(10, 7, 10, 7)
     $pathBorder.Margin       = [System.Windows.Thickness]::new(0, 0, 0, 10)
@@ -1604,7 +1739,7 @@ foreach ($saName in $StorageAccountShareMap.Keys) {
     $pathText.Text       = $uncPath
     $pathText.FontFamily = [System.Windows.Media.FontFamily]::new("Consolas")
     $pathText.FontSize   = 12
-    $pathText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString("#374151"))
+    $pathText.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Fg.Label')
     $pathText.TextWrapping = [System.Windows.TextWrapping]::Wrap
     $pathBorder.Child = $pathText
 
@@ -2233,7 +2368,7 @@ $ProfileCleanupGrid.Add_MouseDoubleClick({
 # =============================================================================
 
 function Show-CleanupSettings {
-    [xml]$settingsXaml = @'
+    $_sWinXaml = @'
 <Window
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -2241,19 +2376,22 @@ function Show-CleanupSettings {
     Height="280" Width="420"
     ResizeMode="NoResize"
     WindowStartupLocation="CenterOwner"
-    Background="#F4F6F9"
+    Background="{DynamicResource Avd.Window.Bg}"
     FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
     <DockPanel Margin="24,20,24,20">
 
         <!-- Registry path info -->
-        <Border DockPanel.Dock="Top" Background="White" CornerRadius="6"
-                BorderBrush="#DDE1E7" BorderThickness="1"
+        <Border DockPanel.Dock="Top" Background="{DynamicResource Avd.Card.Bg}" CornerRadius="6"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
                 Padding="12,9" Margin="0,0,0,16">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets"
-                           FontSize="13" Foreground="#888"
+                           FontSize="13" Foreground="{DynamicResource Avd.Fg.Hint}"
                            VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBlock FontSize="11" Foreground="#666" VerticalAlignment="Center">
+                <TextBlock FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" VerticalAlignment="Center">
                     <Run Text="Settings are saved to "/>
                     <Run Text="HKCU\Software\AVDDashboard"
                          FontFamily="Consolas" Foreground="#0078D4"/>
@@ -2266,7 +2404,7 @@ function Show-CleanupSettings {
                     HorizontalAlignment="Right" Margin="0,16,0,0">
             <Button x:Name="SettingsCancelBtn" Content="Cancel"
                     Width="90" Height="32" Margin="0,0,10,0"
-                    Background="#E1E4EA" Foreground="#333"
+                    Background="{DynamicResource Avd.Btn.Cancel.Bg}" Foreground="{DynamicResource Avd.Window.Fg}"
                     BorderThickness="0" FontSize="13" Cursor="Hand">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
@@ -2307,13 +2445,14 @@ function Show-CleanupSettings {
                        Foreground="#0078D4" Margin="0,0,0,20"/>
 
             <TextBlock Text="Stale Profile Threshold (days)" FontSize="13" FontWeight="SemiBold"
-                       Foreground="#333" Margin="0,0,0,6"/>
+                       Foreground="{DynamicResource Avd.Window.Fg}" Margin="0,0,0,6"/>
             <TextBox x:Name="ThresholdBox"
                      Height="32" FontSize="13" Padding="8,4"
-                     BorderBrush="#CDD0D6" BorderThickness="1"
-                     Background="White" VerticalContentAlignment="Center"/>
+                     BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                     Background="{DynamicResource Avd.Input.Bg}" Foreground="{DynamicResource Avd.Window.Fg}"
+                     VerticalContentAlignment="Center"/>
             <TextBlock Text="Profiles with no file activity for more than this many days are flagged as stale. Minimum 1, maximum 3650."
-                       FontSize="11" Foreground="#888" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                       FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,0" TextWrapping="Wrap"/>
 
             <TextBlock x:Name="SettingsStatus" FontSize="11" Foreground="#C42B1C"
                        Margin="0,8,0,0" TextWrapping="Wrap"/>
@@ -2323,9 +2462,18 @@ function Show-CleanupSettings {
     </DockPanel>
 </Window>
 '@
+    $_sXml = $_sWinXaml -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path (Join-Path $PSScriptRoot "data\$(if ($script:_ptDark) { 'dark' } else { 'light' })-theme.xaml") -ErrorAction Stop)
+    [xml]$settingsXaml = $_sXml
     $sReader = New-Object System.Xml.XmlNodeReader $settingsXaml
     $sWin    = [System.Windows.Markup.XamlReader]::Load($sReader)
     $sWin.Owner = $window
+    try {
+        $sWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($sWin)).Handle
+            $v = [int]$script:_ptDark
+            [void][Win32.DwmApiPT]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    } catch {}
 
     $sThreshold = $sWin.FindName("ThresholdBox")
     $sStatus    = $sWin.FindName("SettingsStatus")
@@ -2362,7 +2510,7 @@ $SettingsBtn.Add_Click({ Show-CleanupSettings })
 # =============================================================================
 
 function Show-About {
-    [xml]$aboutXaml = @'
+    $_aRaw = @'
 <Window
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -2370,16 +2518,20 @@ function Show-About {
     SizeToContent="Height" Width="520"
     ResizeMode="NoResize"
     WindowStartupLocation="CenterOwner"
-    Background="#F4F6F9"
+    Background="{DynamicResource Avd.Window.Bg}"
+    Foreground="{DynamicResource Avd.Window.Fg}"
     FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
     <DockPanel Margin="28,24,28,20">
 
         <!-- Title + version -->
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
             <TextBlock Text="Profile Tools" FontSize="18" FontWeight="Bold" Foreground="#0078D4"/>
-            <TextBlock x:Name="AboutVersion" FontSize="12" Foreground="#555" Margin="0,4,0,0"/>
-            <TextBlock x:Name="AboutPSVersion" FontSize="12" Foreground="#555" Margin="0,2,0,0"/>
-            <TextBlock FontSize="12" Foreground="#555" Margin="0,2,0,0">GitHub: <Hyperlink x:Name="AboutGitHub" Foreground="#0078D4" TextDecorations="None">virtualwebber</Hyperlink></TextBlock>
+            <TextBlock x:Name="AboutVersion"   FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,4,0,0"/>
+            <TextBlock x:Name="AboutPSVersion" FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,2,0,0"/>
+            <TextBlock FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,2,0,0">GitHub: <Hyperlink x:Name="AboutGitHub" Foreground="#0078D4" TextDecorations="None">virtualwebber</Hyperlink></TextBlock>
         </StackPanel>
 
         <!-- Close button -->
@@ -2403,11 +2555,11 @@ function Show-About {
         </Button>
 
         <!-- Disclaimer -->
-        <Border DockPanel.Dock="Bottom" Background="White" CornerRadius="6" Padding="14,12"
-                BorderBrush="#DDE1E7" BorderThickness="1" Margin="0,12,0,0">
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.Card.Bg}" CornerRadius="6" Padding="14,12"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" Margin="0,12,0,0">
             <StackPanel>
                 <TextBlock Text="DISCLAIMER" FontSize="11" FontWeight="Bold" Foreground="#C42B1C" Margin="0,0,0,6"/>
-                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#444" LineHeight="18">
+                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource Avd.Fg.Secondary}" LineHeight="18">
                     This script is provided as-is with no warranty, guarantee, or support of any kind.
                     Use at your own risk. The author accepts no responsibility for any issues,
                     data loss, or damages arising from the use of this script in any environment.
@@ -2419,9 +2571,19 @@ function Show-About {
     </DockPanel>
 </Window>
 '@
+    $_aXml = $_aRaw -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path (Join-Path $PSScriptRoot "data\$(if ($script:_ptDark) { 'dark' } else { 'light' })-theme.xaml") -ErrorAction Stop)
+    [xml]$aboutXaml = $_aXml
     $aReader = New-Object System.Xml.XmlNodeReader $aboutXaml
     $aWin    = [System.Windows.Markup.XamlReader]::Load($aReader)
     $aWin.Owner = $window
+    Set-WindowIcon -Window $aWin -IconPath (Join-Path $PSScriptRoot 'data\avd-dashboard.ico')
+    try {
+        $aWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($aWin)).Handle
+            $v = [int]$script:_ptDark
+            [void][Win32.DwmApiPT]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    } catch {}
     $aWin.FindName("AboutVersion").Text   = "Version $ScriptVersion"
     $aWin.FindName("AboutPSVersion").Text = "PowerShell $($PSVersionTable.PSVersion)"
     $aWin.FindName("AboutCloseBtn").Add_Click({ $aWin.Close() })
@@ -2498,7 +2660,7 @@ function Show-InfoDialog {
     <StackPanel Margin="24,20">
         <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
             <TextBlock Text="i" FontSize="28" Foreground="#0078D4" VerticalAlignment="Center" Margin="0,0,14,0"/>
-            <TextBlock x:Name="MsgText" FontSize="13" Foreground="#1F2937"
+            <TextBlock x:Name="MsgText" FontSize="13" Foreground="{DynamicResource Avd.Window.Fg}"
                        TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="680"/>
         </StackPanel>
         <Button x:Name="OkBtn" Content="OK" Width="90" Height="32"
@@ -2545,7 +2707,7 @@ function Show-ConfirmDialog {
     <StackPanel Margin="24,20">
         <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
             <TextBlock Text="!" FontSize="28" Foreground="#D83B01" VerticalAlignment="Center" Margin="0,0,14,0"/>
-            <TextBlock x:Name="MsgText" FontSize="13" Foreground="#1F2937"
+            <TextBlock x:Name="MsgText" FontSize="13" Foreground="{DynamicResource Avd.Window.Fg}"
                        TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="680"/>
         </StackPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
@@ -2709,7 +2871,7 @@ $RunDeleteBtn.Add_Click({
         $StatusBar.Text = "Ready."
         return
     }
-    # Local variable so .GetNewClosure() captures the paths — $script: scope
+    # Local variable so .GetNewClosure() captures the paths - $script: scope
     # references don't resolve correctly inside a closure-captured scriptblock.
     $deletePaths = $existingPaths
 
@@ -3050,6 +3212,31 @@ $window.Add_Closed({
 # =============================================================================
 
 Set-WindowIcon -Window $window -IconPath (Join-Path $PSScriptRoot 'data\avd-dashboard.ico')
+
+# Apply initial dark title bar
+try {
+    $window.Add_SourceInitialized({
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+        $v = [int]$script:_ptDark
+        [void][Win32.DwmApiPT]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+    })
+} catch {}
+
+# Wire dark toggle (standalone mode only)
+$_ptDarkToggle      = $window.FindName("DarkToggle")
+$_ptDarkTogglePanel = $window.FindName("DarkTogglePanel")
+if (-not $_ptLaunchedFromDashboard -and $_ptDarkToggle) {
+    if ($_ptDarkTogglePanel) { $_ptDarkTogglePanel.Visibility = 'Visible' }
+    $_ptDarkToggle.IsChecked = $script:_ptDark
+    $_ptDarkToggle.Add_Checked({
+        try { Set-ItemProperty -Path $script:_ptRegPath -Name 'DarkTheme' -Value 1 } catch {}
+        Switch-ProfileTheme $true
+    })
+    $_ptDarkToggle.Add_Unchecked({
+        try { Set-ItemProperty -Path $script:_ptRegPath -Name 'DarkTheme' -Value 0 } catch {}
+        Switch-ProfileTheme $false
+    })
+}
 
 # =============================================================================
 # Show Window

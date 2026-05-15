@@ -1,5 +1,52 @@
 # AVD Live Dashboard - Changelog
 
+## 2026-05-14
+- Monitoring tab: Custom KQL Query panel — run arbitrary KQL against the configured Log Analytics workspace, view results in a dynamic table, and save/load named queries to AppData.
+
+## 2026-05-06
+- Dark theme: optional VS Code-style toggle in Settings (requires restart). Full coverage: window, header, cards, DataGrid, tabs, status bar, About dialog, Settings dialog. Title bar darkened via DwmSetWindowAttribute. Splash screen pre-themed before first paint.
+
+## 2026-05-05
+- Audit log: fixed PS5 compatibility (ternary operator removed); audit CSV now writes on dashboard launch.
+- Audit log: SendMessage only logged on successful send; Logoff Target trimmed to short VM name; CleanSnapshots/CleanImageVersions result/error fields corrected.
+- RDP audit: Target now always populated (vmName moved outside IP-resolution block).
+- Per Host Pool tab: marketplace-based host pools show "N/A" in Image Version column instead of blank; disk API version corrected to 2024-03-02.
+
+## 2026-04-30
+- Images tab: BIS-F path config setting (default `C:\_source\Bis-F`); Create Image uses configured path.
+- Images tab: gallery replication region config (Region 1 required, Region 2 optional) with replica counts per region.
+- Images tab: "Open Resource Group in Portal" right-click menu item.
+- Images tab: image creation output saved to `logs\image-creation\` per job.
+- Images tab: Preparation VM Size Default changed to a dropdown.
+- Infrastructure tab: "Open Resource Group in Portal" right-click menu item.
+- Session hosts tab: "Idle Time" column showing time since last user input (Log Analytics Perf counter, 4h lookback; shows "4h+" beyond window).
+- Shadow: documented port 445 requirement for MSTSC shadow mode in README; MSRA documented as alternative when 445 is blocked.
+- Audit log: weekly rotation (one file per week, named by Monday's date).
+- Config editor: loads missing config keys from defaults on open (Merge-ConfigDefaults).
+
+## 2026-04-29
+- Authentication: extracted shared auth logic into scripts/connect-azure.ps1
+  (Connect-AzureDashboard). Supports interactive browser, device code, existing
+  context, and service principal modes.
+- Profile Tools: now supports -UseDeviceAuthentication, -UseExistingContext, and
+  -UseServicePrincipal launch switches — matching the dashboard auth options.
+  Previously required a pre-existing Az context; now authenticates independently on launch.
+- Added Launch-Profile-Tools-Select.cmd quick-launch shortcut for auth mode selection.
+- Scripts folder: renamed Check-Permissions.ps1, Create-DashboardRole.ps1, and
+  Create-Image.ps1 to lowercase to match the rest of the scripts folder.
+
+## 2026-04-28 (Images tab)
+- Images tab: new tab — lists gold image VMs with power state, IP, SKU, region. Start /
+  Deallocate / Restart power actions, filter box, Export CSV, configurable auto-refresh.
+- Images tab: right-click — RDP, Create Image dialog (gallery, definition, VNet filtered
+  to VM region, VM size from config), View Sysprep Log (SMB or Run Command fallback).
+- Create-Image.ps1: rewritten to use ARM REST API (no Az.Compute/Az.Network required).
+  BIS-F via Run Command v2; Sysprep via Run Command v1 (captures setuperr.log output).
+  Gallery failure details logged. Token and helper passed as env vars from the dashboard.
+- config.psd1: new Images fields — PrepVMSizes, PrepVMSizeDefault.
+  HiddenTabs is now a hard deployment floor — config-hidden tabs cannot be re-enabled via
+  Settings UI and their checkboxes are removed from the Settings panel.
+
 ## 2026-04-28
 - Per Host Pool tab: added "Private Endpoints" right-click context menu item. Opens a popup
   listing the name and Azure region of each private endpoint connection for the selected host

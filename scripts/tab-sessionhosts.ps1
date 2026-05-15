@@ -16,18 +16,18 @@
 #
 # LOAD BEHAVIOUR
 # --------------
-# Data is fetched on demand — no load fires until the user first clicks the
+# Data is fetched on demand - no load fires until the user first clicks the
 # Session Hosts tab. Once visited, the 60-second cycle runs only while the tab
 # is the active (visible) tab; switching away pauses the cycle. This matches
 # the Infrastructure tab pattern (grid IsVisible gate).
 #
-# DATA FLOW — TWO-PASS DESIGN
+# DATA FLOW - TWO-PASS DESIGN
 # ----------------------------
 # Each refresh cycle is split across two dedicated runspaces so the grid
 # populates with core data immediately, then metric columns are backfilled
 # in the background without clearing or flickering the grid.
 #
-# Pass 1 — Core  ($script:vmCoreScript in $script:vmRefreshRunspace)
+# Pass 1 - Core  ($script:vmCoreScript in $script:vmRefreshRunspace)
 # ─────────────────────────────────────────────────────────────────
 #   Phase 1  - AVD Session Host REST API  (per host pool, in parallel via
 #              $script:hpPool RunspacePool)
@@ -49,7 +49,7 @@
 #   Returns: [PSCustomObject]@{ Pass='Core'; VmRows=...; Timestamp=...; Phase3Error=... }
 #   Grid is populated immediately on the UI thread when this result arrives.
 #
-# Pass 2 — Metrics  ($script:vmMetricsScript in $script:vmMetricsRunspace)
+# Pass 2 - Metrics  ($script:vmMetricsScript in $script:vmMetricsRunspace)
 # ─────────────────────────────────────────────────────────────────────────
 #   Phase 4  - Log Analytics enrichment  (KQL against Perf table)
 #              Fields: CPU %, Mem %, OS Disk % (with heat map colouring),
@@ -71,7 +71,7 @@
 #   Returns: [PSCustomObject]@{ Pass='Metrics'; MetricRows=...; Timestamp=...;
 #                               Phase4Error=...; Phase5Error=...; Phase5Mode=... }
 #   Metric columns are backfilled into existing DataTable rows via
-#   _SH_BackfillMetrics — no table clear, no ItemsSource reset, scroll preserved.
+#   _SH_BackfillMetrics - no table clear, no ItemsSource reset, scroll preserved.
 #   The last MetricRows are cached in $script:shMetricsCache and reapplied by
 #   _SH_UpdateGrid after every subsequent Core pass so metrics never blank out.
 #
@@ -109,8 +109,8 @@ $SessionHostsTab_Xaml = @'
          xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <DockPanel>
         <!-- ═══ Top bar: filter input, status text and manual refresh button ═══ -->
-        <Border DockPanel.Dock="Top" Background="#F4F6F9"
-                BorderBrush="#DDE1E7" BorderThickness="0,0,0,1"
+        <Border DockPanel.Dock="Top" Background="{DynamicResource Avd.Header.Bg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,0,1"
                 Padding="12,7">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -126,14 +126,14 @@ $SessionHostsTab_Xaml = @'
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="Filter:"
                            VerticalAlignment="Center"
-                           FontSize="12" Foreground="#555"
+                           FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}"
                            Margin="0,0,8,0"/>
                 <!-- SHFilterBox: TextChanged fires a DataView.RowFilter update -->
                 <TextBox x:Name="SHFilterBox" Grid.Column="1"
                          FontSize="12" Padding="8,4"
                          VerticalContentAlignment="Center"
-                         BorderBrush="#C8CDD3" BorderThickness="1"
-                         Background="White" Foreground="#333"/>
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" Foreground="{DynamicResource Avd.Fg.Label}"/>
                 <!-- SHClearFiltersButton: resets text box and all column dropdowns to All -->
                 <Button x:Name="SHClearFiltersButton" Grid.Column="2"
                         Content="Clear Filters"
@@ -162,18 +162,18 @@ $SessionHostsTab_Xaml = @'
                 <CheckBox x:Name="SHHideEmptyCheckBox" Grid.Column="3"
                           Content="Hide empty hosts"
                           VerticalAlignment="Center"
-                          FontSize="11" Foreground="#555"
+                          FontSize="11" Foreground="{DynamicResource Avd.Fg.Secondary}"
                           IsChecked="True"
                           Margin="12,0,0,0"/>
                 <!-- SHStatusText: shows "Available: X  Other: Y | Updated: HH:mm:ss  Next in Ns" -->
                 <TextBlock x:Name="SHStatusText" Grid.Column="5"
                            VerticalAlignment="Center"
-                           FontSize="12" Foreground="#777"
+                           FontSize="12" Foreground="{DynamicResource Avd.Fg.Subtle}"
                            Margin="0,0,12,0"/>
                 <!-- SHRefreshButton: triggers an immediate out-of-schedule refresh -->
                 <Button x:Name="SHRefreshButton" Grid.Column="6"
                         Content="Refresh"
-                        Background="#0078D4" Foreground="White"
+                        Background="{DynamicResource Avd.Btn.Accent.Bg}" Foreground="White"
                         BorderThickness="0" FontSize="12"
                         FontWeight="SemiBold" Cursor="Hand"
                         Padding="12,3" Margin="0,0,6,0">
@@ -185,7 +185,7 @@ $SessionHostsTab_Xaml = @'
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="BdVR" Property="Background" Value="#005A9E"/>
+                                    <Setter TargetName="BdVR" Property="Background" Value="{DynamicResource Avd.Btn.Accent.Hover}"/>
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
                                     <Setter TargetName="BdVR" Property="Background" Value="#003D6B"/>
@@ -197,7 +197,7 @@ $SessionHostsTab_Xaml = @'
                 <!-- SHExportButton: exports the current grid contents to CSV -->
                 <Button x:Name="SHExportButton" Grid.Column="7"
                         Content="Export CSV"
-                        Background="#005A9E" Foreground="White"
+                        Background="{DynamicResource Avd.Btn.Std.Bg}" Foreground="White"
                         BorderThickness="0" FontSize="12"
                         FontWeight="SemiBold" Cursor="Hand"
                         Padding="14,5"
@@ -257,32 +257,32 @@ $SessionHostsTab_Xaml = @'
         </Border>
 
         <!-- ═══ Cost totals bar - shown after Load Costs is clicked ═══ -->
-        <Border x:Name="SHTotalsBar" DockPanel.Dock="Bottom" Background="#EEF4FC"
-                BorderBrush="#DDE1E7" BorderThickness="0,1,0,0"
+        <Border x:Name="SHTotalsBar" DockPanel.Dock="Bottom" Background="{DynamicResource Avd.CostBar.Bg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,1,0,0"
                 Height="28" Visibility="Collapsed">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
                         VerticalAlignment="Center" Margin="12,0">
                 <TextBlock Text="Totals:" FontSize="11" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,16,0" VerticalAlignment="Center"/>
-                <TextBlock Text="Compute GBP/mo:" FontSize="11" Foreground="#555"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,16,0" VerticalAlignment="Center"/>
+                <TextBlock Text="Compute GBP/mo:" FontSize="11" Foreground="{DynamicResource Avd.Fg.Secondary}"
                            Margin="0,0,6,0" VerticalAlignment="Center"/>
                 <TextBlock x:Name="SHTotalCompute" FontSize="11" FontWeight="SemiBold"
-                           Foreground="#0078D4" Margin="0,0,20,0" VerticalAlignment="Center"/>
-                <TextBlock Text="Disk GBP/mo:" FontSize="11" Foreground="#555"
+                           Foreground="{DynamicResource Avd.Fg.Accent}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                <TextBlock Text="Disk GBP/mo:" FontSize="11" Foreground="{DynamicResource Avd.Fg.Secondary}"
                            Margin="0,0,6,0" VerticalAlignment="Center"/>
                 <TextBlock x:Name="SHTotalDisk" FontSize="11" FontWeight="SemiBold"
-                           Foreground="#0078D4" VerticalAlignment="Center"/>
-                <TextBlock Text="Txn GBP/mo:" FontSize="11" Foreground="#555"
+                           Foreground="{DynamicResource Avd.Fg.Accent}" VerticalAlignment="Center"/>
+                <TextBlock Text="Txn GBP/mo:" FontSize="11" Foreground="{DynamicResource Avd.Fg.Secondary}"
                            Margin="16,0,6,0" VerticalAlignment="Center"/>
                 <TextBlock x:Name="SHTotalTxn" FontSize="11" FontWeight="SemiBold"
-                           Foreground="#0078D4" VerticalAlignment="Center"/>
+                           Foreground="{DynamicResource Avd.Fg.Accent}" VerticalAlignment="Center"/>
             </StackPanel>
         </Border>
 
         <!-- ═══ Bottom action bar: result label + power action buttons ═══ -->
         <!-- Buttons start disabled; SelectionChanged in code enables them   -->
-        <Border DockPanel.Dock="Bottom" Background="#F4F6F9"
-                BorderBrush="#DDE1E7" BorderThickness="0,1,0,0"
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.Header.Bg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,1,0,0"
                 Height="38">
             <Grid Margin="12,0">
                 <Grid.ColumnDefinitions>
@@ -294,7 +294,7 @@ $SessionHostsTab_Xaml = @'
                      space (e.g. bulk deallocate listing many VM names). The self-bound
                      ToolTip lets the user hover to read the full message. -->
                 <TextBlock x:Name="SHActionStatus" Grid.Column="0"
-                           Foreground="#555" FontSize="12"
+                           Foreground="{DynamicResource Avd.Fg.Secondary}" FontSize="12"
                            VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis"
                            ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
@@ -307,7 +307,7 @@ $SessionHostsTab_Xaml = @'
                             BorderThickness="0" FontSize="12"
                             FontWeight="SemiBold" Cursor="Hand"
                             Padding="14,4"
-                            ToolTip="Enable drain mode on the selected host(s) — blocks new sessions">
+                            ToolTip="Enable drain mode on the selected host(s) - blocks new sessions">
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
                                 <Border x:Name="BdED" Background="{TemplateBinding Background}"
@@ -332,7 +332,7 @@ $SessionHostsTab_Xaml = @'
                             BorderThickness="0" FontSize="12"
                             FontWeight="SemiBold" Cursor="Hand"
                             Padding="14,4"
-                            ToolTip="Disable drain mode on the selected host(s) — allows new sessions">
+                            ToolTip="Disable drain mode on the selected host(s) - allows new sessions">
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
                                 <Border x:Name="BdDD" Background="{TemplateBinding Background}"
@@ -351,7 +351,7 @@ $SessionHostsTab_Xaml = @'
                         </Button.Template>
                     </Button>
                     <!-- Separator between drain controls and power actions -->
-                    <Rectangle Width="1" Margin="0,6,12,6" Fill="#C8CDD3"/>
+                    <Rectangle Width="1" Margin="0,6,12,6" Fill="{DynamicResource Avd.Border.Input}"/>
                     <!-- Start: green - brings a deallocated VM back online -->
                     <Button x:Name="SHStartButton" Content="Start"
                             IsEnabled="False" Margin="0,4,6,4"
@@ -406,7 +406,7 @@ $SessionHostsTab_Xaml = @'
                     <!-- Restart: blue - reboots the OS while keeping the VM allocated -->
                     <Button x:Name="SHRestartButton" Content="Restart"
                             IsEnabled="False" Margin="0,4,6,4"
-                            Background="#0078D4" Foreground="White"
+                            Background="{DynamicResource Avd.Btn.Accent.Bg}" Foreground="White"
                             BorderThickness="0" FontSize="12"
                             FontWeight="SemiBold" Cursor="Hand"
                             Padding="14,4"
@@ -422,7 +422,7 @@ $SessionHostsTab_Xaml = @'
                                         <Setter TargetName="BdR" Property="Background" Value="#888"/>
                                     </Trigger>
                                     <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="BdR" Property="Background" Value="#005A9E"/>
+                                        <Setter TargetName="BdR" Property="Background" Value="{DynamicResource Avd.Btn.Accent.Hover}"/>
                                     </Trigger>
                                 </ControlTemplate.Triggers>
                             </ControlTemplate>
@@ -435,8 +435,9 @@ $SessionHostsTab_Xaml = @'
         <!-- ═══ Main grid: fills remaining space between the two bars ═══ -->
         <!-- Columns are auto-generated from the PSCustomObject property names -->
         <!-- The _RG helper column is hidden via AutoGeneratingColumn in code  -->
-        <DataGrid x:Name="SHGrid" Margin="0" ColumnWidth="Auto"
-                  SelectionMode="Extended" SelectionUnit="FullRow">
+        <DataGrid x:Name="SHGrid" Margin="0"
+                  SelectionMode="Extended" SelectionUnit="FullRow"
+                  RowHeaderWidth="0">
             <!-- Ctrl+MouseWheel zoom: LayoutTransform with ScaleTransform scales the
                  entire grid (headers, rows, text) uniformly. Wired to PreviewMouseWheel
                  in Initialize-SessionHostsTab code-behind.
@@ -510,7 +511,7 @@ if (-not $script:InputDelayExcludeProcesses) {
 $script:ShowFullUPN = $false
 
 # =============================================================================
-# 2a. Core background script (Pass 1 — fast render)
+# 2a. Core background script (Pass 1 - fast render)
 #
 # Runs inside $script:vmRefreshRunspace. Collects AVD host/session data and
 # Resource Graph metadata only (Phases 1, 1b, 2, 3). Returns immediately after
@@ -642,7 +643,7 @@ $script:vmCoreScript = {
         $healthState   = if (-not $healthChecks -or $healthChecks.Count -eq 0) { 'N/A' }
                          elseif ($failedChecks.Count -eq 0) { 'Healthy' }
                          else { "Unhealthy ($($failedChecks.Count))" }
-        # Build tooltip text from the failed checks — one line per failure.
+        # Build tooltip text from the failed checks - one line per failure.
         # "Check" suffix and "HealthCheck" prefix are stripped for readability
         # (e.g. "DomainJoinedCheck: HealthCheckFailed" → "DomainJoined: Failed").
         # Empty string for healthy/N/A hosts so the DataTrigger can null the tooltip.
@@ -743,12 +744,12 @@ $script:vmCoreScript = {
     # zone, private IP address, OS disk SKU/size, or resource tags. All of those come
     # from the ARM resource layer and are fetched here via Resource Graph KQL.
     #
-    # SINGLE JOINED QUERY — replacing 3 serial HTTP calls
+    # SINGLE JOINED QUERY - replacing 3 serial HTTP calls
     # ----------------------------------------------------
     # Previous implementation made 3 sequential Resource Graph calls:
     #   3a. VM metadata  → builds $vmInfoMap (nicId, osDiskName, vmSize, zone, tags)
-    #   3b. NIC IPs      → needs nicIds from 3a — serial dependency
-    #   3c. Disk SKUs    → needs osDiskNames from 3a — serial dependency on 3a only
+    #   3b. NIC IPs      → needs nicIds from 3a - serial dependency
+    #   3c. Disk SKUs    → needs osDiskNames from 3a - serial dependency on 3a only
     #
     # 3b and 3c are independent of each other but both waited for 3a. More importantly,
     # all three target the Resources table in Resource Graph and can be expressed as a
@@ -757,14 +758,14 @@ $script:vmCoreScript = {
     #
     # 'leftouter' join semantics: every VM row appears in the result even if it has no
     # matching NIC or disk record (e.g. NIC deleted separately, unmanaged disk).
-    # In those cases ip / diskSku come back null and we fall back to '-' — the same
+    # In those cases ip / diskSku come back null and we fall back to '-' - the same
     # graceful behaviour as the old code.
     #
     # BATCHING
     # ---------
     # Resource Graph imposes a limit on the size of the in() clause. Batch size is
     # capped at 500 VM names per call. The join is done server-side so there are no
-    # separate NIC or disk batch loops — a single batch of N VM names returns all
+    # separate NIC or disk batch loops - a single batch of N VM names returns all
     # three resource types' data in one response.
     # ──────────────────────────────────────────────────────────────────────────────
     $phase3Error = $null
@@ -822,22 +823,22 @@ $script:vmCoreScript = {
                 # server-side so one HTTP round trip returns all three resource types.
                 #
                 # Field notes:
-                #   vmNicId        — the NIC ARM resource ID, used as the join key to
+                #   vmNicId        - the NIC ARM resource ID, used as the join key to
                 #                    the NIC sub-query. Named 'vmNicId' (not 'nicId') to
                 #                    avoid a column-name collision with nicId in the NIC
                 #                    sub-query output; Resource Graph would drop one of
                 #                    them silently if both were called 'nicId'.
-                #   osDiskId       — full ARM resource ID of the managed disk, stored as
+                #   osDiskId       - full ARM resource ID of the managed disk, stored as
                 #                    _OsDiskResourceId on the row for use by Load Costs.
-                #   scalingExclude — reads the tag whose name is in $ScalingExcludeTag
+                #   scalingExclude - reads the tag whose name is in $ScalingExcludeTag
                 #                    (from config). iff(isnotnull(...)) returns 'Yes' if
                 #                    the tag exists (any value), '' if absent.
-                #   zone           — availability zone number (1/2/3) or '-' if the VM
+                #   zone           - availability zone number (1/2/3) or '-' if the VM
                 #                    is not zone-pinned (array_length(zones) == 0).
-                #   ip             — private IP of the first NIC's first IP config.
+                #   ip             - private IP of the first NIC's first IP config.
                 #                    Null if the NIC record is not found (leftouter join).
-                #   diskSku        — e.g. "Premium_LRS", "StandardSSD_LRS", "Standard_LRS"
-                #   diskSizeGB     — provisioned disk size in GiB.
+                #   diskSku        - e.g. "Premium_LRS", "StandardSSD_LRS", "Standard_LRS"
+                #   diskSizeGB     - provisioned disk size in GiB.
                 #
                 # `$left / `$right are KQL join syntax tokens; the backtick-escaping prevents
                 # PowerShell from treating them as variable expansions inside the here-string.
@@ -884,7 +885,7 @@ Resources
                         'Premium*'     { $premiumTiers }
                         'StandardSSD*' { $standardSSDTiers }
                         'Standard*'    { $standardHDDTiers }
-                        default        { @() }    # UltraSSD / unknown — no tier table available
+                        default        { @() }    # UltraSSD / unknown - no tier table available
                     }
                     $tierName = ''; $provIOPS = 0
                     foreach ($t in $tierTable) {
@@ -894,7 +895,7 @@ Resources
                     $vmInfoMap[$vn] = @{
                         vmSize         = [string]$item.vmSize
                         osDiskName     = [string]$item.osDiskName
-                        osDiskId       = [string]$item.osDiskId       # ARM resource ID — used by Load Costs
+                        osDiskId       = [string]$item.osDiskId       # ARM resource ID - used by Load Costs
                         zone           = [string]$item.zone
                         nicId          = [string]$item.vmNicId
                         scalingExclude = [string]$item.scalingExclude
@@ -904,9 +905,9 @@ Resources
                         # If no tier but size known: "StandardSSD_LRS (128 GB)"
                         # Fallback: just the raw SKU string.
                         diskDisplay    = if ($tierName) { "$tierName ($size GB) $provIOPS IOPS" } elseif ($size) { "$sku ($size GB)" } else { $sku }
-                        diskProvIOPS   = $provIOPS         # stored as _DiskProvIOPS — used by IOPS utilisation column
-                        diskTier       = $tierName         # e.g. "P10", "E10", "S10" — used by Load Costs pricing lookup
-                        diskSkuRaw     = $sku              # e.g. "Premium_LRS" — used by Load Costs to skip txn query for Premium
+                        diskProvIOPS   = $provIOPS         # stored as _DiskProvIOPS - used by IOPS utilisation column
+                        diskTier       = $tierName         # e.g. "P10", "E10", "S10" - used by Load Costs pricing lookup
+                        diskSkuRaw     = $sku              # e.g. "Premium_LRS" - used by Load Costs to skip txn query for Premium
                         powerState     = [string]$item.powerState  # e.g. "PowerState/running"
                     }
                 }
@@ -927,9 +928,9 @@ Resources
                     $row.'VM SKU'          = if ($nfo['vmSize']) { $nfo['vmSize'] } else { '-' }
                     if ($nfo['diskSkuRaw']) {
                         $row.'Disk SKU'      = $nfo['diskDisplay']
-                        $row.'_DiskProvIOPS' = [int]$nfo['diskProvIOPS']  # numeric — used for IOPS % calculation in Phase 5
-                        $row.'_DiskTier'     = $nfo['diskTier']           # e.g. "E10" — Load Costs pricing
-                        $row.'_DiskSkuRaw'   = $nfo['diskSkuRaw']         # e.g. "Premium_LRS" — Load Costs skips txn query for Premium
+                        $row.'_DiskProvIOPS' = [int]$nfo['diskProvIOPS']  # numeric - used for IOPS % calculation in Phase 5
+                        $row.'_DiskTier'     = $nfo['diskTier']           # e.g. "E10" - Load Costs pricing
+                        $row.'_DiskSkuRaw'   = $nfo['diskSkuRaw']         # e.g. "Premium_LRS" - Load Costs skips txn query for Premium
                     }
                     $row.'_OsDiskResourceId' = if ($nfo['osDiskId']) { $nfo['osDiskId'] } else { '' }  # Load Costs Cost Management filter
                     $row.'Avail Zone'        = if ($nfo['zone'] -and $nfo['zone'] -ne '' -and $nfo['zone'] -ne '-') { $nfo['zone'] } else { 'N/A' }
@@ -966,7 +967,7 @@ Resources
 }
 
 # =============================================================================
-# 2b. Metrics background script (Pass 2 — backfill)
+# 2b. Metrics background script (Pass 2 - backfill)
 #
 # Runs inside $script:vmMetricsRunspace (a second dedicated runspace).
 # Launched by Invoke-SessionHostsMetricsRefresh immediately after the Core job
@@ -1001,12 +1002,12 @@ $script:vmMetricsScript = {
     # ── Phase 4 pre-launch: Log Analytics query ──────────────────────────────────
     # Fired immediately at the start of this script so it runs concurrently while
     # Phase 5 disk metrics batch calls are being built and dispatched below.
-    # Phase 4's only input is a list of Available VM names — already in $vmRows
+    # Phase 4's only input is a list of Available VM names - already in $vmRows
     # from the Core pass. By the time Phase 5 collects its batch results, Phase 4
     # is usually already done and EndInvoke returns immediately (zero extra wait).
     #
     # NOTE: The old overlap was Phase 4 concurrent with Phase 3. With the two-pass
-    # split, Phase 3 runs before this script starts — but the win is still valid:
+    # split, Phase 3 runs before this script starts - but the win is still valid:
     # Phase 4 now overlaps with Phase 5's batch HTTP calls instead.
     # ──────────────────────────────────────────────────────────────────────────────
     #
@@ -1016,20 +1017,20 @@ $script:vmMetricsScript = {
     # It receives 4 args: ARM token, workspace resource ID, pre-built body hashtable,
     # and log file path. The KQL body is built here on the main thread (variable
     # expansion happens now via the here-string) so the background script only needs
-    # to POST the already-complete JSON payload — no string interpolation in runspace.
+    # to POST the already-complete JSON payload - no string interpolation in runspace.
     #
     # The background script returns [PSCustomObject]@{ LawMap = $lawMap; Error = '' }.
     # LawMap is a flat hashtable:  { 'vmshortname' -> { 'CPU' -> '42.3', ... } }
     # A flat hashtable serialises reliably across the runspace boundary. The raw
     # Invoke-Arm response (a nested deserialized PSObject) does NOT reliably round-
-    # trip across runspace boundaries in PS5.1 — extracting just the values we need
+    # trip across runspace boundaries in PS5.1 - extracting just the values we need
     # into a plain hashtable avoids that pitfall entirely.
     # ──────────────────────────────────────────────────────────────────────────────
     $phase4Handle = $null; $phase4PS = $null; $phase4Error = $null
 
     # Collect Available VM short-names now (Phase 2 data is complete).
     # ToLower() ensures names match the KQL ComputerShort extend (which also lowercases).
-    $availVmNamesEarly = @($vmRows | Where-Object { $_.'Status' -eq 'Available' } |
+    $availVmNamesEarly = @($vmRows | Where-Object { $_.'Power State' -eq 'Running' } |
         ForEach-Object { $_.'VM Name'.ToLower() })
 
     if ($LawWorkspaceResourceId -and $availVmNamesEarly.Count -gt 0 -and
@@ -1052,14 +1053,14 @@ $script:vmMetricsScript = {
 
         # Build the full KQL query string here on the main thread.
         # All PowerShell variables ($vmListKqlEarly, $inputDelayExcludeKqlEarly) are
-        # expanded now via the double-quoted here-string — the background runspace
+        # expanded now via the double-quoted here-string - the background runspace
         # receives only the final string so it needs no access to PS variables.
         #
         # KQL design notes:
         #   perfMetrics sub-query:
         #     - ObjectName covers both MMA ("Processor") and AMA ("Processor Information")
         #       agents so the query works regardless of which monitoring agent is deployed.
-        #     - InstanceName "_Total" is the aggregate across all cores — the right value
+        #     - InstanceName "_Total" is the aggregate across all cores - the right value
         #       to display as a single CPU % figure.
         #     - arg_max(TimeGenerated, CounterValue) returns the LATEST single sample per
         #       counter per host, keeping the column consistent with "current state".
@@ -1072,7 +1073,7 @@ $script:vmMetricsScript = {
         #     - CounterValue capped at 10,000 ms to exclude measurement anomalies
         #       (e.g. LapsView.exe has been seen reporting 549,047 ms).
         #     - InstanceName !in ("Max","Average") excludes the synthetic aggregate rows
-        #       that LAW inserts — we want the per-process raw samples only.
+        #       that LAW inserts - we want the per-process raw samples only.
         $lawKqlEarly = @"
 let vms = dynamic([$vmListKqlEarly]);
 // CPU, Memory, Disk: most-recent single sample per counter per host
@@ -1132,16 +1133,21 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
         #      Invoke-Arm do not reliably round-trip across runspace boundaries in PS5.1.
         $lawBgScript = [scriptblock]::Create($RestHelperDef + @'
             $tok = $args[0]; $wsId = $args[1]; $kql = $args[2]; $logFile = $args[3]
+            $lawQueryBaseUrl = [string]$args[4]; $lawTok = [string]$args[5]
             # Build the body hashtable here (not passed as arg) so it is a proper
-            # [hashtable] in this runspace — avoids PS5.1 deserialization issues.
+            # [hashtable] in this runspace - avoids PS5.1 deserialization issues.
             $body = @{ query = $kql; timespan = 'PT1H' }
             $lawMap = @{}
             try {
-                # POST to the Log Analytics query API.
-                # Endpoint pattern: {WorkspaceResourceId}/api/query?api-version=2020-08-01
-                $resp = Invoke-Arm -Method POST -Path "$wsId/api/query" -Token $tok -ApiVersion '2020-08-01' -Body $body -FullResponse
+                if ($lawQueryBaseUrl -and $lawTok) {
+                    $resp = Invoke-RestMethod -Method POST -Uri "$lawQueryBaseUrl/v1$wsId/query" `
+                        -Body (ConvertTo-Json $body -Compress) `
+                        -Headers @{ Authorization = "Bearer $lawTok"; 'Content-Type' = 'application/json' }
+                } else {
+                    $resp = Invoke-Arm -Method POST -Path "$wsId/api/query" -Token $tok -ApiVersion '2020-08-01' -Body $body -FullResponse
+                }
                 if ($resp -and $resp.tables -and $resp.tables[0].rows) {
-                    # Locate columns by name — handles .name (PS7) and .ColumnName (PS5.1 DataTable)
+                    # Locate columns by name - handles .name (PS7) and .ColumnName (PS5.1 DataTable)
                     $cols      = @($resp.tables[0].columns | ForEach-Object { $n = [string]$_.name; if (-not $n) { $n = [string]$_.ColumnName }; if (-not $n) { $n = [string]$_ }; $n })
                     $colsLower = @($cols | ForEach-Object { $_.ToLower() })
                     $idxComp   = [array]::IndexOf($colsLower, 'computer')
@@ -1157,6 +1163,39 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                         elseif ($ctr -eq   'Input Delay')       { $lawMap[$comp]['InputDelay']   = $val }
                         elseif ($ctr -eq   'Input Delay P95')   { $lawMap[$comp]['InputDelayP95']= $val }
                     }
+                    if ($logFile) {
+                        $rowCount    = $resp.tables[0].rows.Count
+                        $sampleCtrs  = ($resp.tables[0].rows | ForEach-Object { [string]$_[$idxCtr] } | Sort-Object -Unique | Select-Object -First 8) -join ', '
+                        $sampleComps = ($resp.tables[0].rows | ForEach-Object { [string]$_[$idxComp] } | Sort-Object -Unique | Select-Object -First 3) -join ', '
+                        try { [IO.File]::AppendAllText($logFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4] LAW rows=$rowCount matched=$($lawMap.Count) counters=[$sampleCtrs] computers=[$sampleComps]`r`n") } catch {}
+                    }
+                } else {
+                    if ($logFile) { try { [IO.File]::AppendAllText($logFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4] LAW returned 0 rows (no Perf data in workspace for queried VMs/timespan)`r`n") } catch {} }
+                    # Probe: check if ANY Perf data exists in this workspace at all (no computer filter)
+                    # This distinguishes "DCR not routing to this workspace" from "computer name mismatch"
+                    try {
+                        $probeKql = 'Perf | where TimeGenerated > ago(1h) | summarize Count=count() by Computer | order by Count desc | take 5'
+                        $probeBody = @{ query = $probeKql; timespan = 'PT1H' }
+                        $probeBodyJson = ConvertTo-Json $probeBody -Compress
+                        if ($lawQueryBaseUrl -and $lawTok) {
+                            $probeResp = Invoke-RestMethod -Method POST -Uri "$lawQueryBaseUrl/v1$wsId/query" `
+                                -Body $probeBodyJson `
+                                -Headers @{ Authorization = "Bearer $lawTok"; 'Content-Type' = 'application/json' }
+                        } else {
+                            $probeResp = Invoke-Arm -Method POST -Path "$wsId/api/query" -Token $tok -ApiVersion '2020-08-01' -Body $probeBody -FullResponse
+                        }
+                        if ($probeResp -and $probeResp.tables -and $probeResp.tables[0].rows -and $probeResp.tables[0].rows.Count -gt 0) {
+                            $probeCols  = @($probeResp.tables[0].columns | ForEach-Object { $n = [string]$_.name; if (-not $n) { $n = [string]$_.ColumnName }; $n })
+                            $idxPC      = [array]::IndexOf(($probeCols | ForEach-Object { $_.ToLower() }), 'computer')
+                            $idxCount   = [array]::IndexOf(($probeCols | ForEach-Object { $_.ToLower() }), 'count')
+                            $probeComps = ($probeResp.tables[0].rows | ForEach-Object { "$([string]$_[$idxPC])($([string]$_[$idxCount]))" }) -join ', '
+                            if ($logFile) { try { [IO.File]::AppendAllText($logFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4-Probe] Workspace HAS Perf data - top computers: $probeComps`r`n") } catch {} }
+                        } else {
+                            if ($logFile) { try { [IO.File]::AppendAllText($logFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4-Probe] Workspace has NO Perf data at all in last 1h - DCR not routing counters to this workspace`r`n") } catch {} }
+                        }
+                    } catch {
+                        if ($logFile) { try { [IO.File]::AppendAllText($logFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4-Probe] Probe query failed: $_`r`n") } catch {} }
+                    }
                 }
                 if ($logFile) { try { [IO.File]::AppendAllText($logFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4] LAW done in background: $($lawMap.Count) VM(s) matched`r`n") } catch {} }
             } catch {
@@ -1171,12 +1210,16 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
         # is no contention risk from this single pre-launch call.
         $phase4PS = [System.Management.Automation.PowerShell]::Create()
         $phase4PS.RunspacePool = $HpPool
-        [void]$phase4PS.AddScript($lawBgScript).AddArgument($ArmToken).AddArgument($LawWorkspaceResourceId).AddArgument($lawKqlEarly).AddArgument([string]$LogFile)
+        $lawTokEarly = if ($LawQueryBaseUrl) { $LawToken } else { '' }
+        [void]$phase4PS.AddScript($lawBgScript).AddArgument($ArmToken).AddArgument($LawWorkspaceResourceId).AddArgument($lawKqlEarly).AddArgument([string]$LogFile).AddArgument([string]$LawQueryBaseUrl).AddArgument($lawTokEarly)
         # BeginInvoke starts execution immediately and returns a handle.
         # The handle is passed to EndInvoke after Phase 3 completes (see Phase 4 collect below).
         $phase4Handle = $phase4PS.BeginInvoke()
     } elseif ($LawWorkspaceResourceId -and $availVmNamesEarly.Count -eq 0) {
-        if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4] Skipped - no Available VMs`r`n") } catch {} }
+        if ($LogFile) {
+            $distinctStatuses = ($vmRows | ForEach-Object { $_.'Status' } | Sort-Object -Unique) -join ', '
+            try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4] Skipped - no Available VMs. Statuses in vmRows ($($vmRows.Count) rows): $distinctStatuses`r`n") } catch {}
+        }
     } elseif ($LawWorkspaceResourceId -and -not ($ShowCPU -or $ShowMem -or $ShowDisk -or $ShowInputDelay)) {
         if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4] Skipped - all LAW columns hidden`r`n") } catch {} }
     } else {
@@ -1189,7 +1232,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
     # The Log Analytics query was fired as a non-blocking BeginInvoke at the top of
     # this script. Now that Phase 5's batch calls have been dispatched (and are in
     # flight), we collect the Phase 4 result via EndInvoke before the Phase 5 collect
-    # loop — in most environments the LAW call has already completed by this point.
+    # loop - in most environments the LAW call has already completed by this point.
     #
     # EndInvoke semantics:
     #   - If the background job is still running: blocks until it finishes.
@@ -1197,16 +1240,16 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
     #   In the common case the LAW call finishes while Phase 5 batches are running
     #   and EndInvoke returns in microseconds.
     #
-    # $lawResult is the pipeline output of the background scriptblock — an array where
+    # $lawResult is the pipeline output of the background scriptblock - an array where
     # $lawResult[0] is the [PSCustomObject]@{ LawMap = ...; Error = '' } the script
     # returned. $lawResult[0].LawMap is a hashtable keyed by lowercase VM short-name:
     #   { 'vm001' -> { 'CPU' -> '42.3', 'Mem' -> '61.0', 'Disk' -> '44.2',
     #                  'InputDelay' -> '12', 'InputDelayP95' -> '87' } }
-    # Not all keys are present in every inner hashtable — only counters that had data
+    # Not all keys are present in every inner hashtable - only counters that had data
     # in the LAW response are populated. The null checks below guard against this.
     #
     # $phase4Handle is $null when Phase 4 was skipped (no LAW workspace configured,
-    # no Available VMs, or all LAW columns hidden) — the if block is a no-op in that case.
+    # no Available VMs, or all LAW columns hidden) - the if block is a no-op in that case.
     # ──────────────────────────────────────────────────────────────────────────────
     if ($phase4Handle) {
         try {
@@ -1232,7 +1275,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                 #   numerically rather than lexicographically (e.g. "9%" sorts before "10%").
                 #
                 # $ShowCPU / $ShowMem / $ShowDisk / $ShowInputDelay come from config.
-                # Columns that are hidden in config are not stamped — they stay at '-'.
+                # Columns that are hidden in config are not stamped - they stay at '-'.
                 foreach ($row in $vmRows) {
                     $vn = $row.'VM Name'.ToLower()
                     if ($bgLawMap.ContainsKey($vn)) {
@@ -1263,7 +1306,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                             $row.'_InputDelaySort'     = $delayMs
                             $row.'_InputDelayColor'    = if ($delayMs -ge $LawInputDelayRedMs) { 'Red' } elseif ($delayMs -ge $LawInputDelayAmberMs) { 'Amber' } else { 'Green' }
                         }
-                        # Input Delay P95: 95th percentile — the worst-case delay experienced by the
+                        # Input Delay P95: 95th percentile - the worst-case delay experienced by the
                         # top 5% of samples. High P95 with low median indicates occasional severe spikes.
                         # Uses the same amber/red thresholds as the median column.
                         if ($ShowInputDelay -and $null -ne $bgLawMap[$vn]['InputDelayP95']) {
@@ -1388,7 +1431,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
         try {
             # Only query VMs that are actually running (Available) and have a resource ID.
             # Deallocated/stopped VMs have no platform metrics to report.
-            $availRows = @($vmRows | Where-Object { $_.'Status' -eq 'Available' -and $_.'_VMResourceId' })
+            $availRows = @($vmRows | Where-Object { $_.'Power State' -eq 'Running' -and $_.'_VMResourceId' })
             if ($availRows.Count -gt 0) {
                 # Build ISO 8601 start/end times for the API query window.
                 # The regional batch API uses separate starttime/endtime query params.
@@ -1555,7 +1598,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                 $batchRegions   = @($regionGroups | Where-Object { -not $metricsRegionalBatchFailed[$_.Name] })
 
                 # Per-VM fallback for regions whose batch endpoint is already known to fail DNS.
-                # Identical to the DNS-fallback path below — just fires immediately without wasting
+                # Identical to the DNS-fallback path below - just fires immediately without wasting
                 # a batch round-trip that we already know will fail.
                 foreach ($rg in $failedRegions) {
                     if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase5] Skipping batch for [$($rg.Name)] (DNS failure cached). Going per-VM for $($rg.Count) VM(s)`r`n") } catch {} }
@@ -1615,7 +1658,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                                     $totalIOPS = [math]::Round(([double]$readOps + [double]$writeOps), 0)
                                     $vh.Row.'OS Disk IOPS'  = $totalIOPS.ToString()
                                     $vh.Row.'_DiskIOPSSort' = [double]$totalIOPS
-                                    # IOPS % = current / provisioned — only calculable when the disk
+                                    # IOPS % = current / provisioned - only calculable when the disk
                                     # tier was resolved in Phase 3 (_DiskProvIOPS > 0).
                                     $provIOPS = [int]$vh.Row.'_DiskProvIOPS'
                                     if ($provIOPS -gt 0) {
@@ -1637,7 +1680,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                                 # Catch any exception from EndInvoke or the parsing/stamping above.
                                 # Common causes: 429 throttle that exhausted retries, auth failure,
                                 # transient 5xx, or a malformed response. Log the full exception
-                                # message so the root cause is visible in the log file — without
+                                # message so the root cause is visible in the log file - without
                                 # this the row would silently stay as '-' with no trace.
                                 if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase5] ERROR: Per-VM fallback failed for '$($vh.Row.'VM Name')': $_`r`n") } catch {} }
                                 try { $vh.PS.Dispose() } catch {}
@@ -1673,7 +1716,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                 #
                 # WHY HERE (before the Phase 5 collect loop)?
                 # ---------------------------------------------
-                # Phase 5 (disk metrics) and Phase 5b (CPU credits) are independent —
+                # Phase 5 (disk metrics) and Phase 5b (CPU credits) are independent -
                 # different metric names, same regional batch endpoint. Previously Phase 5b
                 # launched only after all Phase 5 EndInvoke() calls had completed, meaning
                 # the two sets of HTTP round-trips ran sequentially. By pre-launching
@@ -1683,10 +1726,10 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                 # EndInvoke returns immediately. Savings: ~200–600 ms per refresh cycle.
                 #
                 # Variables set here are used in the Phase 5b collect block below:
-                #   $creditHandles    — batch BeginInvoke handles (one per 50-VM slice per region)
-                #   $cvmFallbackSets  — per-VM BeginInvoke handle lists for cached-DNS-fail regions
+                #   $creditHandles    - batch BeginInvoke handles (one per 50-VM slice per region)
+                #   $cvmFallbackSets  - per-VM BeginInvoke handle lists for cached-DNS-fail regions
                 #   $creditMetricEncoded, $creditScript, $bRows, $bRowGroups,
-                #   $bFailedRegions, $bBatchRegions  — all set here for use in collect phase.
+                #   $bFailedRegions, $bBatchRegions  - all set here for use in collect phase.
                 $creditHandles   = @()
                 $cvmFallbackSets = [System.Collections.Generic.List[PSCustomObject]]::new()
                 $creditMetricEncoded = [uri]::EscapeDataString('CPU Credits Remaining')
@@ -1697,7 +1740,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
 
                 if ($bRows.Count -gt 0) {
                     $bRowGroups     = @($bRows | Group-Object 'Region')
-                    # Split by cached DNS status — same shared flag as Phase 5 disk metrics
+                    # Split by cached DNS status - same shared flag as Phase 5 disk metrics
                     # since both use the same *.metrics.monitor.azure.com regional endpoint.
                     $bFailedRegions = @($bRowGroups | Where-Object {  $metricsRegionalBatchFailed[$_.Name] })
                     $bBatchRegions  = @($bRowGroups | Where-Object { -not $metricsRegionalBatchFailed[$_.Name] })
@@ -1716,11 +1759,11 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                     }
 
                     # Batch regions: build $creditScript and fire batch BeginInvoke calls NOW.
-                    # $creditHandles is empty if no batch regions — the collect block handles that.
+                    # $creditHandles is empty if no batch regions - the collect block handles that.
                     if ($bBatchRegions.Count -gt 0) {
                         if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase5b] Pre-launching CPU Credits batch for $($bBatchRegions | ForEach-Object { $_.Count } | Measure-Object -Sum | Select-Object -ExpandProperty Sum) B-series VM(s) across $($bBatchRegions.Count) region(s) - running concurrently with Phase 5 collect$(if ($bFailedRegions.Count) { ' (' + $bFailedRegions.Count + ' region(s) using cached per-VM)' })`r`n") } catch {} }
 
-                        # Separate scriptblock from Phase 5 $batchScript — CPU Credits Remaining
+                        # Separate scriptblock from Phase 5 $batchScript - CPU Credits Remaining
                         # cannot be batched with disk metrics (API rejects the request for VMs that
                         # don't support the metric). Same endpoint, different metricnames parameter.
                         $creditScript = [scriptblock]::Create($RestHelperDef + @'
@@ -1753,7 +1796,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                         })
                     }
                 }
-                # ── END Phase 5b pre-launch — HTTP calls now in flight ───────────────────
+                # ── END Phase 5b pre-launch - HTTP calls now in flight ───────────────────
 
                 # ── Collect Phase 5 disk batch results and populate row columns ────────
                 # EndInvoke() blocks until each batch call finishes.
@@ -1764,15 +1807,15 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                 # inspect the error to distinguish two failure modes:
                 #
                 #   1. DNS / connection failure  (NameResolutionFailure, "remote name could
-                #      not be resolved") — this happens in Azure Monitor Private Link
+                #      not be resolved") - this happens in Azure Monitor Private Link
                 #      environments because {region}.metrics.monitor.azure.com has no
                 #      private endpoint. In this case we fall back to the original per-VM
                 #      single-resource GET via management.azure.com, which IS accessible
                 #      through AMPLS. The fallback fires all VMs in that batch in parallel
                 #      on $HpPool, exactly as Phase 5 did before the batch API was added.
                 #
-                #   2. HTTP error (4xx/5xx) — a real API problem (bad request, auth issue,
-                #      throttling etc.). We log the error and skip — no fallback, because
+                #   2. HTTP error (4xx/5xx) - a real API problem (bad request, auth issue,
+                #      throttling etc.). We log the error and skip - no fallback, because
                 #      the per-VM path would likely fail for the same reason.
                 #
                 # If Microsoft later adds AMPLS support for the regional metrics batch
@@ -1833,7 +1876,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                                             # when the VM has no recent data, the principal lacks
                                             # Monitoring Reader on this specific resource, or a transient
                                             # platform gap occurred. Log it so we can identify which VMs
-                                            # are affected and why — without this the row silently stays '-'.
+                                            # are affected and why - without this the row silently stays '-'.
                                             if (-not $vResult -or $vResult.Count -eq 0) {
                                                 if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase5] WARN: Per-VM fallback returned empty response for '$($vh.Row.'VM Name')' ($($vh.Row.'_VMResourceId'))`r`n") } catch {} }
                                                 continue
@@ -1859,7 +1902,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                                                 elseif ($mName -eq 'OS Disk Queue Depth')          { $queueDepth = $latest }
                                             }
 
-                                            # Stamp the row — same logic as the batch success path below.
+                                            # Stamp the row - same logic as the batch success path below.
                                             # Using a hashtable ($m) keeps the stamping block identical
                                             # to that path so both stay in sync if thresholds change.
                                             $m = @{ ReadOps = $readOps; WriteOps = $writeOps; QueueDepth = $queueDepth }
@@ -1890,7 +1933,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                                         } catch {
                                             # Catch exceptions from EndInvoke or parsing/stamping.
                                             # Without logging here, failures (throttle, auth, 5xx)
-                                            # are completely invisible — the row stays '-' with no trace.
+                                            # are completely invisible - the row stays '-' with no trace.
                                             if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase5] ERROR: Per-VM fallback failed for '$($vh.Row.'VM Name')': $_`r`n") } catch {} }
                                             try { $vh.PS.Dispose() } catch {}
                                         }
@@ -1908,7 +1951,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
 
                             # ── Non-DNS failure or empty response: log and skip ───────────
                             # Could be an HTTP 4xx/5xx (bad request, auth, throttle etc.).
-                            # We do NOT fall back to per-VM here — if the batch API returned
+                            # We do NOT fall back to per-VM here - if the batch API returned
                             # an HTTP error, the per-VM path would likely fail for the same reason.
                             if (-not $resp -or -not $resp.values) {
                                 if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase5] WARN: Batch [$($bh.Region)] for $($bh.Rows.Count) VM(s) returned no data (resp.values was null/empty)`r`n") } catch {} }
@@ -2023,11 +2066,11 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                 # The Phase 5b HTTP calls were pre-launched before the Phase 5 collect
                 # loop above, so they ran concurrently. By the time we reach this point
                 # the batch results are usually already available and EndInvoke returns
-                # immediately — the cost is near-zero in the common case.
+                # immediately - the cost is near-zero in the common case.
                 #
                 # Collect order:
-                #   1. $cvmFallbackSets — cached-DNS-fail regions (per-VM handles, pre-launched)
-                #   2. $creditHandles   — batch handles (pre-launched); DNS-fail-on-first-attempt
+                #   1. $cvmFallbackSets - cached-DNS-fail regions (per-VM handles, pre-launched)
+                #   2. $creditHandles   - batch handles (pre-launched); DNS-fail-on-first-attempt
                 #                        fires per-VM inline as before
 
                 # ── 1. Collect pre-launched per-VM results for cached-DNS-fail regions ─
@@ -2073,7 +2116,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
                                 $cResult    = $ch.PS.EndInvoke($ch.Handle)
                                 $batchEmpty = (-not $cResult -or $cResult.Count -eq 0)
 
-                                # Detect DNS failure — same pattern as Phase 5 disk metrics.
+                                # Detect DNS failure - same pattern as Phase 5 disk metrics.
                                 # Phase 5b shares $metricsRegionalBatchFailed with Phase 5 since
                                 # both use the same *.metrics.monitor.azure.com endpoint.
                                 $isDnsFail = $false
@@ -2207,7 +2250,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
     # ── Metrics return ────────────────────────────────────────────────────────────
     # $vmRows already contains the enriched rows (Phase 4 + Phase 5 values stamped
     # in-place above). The UI thread's _SH_BackfillMetrics merges these into the
-    # existing DataTable rows by VM Name key — no full table rebuild needed.
+    # existing DataTable rows by VM Name key - no full table rebuild needed.
     if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Metrics] Phases 4-5b complete. Returning $($vmRows.Count) row(s) with metric data.`r`n") } catch {} }
     [PSCustomObject]@{
         Pass        = 'Metrics'
@@ -2308,14 +2351,9 @@ Perf
 | project TimeGenerated, CounterName, Value = round(avg_CounterValue, 1)
 "@
 
-    $tok = Get-ArmToken
-    $body = @{ query = $kql; timespan = $TimeRange }
-    $resp = Invoke-ArmRestMethod -Method POST `
-                -Path "$($script:LawWorkspaceResourceId)/api/query" `
-                -Token $tok `
-                -ApiVersion '2020-08-01' `
-                -Body $body `
-                -FullResponse
+    $resp = Invoke-LawQuery -Kql $kql -Timespan $TimeRange `
+                -WorkspaceResourceId $script:LawWorkspaceResourceId `
+                -QueryBaseUrl $script:LawQueryBaseUrl
 
     # Parse the columnar JSON response into separate CPU and Mem arrays.
     # Response format: { tables: [{ columns: [...], rows: [[...],[...]] }] }
@@ -2425,7 +2463,7 @@ function Invoke-DiskMetricsHistoryQuery {
                     if ($mName -eq 'OS Disk Queue Depth') {
                         $queueData.Add([PSCustomObject]@{ Time = $t; Value = [double]::NaN; IsGap = $true })
                     } else {
-                        # Read/Write go into a Dictionary — mark with NaN sentinel
+                        # Read/Write go into a Dictionary - mark with NaN sentinel
                         if ($mName -eq 'OS Disk Read Operations/Sec')  { $readData[$t]  = [double]::NaN }
                         elseif ($mName -eq 'OS Disk Write Operations/Sec') { $writeData[$t] = [double]::NaN }
                     }
@@ -2556,7 +2594,12 @@ function Update-DiskChart {
     $cw = $w - $ml - $mr
     $ch = $h - $mt - $mb
 
-    $brushConv = New-Object System.Windows.Media.BrushConverter
+    $brushConv    = New-Object System.Windows.Media.BrushConverter
+    $_chartBg     = if ($script:DarkTheme) { '#1E1E1E' } else { '#FAFAFA' }
+    $_gridH       = if ($script:DarkTheme) { '#3F3F46' } else { '#E0E0E0' }
+    $_gridV       = if ($script:DarkTheme) { '#2A2D2E' } else { '#F0F0F0' }
+    $_axis        = if ($script:DarkTheme) { '#6A6A6A' } else { '#999999' }
+    $_labelColor  = if ($script:DarkTheme) { '#9D9D9D' } else { '#666666' }
 
     # ── Helpers (same as Update-PerfChart) ──────────────────────────────────
     $addLine = {
@@ -2577,7 +2620,7 @@ function Update-DiskChart {
         $tb = New-Object System.Windows.Controls.TextBlock
         $tb.Text = $text
         $tb.FontSize = if ($fontSize) { $fontSize } else { 10 }
-        $tb.Foreground = $brushConv.ConvertFromString($(if ($color) { $color } else { '#666' }))
+        $tb.Foreground = $brushConv.ConvertFromString($(if ($color) { $color } else { $_labelColor }))
         [System.Windows.Controls.Canvas]::SetLeft($tb, $x)
         [System.Windows.Controls.Canvas]::SetTop($tb, $y)
         if ($hAlign -eq 'Right') {
@@ -2591,7 +2634,7 @@ function Update-DiskChart {
     # ── Chart background ───────────────────────────────────────────────────
     $bg = New-Object System.Windows.Shapes.Rectangle
     $bg.Width = $cw; $bg.Height = $ch
-    $bg.Fill = $brushConv.ConvertFromString('#FAFAFA')
+    $bg.Fill = $brushConv.ConvertFromString($_chartBg)
     [System.Windows.Controls.Canvas]::SetLeft($bg, $ml)
     [System.Windows.Controls.Canvas]::SetTop($bg, $mt)
     [void]$Canvas.Children.Add($bg)
@@ -2631,7 +2674,7 @@ function Update-DiskChart {
     # ── Gridlines (4 horizontal lines at 25%, 50%, 75%) ────────────────────
     foreach ($frac in @(0.25, 0.50, 0.75)) {
         $y = $mt + $ch * (1 - $frac)
-        & $addLine $ml $y ($ml + $cw) $y '#E0E0E0' 1 @(4, 4)
+        & $addLine $ml $y ($ml + $cw) $y $_gridH 1 @(4, 4)
     }
 
     # ── Y-axis labels - left (IOPS) ───────────────────────────────────────
@@ -2651,7 +2694,7 @@ function Update-DiskChart {
     # ── Axes ───────────────────────────────────────────────────────────────
     & $addLine $ml $mt $ml ($mt + $ch) '#2E7D32' 1 $null              # Left Y-axis (IOPS - green)
     & $addLine ($ml + $cw) $mt ($ml + $cw) ($mt + $ch) '#E65100' 1 $null  # Right Y-axis (Queue - orange)
-    & $addLine $ml ($mt + $ch) ($ml + $cw) ($mt + $ch) '#999' 1 $null     # X-axis (bottom)
+    & $addLine $ml ($mt + $ch) ($ml + $cw) ($mt + $ch) $_axis 1 $null     # X-axis (bottom)
 
     # ── X-axis time labels ─────────────────────────────────────────────────
     $labelCount = [Math]::Min(6, [Math]::Max(2, [int]($cw / 100)))
@@ -2660,9 +2703,9 @@ function Update-DiskChart {
         $t    = $minTime.AddSeconds($frac * $span)
         $x    = $ml + $frac * $cw
         $label = $t.ToLocalTime().ToString('HH:mm')
-        & $addText $label ($x - 15) ($mt + $ch + 5) 10 '#666' $null
+        & $addText $label ($x - 15) ($mt + $ch + 5) 10 $null $null
         if ($i -gt 0 -and $i -lt $labelCount) {
-            & $addLine $x $mt $x ($mt + $ch) '#F0F0F0' 1 $null
+            & $addLine $x $mt $x ($mt + $ch) $_gridV 1 $null
         }
     }
 
@@ -2679,7 +2722,7 @@ function Update-DiskChart {
         for ($i = 0; $i -lt $data.Count; $i++) {
             $pt = $data[$i]
 
-            # Gap marker — flush current segment and skip this point
+            # Gap marker - flush current segment and skip this point
             if ($pt.IsGap) {
                 if ($pl -and $points.Count -ge 2) { $pl.Points = $points; [void]$Canvas.Children.Add($pl) }
                 $pl = $null; $points = $null
@@ -2723,7 +2766,7 @@ function Update-CreditsChart {
           - Amber dashed line at 30 credits  (matches the live column amber band)
           - Red dashed line at 10 credits    (matches the live column red band)
 
-        Chart colour: purple (#7B1FA2) — visually distinct from CPU (blue),
+        Chart colour: purple (#7B1FA2) - visually distinct from CPU (blue),
         Mem (orange), and IOPS (green) in the Performance History popup.
     .PARAMETER Canvas
         The WPF Canvas control to draw on.
@@ -2744,12 +2787,17 @@ function Update-CreditsChart {
     # Guard: canvas must be large enough to render meaningfully
     if ($w -lt 100 -or $h -lt 80) { return }
 
-    # Chart margins — left is wider to fit Y-axis credit labels (e.g. "144.0")
+    # Chart margins - left is wider to fit Y-axis credit labels (e.g. "144.0")
     $ml = 55; $mr = 20; $mt = 15; $mb = 35
     $cw = $w - $ml - $mr   # chart plot width
     $ch = $h - $mt - $mb   # chart plot height
 
-    $brushConv = New-Object System.Windows.Media.BrushConverter
+    $brushConv    = New-Object System.Windows.Media.BrushConverter
+    $_chartBg     = if ($script:DarkTheme) { '#1E1E1E' } else { '#FAFAFA' }
+    $_gridH       = if ($script:DarkTheme) { '#3F3F46' } else { '#E0E0E0' }
+    $_gridV       = if ($script:DarkTheme) { '#2A2D2E' } else { '#F0F0F0' }
+    $_axis        = if ($script:DarkTheme) { '#6A6A6A' } else { '#999999' }
+    $_labelColor  = if ($script:DarkTheme) { '#9D9D9D' } else { '#666666' }
 
     # ── Helper: draw a line segment on the canvas ────────────────────────────
     $addLine = {
@@ -2772,11 +2820,10 @@ function Update-CreditsChart {
         $tb = New-Object System.Windows.Controls.TextBlock
         $tb.Text = $text
         $tb.FontSize = if ($fontSize) { $fontSize } else { 10 }
-        $tb.Foreground = $brushConv.ConvertFromString($(if ($color) { $color } else { '#666' }))
+        $tb.Foreground = $brushConv.ConvertFromString($(if ($color) { $color } else { $_labelColor }))
         [System.Windows.Controls.Canvas]::SetLeft($tb, $x)
         [System.Windows.Controls.Canvas]::SetTop($tb, $y)
         if ($hAlign -eq 'Right') {
-            # Right-align by setting width = left margin and anchoring at x=0
             $tb.TextAlignment = [System.Windows.TextAlignment]::Right
             $tb.Width = $x
             [System.Windows.Controls.Canvas]::SetLeft($tb, 0)
@@ -2787,7 +2834,7 @@ function Update-CreditsChart {
     # ── Chart background rectangle ───────────────────────────────────────────
     $bg = New-Object System.Windows.Shapes.Rectangle
     $bg.Width = $cw; $bg.Height = $ch
-    $bg.Fill = $brushConv.ConvertFromString('#FAFAFA')
+    $bg.Fill = $brushConv.ConvertFromString($_chartBg)
     [System.Windows.Controls.Canvas]::SetLeft($bg, $ml)
     [System.Windows.Controls.Canvas]::SetTop($bg, $mt)
     [void]$Canvas.Children.Add($bg)
@@ -2796,8 +2843,8 @@ function Update-CreditsChart {
     # Filter to non-gap points to determine the time span and max credit value
     $validPoints = @($ChartPoints | Where-Object { -not $_.IsGap })
     if ($validPoints.Count -eq 0) {
-        # No data at all — show a "No data" label centred in the plot area
-        & $addText 'No data available' ($ml + $cw / 2 - 45) ($mt + $ch / 2 - 8) 12 '#999' $null
+        # No data at all - show a "No data" label centred in the plot area
+        & $addText 'No data available' ($ml + $cw / 2 - 45) ($mt + $ch / 2 - 8) 12 $null $null
         return
     }
 
@@ -2820,7 +2867,7 @@ function Update-CreditsChart {
     # ── Gridlines (25%, 50%, 75%) ────────────────────────────────────────────
     foreach ($frac in @(0.25, 0.50, 0.75)) {
         $y = $mt + $ch * (1 - $frac)
-        & $addLine $ml $y ($ml + $cw) $y '#E0E0E0' 1 @(4, 4)
+        & $addLine $ml $y ($ml + $cw) $y $_gridH 1 @(4, 4)
     }
 
     # ── Y-axis labels (left, credit count) ───────────────────────────────────
@@ -2832,7 +2879,7 @@ function Update-CreditsChart {
 
     # ── Axes ─────────────────────────────────────────────────────────────────
     & $addLine $ml $mt $ml ($mt + $ch) '#7B1FA2' 1 $null           # Left Y-axis (purple)
-    & $addLine $ml ($mt + $ch) ($ml + $cw) ($mt + $ch) '#999' 1 $null  # X-axis (bottom)
+    & $addLine $ml ($mt + $ch) ($ml + $cw) ($mt + $ch) $_axis 1 $null  # X-axis (bottom)
 
     # ── X-axis time labels ────────────────────────────────────────────────────
     $labelCount = [Math]::Min(6, [Math]::Max(2, [int]($cw / 100)))
@@ -2841,21 +2888,21 @@ function Update-CreditsChart {
         $t     = $minTime.AddSeconds($frac * $span)
         $x     = $ml + $frac * $cw
         $label = $t.ToLocalTime().ToString('HH:mm')
-        & $addText $label ($x - 15) ($mt + $ch + 5) 10 '#666' $null
+        & $addText $label ($x - 15) ($mt + $ch + 5) 10 $null $null
         # Thin vertical gridline at interior time ticks
         if ($i -gt 0 -and $i -lt $labelCount) {
-            & $addLine $x $mt $x ($mt + $ch) '#F0F0F0' 1 $null
+            & $addLine $x $mt $x ($mt + $ch) $_gridV 1 $null
         }
     }
 
     # ── Threshold reference lines ─────────────────────────────────────────────
-    # Amber at 30 credits — credits getting low, VM may start throttling
+    # Amber at 30 credits - credits getting low, VM may start throttling
     if ($yMax -ge 10) {
         $yAmber = $mt + $ch * (1 - [math]::Min(1.0, 30.0 / $yMax))
         & $addLine $ml $yAmber ($ml + $cw) $yAmber '#FFA000' 1 @(6, 4)
         & $addText '30' ($ml + $cw + 3) ($yAmber - 7) 9 '#FFA000' $null
     }
-    # Red at 10 credits — VM is being throttled now
+    # Red at 10 credits - VM is being throttled now
     if ($yMax -ge 5) {
         $yRed = $mt + $ch * (1 - [math]::Min(1.0, 10.0 / $yMax))
         & $addLine $ml $yRed ($ml + $cw) $yRed '#D32F2F' 1 @(6, 4)
@@ -2865,7 +2912,7 @@ function Update-CreditsChart {
     # ── Helper: build segment-aware polylines from data points ───────────────
     # Azure Monitor returns a complete time series including null buckets for
     # periods when the VM was off / deallocated. Points with IsGap=$true act as
-    # explicit segment breaks — when encountered the current polyline is flushed
+    # explicit segment breaks - when encountered the current polyline is flushed
     # and a new one started, so the line is never drawn across VM-off gaps.
     # This is the same pattern used by Update-DiskChart.
     $buildPolyline = {
@@ -2877,7 +2924,7 @@ function Update-CreditsChart {
         for ($i = 0; $i -lt $data.Count; $i++) {
             $pt = $data[$i]
 
-            # Gap marker — flush the current segment and skip this point
+            # Gap marker - flush the current segment and skip this point
             if ($pt.IsGap) {
                 if ($pl -and $points.Count -ge 2) { $pl.Points = $points; [void]$Canvas.Children.Add($pl) }
                 $pl = $null; $points = $null
@@ -2950,7 +2997,12 @@ function Update-PerfChart {
     $cw = $w - $ml - $mr    # chart area width
     $ch = $h - $mt - $mb    # chart area height
 
-    $brushConv = New-Object System.Windows.Media.BrushConverter
+    $brushConv    = New-Object System.Windows.Media.BrushConverter
+    $_chartBg     = if ($script:DarkTheme) { '#1E1E1E' } else { '#FAFAFA' }
+    $_gridH       = if ($script:DarkTheme) { '#3F3F46' } else { '#E0E0E0' }
+    $_gridV       = if ($script:DarkTheme) { '#2A2D2E' } else { '#F0F0F0' }
+    $_axis        = if ($script:DarkTheme) { '#6A6A6A' } else { '#999999' }
+    $_labelColor  = if ($script:DarkTheme) { '#9D9D9D' } else { '#666666' }
 
     # ── Helper: add a Line to the Canvas ─────────────────────────────────────
     $addLine = {
@@ -2973,7 +3025,7 @@ function Update-PerfChart {
         $tb = New-Object System.Windows.Controls.TextBlock
         $tb.Text = $text
         $tb.FontSize = if ($fontSize) { $fontSize } else { 10 }
-        $tb.Foreground = $brushConv.ConvertFromString($(if ($color) { $color } else { '#666' }))
+        $tb.Foreground = $brushConv.ConvertFromString($(if ($color) { $color } else { $_labelColor }))
         [System.Windows.Controls.Canvas]::SetLeft($tb, $x)
         [System.Windows.Controls.Canvas]::SetTop($tb, $y)
         if ($hAlign -eq 'Right') {
@@ -2987,7 +3039,7 @@ function Update-PerfChart {
     # ── Chart background ─────────────────────────────────────────────────────
     $bg = New-Object System.Windows.Shapes.Rectangle
     $bg.Width = $cw; $bg.Height = $ch
-    $bg.Fill = $brushConv.ConvertFromString('#FAFAFA')
+    $bg.Fill = $brushConv.ConvertFromString($_chartBg)
     [System.Windows.Controls.Canvas]::SetLeft($bg, $ml)
     [System.Windows.Controls.Canvas]::SetTop($bg, $mt)
     [void]$Canvas.Children.Add($bg)
@@ -2995,7 +3047,7 @@ function Update-PerfChart {
     # ── Horizontal gridlines at 25%, 50%, 75% ────────────────────────────────
     foreach ($pct in @(25, 50, 75)) {
         $y = $mt + $ch * (1 - $pct / 100)
-        & $addLine $ml $y ($ml + $cw) $y '#E0E0E0' 1 @(4, 4)
+        & $addLine $ml $y ($ml + $cw) $y $_gridH 1 @(4, 4)
     }
 
     # ── Threshold lines (match heat map thresholds from the grid) ────────────
@@ -3009,17 +3061,14 @@ function Update-PerfChart {
     & $addText "$([int]$script:LawHeatMapRedPct)%" ($ml + $cw + 3) ($yRed - 7) 9 '#E57373' $null
 
     # ── Y-axis labels (0%, 25%, 50%, 75%, 100%) ─────────────────────────────
-    # Right-align labels so they sit just left of the chart area.
-    # $addText 'Right' mode sets Width = $x and Left = 0, so $x must be
-    # the total width available (ml - small gap) for right-aligned text.
     foreach ($pct in @(0, 25, 50, 75, 100)) {
-        $y = $mt + $ch * (1 - $pct / 100) - 7   # offset to vertically center text
-        & $addText "$pct%" ($ml - 5) $y 10 '#666' 'Right'
+        $y = $mt + $ch * (1 - $pct / 100) - 7
+        & $addText "$pct%" ($ml - 5) $y 10 $null 'Right'
     }
 
     # ── Axes (solid border around chart area) ────────────────────────────────
-    & $addLine $ml $mt $ml ($mt + $ch) '#999' 1 $null          # Y-axis (left)
-    & $addLine $ml ($mt + $ch) ($ml + $cw) ($mt + $ch) '#999' 1 $null  # X-axis (bottom)
+    & $addLine $ml $mt $ml ($mt + $ch) $_axis 1 $null          # Y-axis (left)
+    & $addLine $ml ($mt + $ch) ($ml + $cw) ($mt + $ch) $_axis 1 $null  # X-axis (bottom)
 
     # ── Determine time range from data ───────────────────────────────────────
     $allTimes = @()
@@ -3039,10 +3088,10 @@ function Update-PerfChart {
         $t    = $minTime.AddSeconds($frac * $span)
         $x    = $ml + $frac * $cw
         $label = $t.ToLocalTime().ToString('HH:mm')
-        & $addText $label ($x - 15) ($mt + $ch + 5) 10 '#666' $null
+        & $addText $label ($x - 15) ($mt + $ch + 5) 10 $null $null
         # Light vertical gridline
         if ($i -gt 0 -and $i -lt $labelCount) {
-            & $addLine $x $mt $x ($mt + $ch) '#F0F0F0' 1 $null
+            & $addLine $x $mt $x ($mt + $ch) $_gridV 1 $null
         }
     }
 
@@ -3121,19 +3170,25 @@ function Show-PerformanceHistory {
     # Adjust window height based on whether disk chart is shown
     $winHeight = if ($showDisk) { '700' } else { '450' }
 
+    $_perfWinBg    = if ($script:DarkTheme) { '#1E1E1E' } else { '#F4F6F9' }
+    $_perfCardBg   = if ($script:DarkTheme) { '#2D2D30' } else { 'White' }
+    $_perfBorderCl = if ($script:DarkTheme) { '#3F3F46' } else { '#DDE1E7' }
+    $_perfLabelFg  = if ($script:DarkTheme) { '#D4D4D4' } else { '#333333' }
+    $_perfHintFg   = if ($script:DarkTheme) { '#9D9D9D' } else { '#777777' }
+
     # Disk legend items injected into the unified top legend when disk chart is shown
     $diskLegendXaml = if ($showDisk) {
-        '<Rectangle Width="14" Height="14" Fill="#2E7D32" Margin="0,0,4,0" RadiusX="2" RadiusY="2"/>' +
-        '<TextBlock Text="Disk IOPS" FontSize="11" Foreground="#333" VerticalAlignment="Center" Margin="0,0,14,0"/>' +
-        '<Rectangle Width="14" Height="14" Fill="#E65100" Margin="0,0,4,0" RadiusX="2" RadiusY="2"/>' +
-        '<TextBlock Text="Queue Depth" FontSize="11" Foreground="#333" VerticalAlignment="Center"/>'
+        "<Rectangle Width=`"14`" Height=`"14`" Fill=`"#2E7D32`" Margin=`"0,0,4,0`" RadiusX=`"2`" RadiusY=`"2`"/>" +
+        "<TextBlock Text=`"Disk IOPS`" FontSize=`"11`" Foreground=`"$_perfLabelFg`" VerticalAlignment=`"Center`" Margin=`"0,0,14,0`"/>" +
+        "<Rectangle Width=`"14`" Height=`"14`" Fill=`"#E65100`" Margin=`"0,0,4,0`" RadiusX=`"2`" RadiusY=`"2`"/>" +
+        "<TextBlock Text=`"Queue Depth`" FontSize=`"11`" Foreground=`"$_perfLabelFg`" VerticalAlignment=`"Center`"/>"
     } else { '' }
 
     # ── Build the popup window XAML ──────────────────────────────────────────
     # When disk metrics are enabled, the window uses a Grid with two chart rows.
     $diskChartXaml = if ($showDisk) { @"
             <!-- Disk chart canvas -->
-            <Border Grid.Row="1" Background="White" BorderBrush="#DDE1E7" BorderThickness="1" CornerRadius="4" Margin="0,8,0,0">
+            <Border Grid.Row="1" Background="$_perfCardBg" BorderBrush="$_perfBorderCl" BorderThickness="1" CornerRadius="4" Margin="0,8,0,0">
                 <Canvas x:Name="DiskChartCanvas" ClipToBounds="True"/>
             </Border>
 "@ } else { '' }
@@ -3142,7 +3197,7 @@ function Show-PerformanceHistory {
         '<RowDefinition Height="*"/>'
     } else { '' }
 
-    [xml]$perfXaml = @"
+    $_perfXamlStr = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Performance History - $([System.Security.SecurityElement]::Escape($VmName))"
@@ -3150,7 +3205,10 @@ function Show-PerformanceHistory {
         MinHeight="350" MinWidth="600"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResize"
-        Background="#F4F6F9" FontFamily="Segoe UI">
+        Background="$_perfWinBg" FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
     <DockPanel Margin="12">
         <!-- Top bar: time range selector + CPU/Mem legend -->
         <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
@@ -3161,7 +3219,7 @@ function Show-PerformanceHistory {
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="Time Range:" VerticalAlignment="Center"
-                       FontSize="12" Foreground="#333" Margin="0,0,8,0"/>
+                       FontSize="12" Foreground="$_perfLabelFg" Margin="0,0,8,0"/>
             <ComboBox x:Name="TimeRangeCombo" Grid.Column="1" Width="140"
                       FontSize="12" SelectedIndex="0">
                 <ComboBoxItem Content="Last 1 Hour"   Tag="PT1H"/>
@@ -3172,15 +3230,15 @@ function Show-PerformanceHistory {
             <!-- Legend -->
             <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
                 <Rectangle Width="14" Height="14" Fill="#1976D2" Margin="0,0,4,0" RadiusX="2" RadiusY="2"/>
-                <TextBlock Text="CPU %" FontSize="11" Foreground="#333" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                <TextBlock Text="CPU %" FontSize="11" Foreground="$_perfLabelFg" VerticalAlignment="Center" Margin="0,0,14,0"/>
                 <Rectangle Width="14" Height="14" Fill="#FB8C00" Margin="0,0,4,0" RadiusX="2" RadiusY="2"/>
-                <TextBlock Text="Mem %" FontSize="11" Foreground="#333" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                <TextBlock Text="Mem %" FontSize="11" Foreground="$_perfLabelFg" VerticalAlignment="Center" Margin="0,0,14,0"/>
                 $diskLegendXaml
             </StackPanel>
         </Grid>
         <!-- Status bar at bottom -->
         <TextBlock x:Name="PerfStatus" DockPanel.Dock="Bottom"
-                   FontSize="11" Foreground="#777" Margin="0,6,0,0"/>
+                   FontSize="11" Foreground="$_perfHintFg" Margin="0,6,0,0"/>
         <!-- Chart panels -->
         <Grid>
             <Grid.RowDefinitions>
@@ -3188,7 +3246,7 @@ function Show-PerformanceHistory {
                 $diskRowDefs
             </Grid.RowDefinitions>
             <!-- CPU/Mem chart canvas -->
-            <Border Grid.Row="0" Background="White" BorderBrush="#DDE1E7" BorderThickness="1" CornerRadius="4">
+            <Border Grid.Row="0" Background="$_perfCardBg" BorderBrush="$_perfBorderCl" BorderThickness="1" CornerRadius="4">
                 <Canvas x:Name="ChartCanvas" ClipToBounds="True"/>
             </Border>
             $diskChartXaml
@@ -3197,14 +3255,38 @@ function Show-PerformanceHistory {
 </Window>
 "@
 
-    $perfReader = New-Object System.Xml.XmlNodeReader $perfXaml
-    $perfWin    = [System.Windows.Markup.XamlReader]::Load($perfReader)
+    $_perfXamlStr = $_perfXamlStr -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\..\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    [xml]$_perfXml = $_perfXamlStr
+    $perfWin = [System.Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $_perfXml))
+    try { Set-WindowIcon -Window $perfWin -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
     $perfWin.Owner = $window   # main dashboard window - enables CenterOwner
+    if ($script:DarkTheme) {
+        $perfWin.WindowStartupLocation = [System.Windows.WindowStartupLocation]::Manual
+        $perfWin.Left = -32000
+        $perfWin.Top  = -32000
+        $perfWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($perfWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+        $perfWin.Add_ContentRendered(({
+            $o = $perfWin.Owner
+            if ($null -ne $o) {
+                $perfWin.Left = $o.Left + ($o.Width  - $perfWin.ActualWidth)  / 2
+                $perfWin.Top  = $o.Top  + ($o.Height - $perfWin.ActualHeight) / 2
+            }
+        }).GetNewClosure())
+    }
 
     $chartCanvas  = $perfWin.FindName('ChartCanvas')
     $timeCombo    = $perfWin.FindName('TimeRangeCombo')
     $perfStatus   = $perfWin.FindName('PerfStatus')
     $diskCanvas   = if ($showDisk) { $perfWin.FindName('DiskChartCanvas') } else { $null }
+    if ($script:DarkTheme) {
+        $_darkCard = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x2D,0x2D,0x30)
+        $chartCanvas.Background = $_darkCard
+        if ($diskCanvas) { $diskCanvas.Background = $_darkCard }
+    }
 
     # ── Load and render chart data ───────────────────────────────────────────
     # This scriptblock is called on initial load and whenever the time range changes.
@@ -3307,7 +3389,7 @@ function Show-PerformanceHistory {
         & $loadChart 'PT1H'
     }.GetNewClosure())
 
-    $perfWin.ShowDialog() | Out-Null
+    $perfWin.Show()
 }
 
 
@@ -3346,8 +3428,14 @@ function Show-CPUCreditsHistory {
     )
 
     # ── XAML layout: single canvas chart with time range selector ─────────────
-    $escapedName = [System.Security.SecurityElement]::Escape($VmName)
-    [xml]$credXaml = @"
+    $escapedName  = [System.Security.SecurityElement]::Escape($VmName)
+    $_credWinBg   = if ($script:DarkTheme) { '#1E1E1E' } else { '#F4F6F9' }
+    $_credCardBg  = if ($script:DarkTheme) { '#2D2D30' } else { 'White' }
+    $_credBorderCl = if ($script:DarkTheme) { '#3F3F46' } else { '#DDE1E7' }
+    $_credLabelFg = if ($script:DarkTheme) { '#D4D4D4' } else { '#555555' }
+    $_credHintFg  = if ($script:DarkTheme) { '#9D9D9D' } else { '#777777' }
+
+    $_credXamlStr = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="CPU Credits History - $escapedName"
@@ -3355,14 +3443,17 @@ function Show-CPUCreditsHistory {
         MinHeight="320" MinWidth="500"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResize"
-        Background="#F4F6F9" FontFamily="Segoe UI">
+        Background="$_credWinBg" FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
     <DockPanel Margin="12">
         <!-- Top toolbar: time range selector, loading indicator, and legend -->
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
             <!-- Left: time range label + combo + loading text -->
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
                 <TextBlock Text="Time range:" VerticalAlignment="Center" Margin="0,0,6,0"
-                           FontSize="13" Foreground="#555"/>
+                           FontSize="13" Foreground="$_credLabelFg"/>
                 <ComboBox x:Name="TimeRangeCombo" Width="80" FontSize="13">
                     <ComboBoxItem Content="1 hour"  Tag="PT1H"  IsSelected="True"/>
                     <ComboBoxItem Content="4 hours" Tag="PT4H"/>
@@ -3370,7 +3461,7 @@ function Show-CPUCreditsHistory {
                     <ComboBoxItem Content="24 hours" Tag="PT24H"/>
                 </ComboBox>
                 <TextBlock x:Name="LoadingText" Text="" VerticalAlignment="Center"
-                           Margin="10,0,0,0" FontSize="12" Foreground="#888" FontStyle="Italic"/>
+                           Margin="10,0,0,0" FontSize="12" Foreground="$_credHintFg" FontStyle="Italic"/>
             </StackPanel>
             <!-- Right: legend items pushed to the far right -->
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
@@ -3384,23 +3475,45 @@ function Show-CPUCreditsHistory {
         </DockPanel>
         <!-- Status bar at bottom: data point count / error messages -->
         <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom"
-                   FontSize="11" Foreground="#777" Margin="0,6,0,0"/>
+                   FontSize="11" Foreground="$_credHintFg" Margin="0,6,0,0"/>
         <!-- Chart canvas fills the remaining space -->
-        <Border Background="White" BorderBrush="#DDE1E7" BorderThickness="1" CornerRadius="4">
+        <Border Background="$_credCardBg" BorderBrush="$_credBorderCl" BorderThickness="1" CornerRadius="4">
             <Canvas x:Name="CreditsCanvas"/>
         </Border>
     </DockPanel>
 </Window>
 "@
 
-    $credReader = New-Object System.Xml.XmlNodeReader $credXaml
-    $credWin    = [System.Windows.Markup.XamlReader]::Load($credReader)
-    $credWin.Owner = $window   # main dashboard window — enables CenterOwner
+    $_credXamlStr = $_credXamlStr -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\..\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    [xml]$_credXml = $_credXamlStr
+    $credWin = [System.Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $_credXml))
+    try { Set-WindowIcon -Window $credWin -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+    $credWin.Owner = $window   # main dashboard window - enables CenterOwner
+    if ($script:DarkTheme) {
+        $credWin.WindowStartupLocation = [System.Windows.WindowStartupLocation]::Manual
+        $credWin.Left = -32000
+        $credWin.Top  = -32000
+        $credWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($credWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+        $credWin.Add_ContentRendered(({
+            $o = $credWin.Owner
+            if ($null -ne $o) {
+                $credWin.Left = $o.Left + ($o.Width  - $credWin.ActualWidth)  / 2
+                $credWin.Top  = $o.Top  + ($o.Height - $credWin.ActualHeight) / 2
+            }
+        }).GetNewClosure())
+    }
 
     $credCanvas      = $credWin.FindName('CreditsCanvas')
     $timeRangeCombo  = $credWin.FindName('TimeRangeCombo')
     $statusTb        = $credWin.FindName('StatusText')
     $loadingTb       = $credWin.FindName('LoadingText')
+    if ($script:DarkTheme -and $credCanvas) {
+        $credCanvas.Background = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x2D,0x2D,0x30)
+    }
 
     # ── Script-scope cache for chart data (used by SizeChanged redraw) ────────
     # Stored in $script: so the SizeChanged closure can access the last dataset
@@ -3415,7 +3528,7 @@ function Show-CPUCreditsHistory {
 
         # Guard: no resource ID means we can't query Azure Monitor
         if ([string]::IsNullOrWhiteSpace($VMResourceId)) {
-            $statusTb.Text = 'No VM resource ID available — cannot query Azure Monitor.'
+            $statusTb.Text = 'No VM resource ID available - cannot query Azure Monitor.'
             Write-Verbose "[CPUCreditsHistory] VMResourceId is empty for $VmName, aborting query."
             return
         }
@@ -3482,7 +3595,7 @@ function Show-CPUCreditsHistory {
         & $loadChart 'PT1H'
     }.GetNewClosure())
 
-    $credWin.ShowDialog() | Out-Null
+    $credWin.Show()
 }
 
 
@@ -3525,14 +3638,9 @@ $excludeKql
 | order by InputDelay desc
 "@
 
-    $tok  = Get-ArmToken
-    $body = @{ query = $kql; timespan = 'PT1H' }
-    $resp = Invoke-ArmRestMethod -Method POST `
-                -Path "$($script:LawWorkspaceResourceId)/api/query" `
-                -Token $tok `
-                -ApiVersion '2020-08-01' `
-                -Body $body `
-                -FullResponse
+    $resp = Invoke-LawQuery -Kql $kql -Timespan 'PT1H' `
+                -WorkspaceResourceId $script:LawWorkspaceResourceId `
+                -QueryBaseUrl $script:LawQueryBaseUrl
 
     # ── Parse columnar JSON response into objects ─────────────────────────────
     $rows = [System.Collections.Generic.List[PSObject]]::new()
@@ -3592,7 +3700,7 @@ $excludeKql
         <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom"
                    FontSize="11" Foreground="#777" Margin="0,6,0,0"/>
         <!-- DataGrid fills remaining space -->
-        <Border Background="White" BorderBrush="#DDE1E7" BorderThickness="1" CornerRadius="4">
+        <Border Background="{DynamicResource Avd.Card.Bg}" BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" CornerRadius="4">
             <DataGrid x:Name="DelayGrid"
                       AutoGenerateColumns="False"
                       IsReadOnly="True"
@@ -3704,16 +3812,16 @@ function Initialize-SessionHostsTab {
     # ── Create the dedicated session host refresh runspaces ──────────────────────
     #
     # TWO-PASS DESIGN:
-    #   Pass 1 (Core)    — $script:vmCoreScript runs in $script:vmRefreshRunspace.
+    #   Pass 1 (Core)    - $script:vmCoreScript runs in $script:vmRefreshRunspace.
     #                      Handles Phases 1-3 (AVD host/session REST + Resource Graph).
     #                      Returns quickly so the grid renders with VM names/states/sessions
     #                      before the slow Azure Monitor / LAW calls start.
     #
-    #   Pass 2 (Metrics) — $script:vmMetricsScript runs in $script:vmMetricsRunspace.
+    #   Pass 2 (Metrics) - $script:vmMetricsScript runs in $script:vmMetricsRunspace.
     #                      Handles Phases 4-5b (Log Analytics + Azure Monitor disk metrics
     #                      + CPU credits). Launched automatically after Pass 1 completes.
     #                      Results are merged into the existing DataTable rows via
-    #                      _SH_BackfillMetrics without clearing the grid — scroll position
+    #                      _SH_BackfillMetrics without clearing the grid - scroll position
     #                      and sort order are preserved.
     #
     # Both runspaces stay alive for the entire session; no Az module loading cost is
@@ -3790,15 +3898,15 @@ function Initialize-SessionHostsTab {
     # aren't available yet and every VM shows Region = 'unknown'.
     # Setting MaxValue here means the timer-gate below won't fire until
     # Invoke-SessionHostsTabTimer explicitly resets it to Now once the cache
-    # has entries — at which point all RG lookups are guaranteed to succeed.
+    # has entries - at which point all RG lookups are guaranteed to succeed.
     $script:vmNextRefresh            = [DateTime]::MaxValue
     $script:vmTabVisited             = $false          # set to $true when the user first clicks the Session Hosts tab
     $script:vmLastRefreshTime        = $null           # timestamp of the most recently completed refresh
     $script:vmCountText              = ''              # "X VM(s)  Available: Y  Other: Z" summary string (total)
     $script:vmFilteredCountText     = $null           # same format but scoped to filtered rows; $null when no filter active
-    $script:vmPhase5Mode          = $null           # "Metrics: Batch", "Metrics: Per-VM", or mixed — set after first Phase 5 completes
+    $script:vmPhase5Mode          = $null           # "Metrics: Batch", "Metrics: Per-VM", or mixed - set after first Phase 5 completes
     $script:vmActionLabel            = ''              # "Start" / "Deallocate" / "Restart" for status text
-    $script:vmActionType             = ''              # 'Power' / 'Drain' — controls timer completion handler
+    $script:vmActionType             = ''              # 'Power' / 'Drain' - controls timer completion handler
     $script:vmActionSkippedNote      = ''              # appended to completion message when VMs were skipped (already in target state)
     $script:vmRegionRetryCount           = 0               # rapid-retry counter for unknown-region VMs (max 3, then normal 60s cycle)
     $script:VmRefreshIntervalSeconds     = 60              # how often the dedicated refresh runs
@@ -3826,6 +3934,7 @@ function Initialize-SessionHostsTab {
     # after each Core-pass DataTable rebuild so metric columns (CPU%, Disk IOPS, etc.)
     # are not blanked during a refresh cycle while the next Metrics pass is in-flight.
     $script:shMetricsCache  = @()  # array of PSCustomObject rows with Phase 4+5 fields stamped in
+    $script:shLawErrorShown = $false  # show LAW access error popup at most once per session
     $script:shCostPS        = $null # PowerShell instance for the background pricing fetch
     $script:shCostHandle    = $null # IAsyncResult for the pricing fetch
     # NOTE: $script:shCostTimer is intentionally NOT reset here.
@@ -3886,10 +3995,13 @@ function Initialize-SessionHostsTab {
             $cellStyle = New-Object System.Windows.Style([System.Windows.Controls.DataGridCell])
             if ($null -ne $baseStyle) { $cellStyle.BasedOn = $baseStyle }
             $brushConv = New-Object System.Windows.Media.BrushConverter
+            $_green = if ($script:DarkTheme) { '#1E4620' } else { '#81C784' }
+            $_amber = if ($script:DarkTheme) { '#5C3A00' } else { '#FFB74D' }
+            $_red   = if ($script:DarkTheme) { '#5C1C1C' } else { '#E57373' }
             foreach ($band in @(
-                @{ Value = 'Green'; Hex = '#81C784' }
-                @{ Value = 'Amber'; Hex = '#FFB74D' }
-                @{ Value = 'Red';   Hex = '#E57373' }
+                @{ Value = 'Green'; Hex = $_green }
+                @{ Value = 'Amber'; Hex = $_amber }
+                @{ Value = 'Red';   Hex = $_red   }
             )) {
                 $trigger = New-Object System.Windows.DataTrigger
                 $binding = New-Object System.Windows.Data.Binding
@@ -3999,7 +4111,7 @@ function Initialize-SessionHostsTab {
         # _UserTooltip is empty so single-user rows don't show a redundant tooltip.
         if ($colName -eq 'User') {
             # FontSize defaults to 11 (compact for multi-user stacked rows).
-            # A DataTrigger on _UserTooltip="" restores 13 for single-user rows —
+            # A DataTrigger on _UserTooltip="" restores 13 for single-user rows -
             # _UserTooltip is empty for 0-1 users and non-empty for 2+ users.
             # This way only multi-user rows get the smaller font.
             $ttXaml = '<Style TargetType="TextBlock" ' +
@@ -4094,7 +4206,7 @@ function Initialize-SessionHostsTab {
         [void]$fcSelTrigger.Setters.Add(
             (New-Object System.Windows.Setter(
                 [System.Windows.Controls.Control]::ForegroundProperty,
-                [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x1F, 0x29, 0x37))
+                $window.Resources['Avd.Fg.Selected']
             ))
         )
         [void]$fcCellStyle.Triggers.Add($fcSelTrigger)
@@ -4140,36 +4252,81 @@ function Initialize-SessionHostsTab {
     # without a full ControlTemplate override, so we build the Style in code.
     # IsMouseOver trigger -> light blue tint; IsSelected trigger -> darker blue.
     $vmRowStyle = New-Object System.Windows.Style([System.Windows.Controls.DataGridRow])
+    [void]$vmRowStyle.Setters.Add((New-Object System.Windows.Setter(
+        [System.Windows.Controls.DataGridRow]::ForegroundProperty, $window.Resources['Avd.Window.Fg'])))
 
     $vmHoverTrigger = New-Object System.Windows.Trigger
     $vmHoverTrigger.Property = [System.Windows.Controls.DataGridRow]::IsMouseOverProperty
     $vmHoverTrigger.Value    = $true
-    [void]$vmHoverTrigger.Setters.Add(
-        (New-Object System.Windows.Setter(
-            [System.Windows.Controls.DataGridRow]::BackgroundProperty,
-            [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xEE, 0xF4, 0xFC))
-        ))
-    )
+    [void]$vmHoverTrigger.Setters.Add((New-Object System.Windows.Setter(
+        [System.Windows.Controls.DataGridRow]::BackgroundProperty, $window.Resources['Avd.Hover.Bg'])))
 
     $vmSelTrigger = New-Object System.Windows.Trigger
     $vmSelTrigger.Property = [System.Windows.Controls.DataGridRow]::IsSelectedProperty
     $vmSelTrigger.Value    = $true
-    [void]$vmSelTrigger.Setters.Add(
-        (New-Object System.Windows.Setter(
-            [System.Windows.Controls.DataGridRow]::BackgroundProperty,
-            [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xD0, 0xE7, 0xFA))
-        ))
-    )
-    [void]$vmSelTrigger.Setters.Add(
-        (New-Object System.Windows.Setter(
-            [System.Windows.Controls.DataGridRow]::ForegroundProperty,
-            [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x1F, 0x29, 0x37))
-        ))
-    )
+    [void]$vmSelTrigger.Setters.Add((New-Object System.Windows.Setter(
+        [System.Windows.Controls.DataGridRow]::BackgroundProperty, $window.Resources['Avd.Selected.Bg'])))
+    [void]$vmSelTrigger.Setters.Add((New-Object System.Windows.Setter(
+        [System.Windows.Controls.DataGridRow]::ForegroundProperty, $window.Resources['Avd.Fg.Selected'])))
 
     [void]$vmRowStyle.Triggers.Add($vmHoverTrigger)
     [void]$vmRowStyle.Triggers.Add($vmSelTrigger)
     $script:SHGrid.RowStyle = $vmRowStyle
+
+    # Walk the visual tree on first load:
+    # 1. Patch the internal ScrollViewer background (prevents white strip in dark mode)
+    # 2. Find the DataGridColumnHeadersPresenter and force it to re-layout synchronously
+    #    on every horizontal scroll — this keeps headers in sync with data rows in the
+    #    same layout pass instead of one pass behind (which causes visible header lag).
+    $script:SHGrid.Add_Loaded(({
+        if ($script:_shSVPatched) { return }
+        $presenterType = [System.Windows.Controls.Primitives.DataGridColumnHeadersPresenter]
+        $sv = $null
+        $script:_shHeaderPresenter = $null
+        $queue = New-Object System.Collections.Generic.Queue[System.Windows.DependencyObject]
+        $queue.Enqueue($script:SHGrid)
+        while ($queue.Count -gt 0) {
+            $el = $queue.Dequeue()
+            if ($null -eq $el) { continue }
+            if ($el -is [System.Windows.Controls.ScrollViewer] -and -not $sv) {
+                $el.Background = $window.Resources['Avd.Grid.Bg']
+                $sv = $el
+            }
+            if ($el -is $presenterType -and -not $script:_shHeaderPresenter) {
+                $script:_shHeaderPresenter = $el
+                $el.Background = $window.Resources['Avd.ColHeader.Bg']
+            }
+            $count = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($el)
+            for ($i = 0; $i -lt $count; $i++) {
+                $queue.Enqueue([System.Windows.Media.VisualTreeHelper]::GetChild($el, $i))
+            }
+        }
+        $script:_shSVPatched = $true
+
+        if ($sv -and $script:_shHeaderPresenter) {
+            # Apply a TranslateTransform to the header presenter that compensates for the
+            # one-layout-pass lag between rapid scrollbar drag events and the layout pipeline.
+            # On each scroll: shift headers by -HorizontalChange (same visual frame as data rows).
+            # On LayoutUpdated once the header layout catches up: reset transform to zero.
+            $tt = New-Object System.Windows.Media.TranslateTransform
+            $script:_shHeaderPresenter.RenderTransform = $tt
+
+            $sv.Add_ScrollChanged({
+                param($s, $e)
+                if ($e.HorizontalChange -eq 0) { return }
+                $tt2 = $script:_shHeaderPresenter.RenderTransform -as [System.Windows.Media.TranslateTransform]
+                if ($tt2) { $tt2.X = -$e.HorizontalChange }
+            }.GetNewClosure())
+
+            $script:_shHeaderPresenter.Add_LayoutUpdated({
+                $hp = $script:_shHeaderPresenter
+                if (-not $hp) { return }
+                $tt2 = $hp.RenderTransform -as [System.Windows.Media.TranslateTransform]
+                if (-not $tt2 -or $tt2.X -eq 0) { return }
+                if ($hp.IsMeasureValid -and $hp.IsArrangeValid) { $tt2.X = 0 }
+            })
+        }
+    }.GetNewClosure()))
 
     # ── Button click handlers ─────────────────────────────────────────────────
     $script:SHStartButton.Add_Click(      { Invoke-SessionHostsPowerAction -Action 'Start'      })
@@ -4309,7 +4466,7 @@ function Initialize-SessionHostsTab {
         $hasOne = $sel.Count -gt 0 -and $null -ne $sel[0]
         # Both RDP and Run Command require the VM to be powered on.
         # Use the Power State column (real Azure VM power state from Resource Graph)
-        # rather than Status (AVD agent status) — a deallocated VM shows Status as
+        # rather than Status (AVD agent status) - a deallocated VM shows Status as
         # 'Unavailable' not 'Shutdown', so checking Status alone allows RDP/commands
         # against VMs that are not actually running.
         $isRunning = $hasOne -and ([string]$sel[0]['Power State']) -eq 'Running'
@@ -4401,10 +4558,10 @@ function Initialize-SessionHostsTab {
     #     IP address from the 'IP Address' column (resolved in Phase 3 via Resource Graph).
     #   - ShadowUseIP = $false : uses the short VM hostname (VM Name column value).
     #
-    # Firewall requirements — the following ports must be open from the admin workstation
+    # Firewall requirements - the following ports must be open from the admin workstation
     # to the session host VM (inbound on the VM):
-    #   TCP 445  — SMB (Server Message Block): required for all admin share access (C$).
-    #   TCP 135  — RPC Endpoint Mapper: required for DCOM/WMI if used alongside the share.
+    #   TCP 445  - SMB (Server Message Block): required for all admin share access (C$).
+    #   TCP 135  - RPC Endpoint Mapper: required for DCOM/WMI if used alongside the share.
     # Ensure NSG rules and Windows Firewall on the session host allow TCP 445 from your
     # admin subnet. Without this the Explorer window will immediately show an access error.
     $menuSHOpenC.Add_Click({
@@ -4414,7 +4571,7 @@ function Initialize-SessionHostsTab {
             $row    = $sel[0]
             $ip     = [string]$row['IP Address']
             $vmName = [string]$row['VM Name']
-            # Respect ShadowUseIP — same logic as RDP/shadow connections.
+            # Respect ShadowUseIP - same logic as RDP/shadow connections.
             # Use IP if the setting is enabled and a valid IP was resolved in Phase 3.
             $useIP  = $script:ShadowUseIP -and $ip -ne '-' -and -not [string]::IsNullOrWhiteSpace($ip)
             $target = if ($useIP) { $ip } else { $vmName }
@@ -4426,9 +4583,9 @@ function Initialize-SessionHostsTab {
     })
 
     # Firewall requirements for remote Event Viewer:
-    #   TCP 135  — RPC Endpoint Mapper (required)
-    #   TCP 445  — SMB named pipes (may be used by some RPC transports)
-    #   TCP 49152-65535 — dynamic RPC ports (required unless restricted by policy)
+    #   TCP 135  - RPC Endpoint Mapper (required)
+    #   TCP 445  - SMB named pipes (may be used by some RPC transports)
+    #   TCP 49152-65535 - dynamic RPC ports (required unless restricted by policy)
     # Ensure NSG rules and Windows Firewall on the session host allow these from
     # your admin subnet. The Remote Event Log Management firewall rule group must
     # be enabled on the session host.
@@ -4499,7 +4656,7 @@ function Initialize-SessionHostsTab {
 }
 
 # =============================================================================
-# 4a. Trigger a Core (Pass 1) background refresh — Phases 1-3
+# 4a. Trigger a Core (Pass 1) background refresh - Phases 1-3
 #
 # Called by Invoke-SessionHostsTabTimer (scheduled) and SHRefreshButton (manual).
 # Guards against double-fire: if a Core job is already running it returns immediately.
@@ -4511,7 +4668,7 @@ function Initialize-SessionHostsTab {
 
 function Invoke-SessionHostsTabRefresh {
     # Do not start a second Core job if one is still running.
-    # A completed handle (IsCompleted = $true) is fine — it will be collected in
+    # A completed handle (IsCompleted = $true) is fine - it will be collected in
     # the timer's (b) branch. The guard only blocks a NEW job from firing.
     if ($script:vmHandle -and -not $script:vmHandle.IsCompleted) { return }
 
@@ -4550,7 +4707,7 @@ function Invoke-SessionHostsTabRefresh {
 }
 
 # =============================================================================
-# 4b. Trigger a Metrics (Pass 2) background refresh — Phases 4-5b
+# 4b. Trigger a Metrics (Pass 2) background refresh - Phases 4-5b
 #
 # Called automatically by Invoke-SessionHostsTabTimer immediately after the Core
 # (Pass 1) job completes and the grid has been populated with Phase 1-3 data.
@@ -4560,7 +4717,7 @@ function Invoke-SessionHostsTabRefresh {
 # then merges only the changed columns back into the DataTable via _SH_BackfillMetrics.
 #
 # If a Metrics job is already in progress (e.g. the Core pass ran early due to a
-# manual refresh), the old job is abandoned — the new Core VmRows take precedence.
+# manual refresh), the old job is abandoned - the new Core VmRows take precedence.
 # =============================================================================
 
 function Invoke-SessionHostsMetricsRefresh {
@@ -4570,7 +4727,7 @@ function Invoke-SessionHostsMetricsRefresh {
         [object[]]$CoreVmRows
     )
 
-    # If a previous Metrics job is still running, let it finish — do not cancel it.
+    # If a previous Metrics job is still running, let it finish - do not cancel it.
     # This avoids race conditions where an old job stamps stale values over new Core rows.
     # The timer's (c) branch will collect the old job first, then the next Core cycle
     # will launch a fresh Metrics job with up-to-date rows.
@@ -4580,7 +4737,7 @@ function Invoke-SessionHostsMetricsRefresh {
     }
 
     # ── Inject variables into the Metrics runspace ──────────────────────────────
-    # $vmRows is the Core result — the Metrics script stamps Phase 4-5b values
+    # $vmRows is the Core result - the Metrics script stamps Phase 4-5b values
     # onto these objects in-place and returns the enriched array as MetricRows.
     $script:vmMetricsRunspace.SessionStateProxy.SetVariable('vmRows',                      $CoreVmRows)
     $script:vmMetricsRunspace.SessionStateProxy.SetVariable('ArmToken',                    (Get-ArmToken))
@@ -4599,6 +4756,16 @@ function Invoke-SessionHostsMetricsRefresh {
     $script:vmMetricsRunspace.SessionStateProxy.SetVariable('LawInputDelayAmberMs',        $script:LawInputDelayAmberMs)
     $script:vmMetricsRunspace.SessionStateProxy.SetVariable('LawInputDelayRedMs',          $script:LawInputDelayRedMs)
     $script:vmMetricsRunspace.SessionStateProxy.SetVariable('InputDelayExcludeProcesses',  $script:InputDelayExcludeProcesses)
+    $script:vmMetricsRunspace.SessionStateProxy.SetVariable('LawQueryBaseUrl',             $script:LawQueryBaseUrl)
+    $_lawTok = ''
+    if ($script:LawQueryBaseUrl) {
+        try {
+            $_lawTok = Get-LawToken
+        } catch {
+            if ($script:LogFile) { try { [IO.File]::AppendAllText($script:LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Metrics-Init] LawToken FAILED: $_`r`n") } catch {} }
+        }
+    }
+    $script:vmMetricsRunspace.SessionStateProxy.SetVariable('LawToken',                   $_lawTok)
     # Azure Monitor Metrics (Phase 5 + 5b)
     $script:vmMetricsRunspace.SessionStateProxy.SetVariable('ShowDiskPerf',                $script:ShowDiskPerf)
     $script:vmMetricsRunspace.SessionStateProxy.SetVariable('DiskQueueAmberVal',           $script:DiskQueueAmberVal)
@@ -4932,7 +5099,7 @@ function Invoke-SessionHostsDrainAction {
 
 function Invoke-SessionHostsTabTimer {
 
-    # ── Visibility gate — pause all activity when the tab is not active ──────
+    # ── Visibility gate - pause all activity when the tab is not active ──────
     # This matches the pattern used by the Infrastructure tab. When the user is
     # on a different tab there is no point firing API calls or updating the grid.
     # In-flight runspace jobs (Core / Metrics) are left running and their results
@@ -4946,7 +5113,7 @@ function Invoke-SessionHostsTabTimer {
     # RG locations returned by the background runspace) we release the gate by
     # setting vmNextRefresh to Now, which causes the (a) block below to fire
     # on the very next timer tick. This guarantees that every VM's RG is known
-    # before the first session hosts job runs — no 'unknown' region, no retries.
+    # before the first session hosts job runs - no 'unknown' region, no retries.
     # Release the first-run gate only when BOTH conditions are true:
     #   1. The RG location cache is populated (background refresh has completed).
     #   2. The user has visited the Session Hosts tab at least once.
@@ -4962,7 +5129,7 @@ function Invoke-SessionHostsTabTimer {
 
     # ── (a) Trigger the scheduled Core refresh when due ──────────────────────
     # Only reached when the tab is visible (visibility gate above).
-    # We block firing a new Core job if the Metrics job is still running —
+    # We block firing a new Core job if the Metrics job is still running -
     # the new Core rows would immediately be followed by a new Metrics launch, but
     # the old Metrics job would stamp stale values on top if it finished later.
     # Waiting for both jobs to complete before re-triggering is the safest approach.
@@ -4989,12 +5156,12 @@ function Invoke-SessionHostsTabTimer {
             if ($coreData -and $coreData.VmRows) {
                 if ($script:LogFile) { try { [IO.File]::AppendAllText($script:LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Timer] Core job completed - $($coreData.VmRows.Count) row(s) received. Updating grid and launching Metrics job.`r`n") } catch {} }
 
-                # Populate the grid with Core data immediately — this is the fast render.
+                # Populate the grid with Core data immediately - this is the fast render.
                 # The user sees VM names, sessions, states, IP, SKU, etc. right away.
                 _SH_UpdateGrid -VmRows $coreData.VmRows -Timestamp $coreData.Timestamp
 
                 # Surface any Resource Graph (Phase 3) error in the action status bar.
-                # Phase 3 errors are non-fatal — the grid still shows AVD data.
+                # Phase 3 errors are non-fatal - the grid still shows AVD data.
                 if ($coreData.Phase3Error) {
                     $script:SHActionStatus.Text = $coreData.Phase3Error
                     Write-Log "WARN [Session Hosts] Phase 3 (Resource Graph): $($coreData.Phase3Error)"
@@ -5021,7 +5188,7 @@ function Invoke-SessionHostsTabTimer {
 
                 # ── Launch the Metrics (Pass 2) job ──────────────────���─────────────
                 # Phases 4-5b run in a separate runspace so the grid is not blocked.
-                # The Metrics job receives the same sorted VmRows array — it stamps
+                # The Metrics job receives the same sorted VmRows array - it stamps
                 # metric values onto them in-place and returns the enriched rows.
                 Invoke-SessionHostsMetricsRefresh -CoreVmRows $coreData.VmRows
             }
@@ -5032,7 +5199,7 @@ function Invoke-SessionHostsTabTimer {
             $script:vmNextRefresh = [DateTime]::Now.AddSeconds($script:VmRefreshIntervalSeconds)
         } finally {
             # Always dispose the PowerShell instance; the runspace itself is kept alive.
-            # The Metrics runspace ($script:vmMetricsRunspace) is a separate object —
+            # The Metrics runspace ($script:vmMetricsRunspace) is a separate object -
             # disposing vmPS here does NOT affect the Metrics job.
             try { $script:vmPS.Dispose() } catch {}
             $script:vmHandle = $null
@@ -5046,7 +5213,7 @@ function Invoke-SessionHostsTabTimer {
     # EndInvoke() retrieves [PSCustomObject]@{Pass='Metrics'; MetricRows=...;...}.
     #
     # On success: call _SH_BackfillMetrics to merge CPU%, Disk IOPS etc. into the
-    # existing DataTable rows by VM Name key — no full grid rebuild, no flicker.
+    # existing DataTable rows by VM Name key - no full grid rebuild, no flicker.
     if ($script:vmMetricsHandle -and $script:vmMetricsHandle.IsCompleted) {
         try {
             $metricsData = $script:vmMetricsPS.EndInvoke($script:vmMetricsHandle)
@@ -5164,13 +5331,14 @@ function Reset-SessionHostsTab {
     $script:shDropdownSelections         = @{}      # clear per-column dropdown filters
     $script:shSortColumn                 = $null    # clear sort state
     $script:shSortDirection              = $null
+    $script:shLawErrorShown              = $false   # re-arm LAW error popup for new subscription
 }
 
 # =============================================================================
 # 8. Export grid to CSV  -  called by SHExportButton click
 #
 # Opens a SaveFileDialog pre-named with today's date/time, then exports every
-# row in the DataTable (unfiltered) to CSV — the filter box does not limit the
+# row in the DataTable (unfiltered) to CSV - the filter box does not limit the
 # export so the user always gets the full dataset. The hidden _RG helper column
 # is excluded from the output since it is an internal implementation detail.
 # =============================================================================
@@ -5227,7 +5395,7 @@ function Invoke-SessionHostsExport {
 #
 # _SH_BackfillMetrics avoids all of that by updating only the metric columns
 # in-place on the existing DataRow objects. The DataView notifies WPF of the
-# individual cell changes — no full column rebuild, no scroll reset.
+# individual cell changes - no full column rebuild, no scroll reset.
 #
 # COLUMN LIST:
 #   Phase 4 (Log Analytics): CPU %, Mem %, OS Disk %, Input Delay Median,
@@ -5241,7 +5409,7 @@ function Invoke-SessionHostsExport {
 function _SH_BackfillMetrics {
     param(
         # Array of PSCustomObject rows returned by $script:vmMetricsScript.
-        # Each object has the same shape as a VmRow — metric properties are
+        # Each object has the same shape as a VmRow - metric properties are
         # stamped in-place inside the Metrics runspace before returning.
         [object[]]$MetricRows,
 
@@ -5278,12 +5446,12 @@ function _SH_BackfillMetrics {
     try {
         foreach ($mr in $MetricRows) {
             $key = ([string]$mr.'VM Name').ToLower()
-            if (-not $rowMap.ContainsKey($key)) { continue }   # VM removed between passes — skip
+            if (-not $rowMap.ContainsKey($key)) { continue }   # VM removed between passes - skip
             $dr = $rowMap[$key]
 
             # ── Phase 4 columns (Log Analytics: CPU %, Mem %, OS Disk %, Input Delay) ──
             # These are stamped by the Metrics script only if the value changed from '-'.
-            # We always copy — even '-' — so that a VM that was Available in Core but lost
+            # We always copy - even '-' - so that a VM that was Available in Core but lost
             # its LAW data clears back to '-' rather than showing stale values.
             $dr['CPU %']              = $mr.'CPU %'
             $dr['Mem %']              = $mr.'Mem %'
@@ -5311,7 +5479,7 @@ function _SH_BackfillMetrics {
             $dr['_DiskQueueSort']     = $mr.'_DiskQueueSort'
             $dr['_DiskQueueColor']    = $mr.'_DiskQueueColor'
 
-            # ── Phase 5b columns (CPU Credits Remaining — B-series VMs only) ─────────
+            # ── Phase 5b columns (CPU Credits Remaining - B-series VMs only) ─────────
             # Non-B-series rows have 'N/A' stamped in Phase 3 (Core pass) and the
             # Metrics pass leaves them unchanged, so copying here is safe.
             $dr['CPU Credits']        = $mr.'CPU Credits'
@@ -5327,6 +5495,15 @@ function _SH_BackfillMetrics {
     # Phase 3 errors are shown by the Core pass; Phase 4/5 errors shown here.
     if ($Phase4Error) {
         Write-Log "WARN [Session Hosts] Phase 4 (Log Analytics): $Phase4Error"
+        if (-not $script:shLawErrorShown) {
+            $script:shLawErrorShown = $true
+            $errMsg = $Phase4Error
+            $null = [System.Windows.MessageBox]::Show(
+                "Log Analytics data could not be fetched.`n`nCPU %, Memory %, Disk % and Input Delay columns will be unavailable.`n`nThis is usually caused by the Log Analytics workspace being accessible only via a private endpoint from an Azure VM, and not from this machine.`n`nError detail:`n$errMsg",
+                'Log Analytics Unavailable',
+                [System.Windows.MessageBoxButton]::OK,
+                [System.Windows.MessageBoxImage]::Warning)
+        }
     }
     if ($Phase5Error) {
         Write-Log "WARN [Session Hosts] Phase 5 (Azure Monitor): $Phase5Error"
@@ -5376,7 +5553,7 @@ function _SH_UpdateGrid {
     # ── Build / refresh the DataTable ───────────────────────────────────────────
     # DataView.RowFilter is used for live filtering, which requires a DataTable.
     #
-    # SCROLL POSITION STRATEGY — root cause fix
+    # SCROLL POSITION STRATEGY - root cause fix
     # ------------------------------------------
     # The previous approach rebuilt $script:vmDataTable from scratch on every refresh
     # and re-assigned ItemsSource, which caused WPF to:
@@ -5389,14 +5566,14 @@ function _SH_UpdateGrid {
     #   - Subsequent calls: use BeginLoadData/EndLoadData to clear rows and
     #     repopulate in-place. The DefaultView object stays the same, ItemsSource
     #     is never reassigned, AutoGeneratingColumn never re-fires, and the
-    #     ScrollViewer is untouched — scroll position is naturally preserved.
+    #     ScrollViewer is untouched - scroll position is naturally preserved.
     $newRows = @($VmRows)
 
     if (-not $script:vmDataTable -or $script:vmDataTable.Columns.Count -eq 0) {
-        # First call — create the DataTable and set ItemsSource
+        # First call - create the DataTable and set ItemsSource
         $script:vmDataTable = ConvertTo-DataTable -Objects $newRows
     } else {
-        # Subsequent calls — update rows in-place without replacing the DataTable.
+        # Subsequent calls - update rows in-place without replacing the DataTable.
         # BeginLoadData suppresses constraint checks and index maintenance during the
         # bulk clear+reload, then EndLoadData re-enables them in one pass.
         $script:vmDataTable.BeginLoadData()
@@ -5445,7 +5622,7 @@ function _SH_UpdateGrid {
             $row['_ComputeCostSort'] = $computeMo
             $row['Disk GBP/mo']      = if ($c.Disk -gt 0)     { '{0:F2}' -f $c.Disk    } else { '-' }
             $row['_DiskCostSort']    = $c.Disk
-            # Txn -lt 0 means Premium SSD — no per-I/O billing, show N/A for both txn columns.
+            # Txn -lt 0 means Premium SSD - no per-I/O billing, show N/A for both txn columns.
             $row['Txn GBP/10K']      = if ($c.Txn -ge 0) { '{0:F4}' -f $c.Txn } else { 'N/A' }
             $row['_TxnCostSort']     = $c.Txn
             if ($c.Txn -lt 0) { $row['Txn GBP/mo'] = 'N/A' }
@@ -5519,7 +5696,7 @@ function _SH_UpdateGrid {
     # AutoGeneratingColumn fires only once (on the first ItemsSource assignment above),
     # so new distinct values (e.g. "NeedsAssistance", "Unhealthy (2)") that appear in
     # later refreshes would never show in the dropdowns without this explicit rebuild.
-    # $script:shDropdownCombos is populated by AutoGeneratingColumn — keyed by column name.
+    # $script:shDropdownCombos is populated by AutoGeneratingColumn - keyed by column name.
     if ($script:shDropdownCombos -and $script:shDropdownCombos.Count -gt 0) {
         foreach ($kv in $script:shDropdownCombos.GetEnumerator()) {
             $colName = $kv.Key

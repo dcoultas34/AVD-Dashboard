@@ -182,12 +182,12 @@ $script:shCostTimer.Add_Tick({
             _SH_UpdateGrid -VmRows $script:shLastVmRows -Timestamp $script:shLastTimestamp
             if ($script:LogFile) { try { [IO.File]::AppendAllText($script:LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [CostLookup] _SH_UpdateGrid completed`r`n") } catch {} }
 
-            # ── Phase 5: Cost Management — 30-day actual disk transaction charges ───────────
+            # ── Phase 5: Cost Management - 30-day actual disk transaction charges ───────────
             #
             # Why Cost Management instead of Azure Monitor?
             #   Azure Monitor "OS Disk Operations/Sec" is a rate metric sampled at 1-min
             #   intervals.  Multiplying the per-hour average by 3600 inflates the total for
-            #   VMs that are deallocated or idle for part of each hour bucket — in testing
+            #   VMs that are deallocated or idle for part of each hour bucket - in testing
             #   this overestimated the actual bill by ~6x (e.g. £3.07 estimate vs £0.53 billed).
             #   The Cost Management Query API returns the amount Azure actually charged, so
             #   the dashboard value matches Cost Analysis in the portal exactly (subject to
@@ -196,7 +196,7 @@ $script:shCostTimer.Add_Tick({
             # Which disks are included?
             #   Only Standard SSD and Standard HDD disks have a separate transaction meter.
             #   Premium SSD bundles operations into the disk price so Txn -gt 0 is never
-            #   true for those VMs — they are silently excluded from txnRows here.
+            #   true for those VMs - they are silently excluded from txnRows here.
             #
             # Single POST for all VMs:
             #   We pass all OS disk resource IDs in one Cost Management query (filtered by
@@ -212,7 +212,7 @@ $script:shCostTimer.Add_Tick({
             $txnRows = @(foreach ($r in $script:shCostRowSnap) {
                 # Include only VMs where the Retail Prices API found a per-10K transaction rate
                 # (Txn -gt 0).  Premium SSD returns no transaction meter so Txn stays 0 and
-                # those VMs are excluded.  Also require a known OS disk resource ID — without it
+                # those VMs are excluded.  Also require a known OS disk resource ID - without it
                 # the Cost Management filter cannot target the correct disk resource.
                 if ($script:shCostCache.ContainsKey($r.VmName) -and $script:shCostCache[$r.VmName].Txn -gt 0 -and $r.OsDiskResourceId) {
                     [PSCustomObject]@{ VmName = $r.VmName; OsDiskResourceId = $r.OsDiskResourceId; TxnRate = $script:shCostCache[$r.VmName].Txn }
@@ -221,28 +221,28 @@ $script:shCostTimer.Add_Tick({
             if ($txnRows.Count -gt 0) {
                 if ($script:LogFile) { try { [IO.File]::AppendAllText($script:LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [CostLookup] Starting Cost Management txn fetch for $($txnRows.Count) Standard SSD/HDD VM(s)`r`n") } catch {} }
                 # Build the scriptblock as a string so $script:restHelperDef (Invoke-Arm helper)
-                # is prepended before the here-string body — nested here-strings are not valid
+                # is prepended before the here-string body - nested here-strings are not valid
                 # in PowerShell so the concatenation approach is used throughout this file.
                 $txnFetchScript = [scriptblock]::Create($script:restHelperDef + @'
                     $tok = $args[0]; $rows = $args[1]; $LogFile = $args[2]; $subId = $args[3]
                     $txnMoMap = @{}; $errors = [System.Collections.Generic.List[string]]::new()
 
                     # Rolling 30-day window ending now (UTC).  Cost Management 'Custom' timeframe
-                    # requires dates in yyyy-MM-dd format — time components are not accepted.
+                    # requires dates in yyyy-MM-dd format - time components are not accepted.
                     $end  = [datetime]::UtcNow; $start = $end.AddDays(-30)
                     $from = $start.ToString('yyyy-MM-dd'); $to = $end.ToString('yyyy-MM-dd')
 
-                    # Collect all OS disk resource IDs — lowercased by the Resource Graph query
+                    # Collect all OS disk resource IDs - lowercased by the Resource Graph query
                     # and stored in _OsDiskResourceId.  Cost Management returns ResourceId in
                     # lowercase so the comparison is case-insensitive by construction.
                     $diskIds = @($rows | ForEach-Object { $_.OsDiskResourceId })
                     if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [TxnCost] Cost Management query: $($diskIds.Count) disk(s), $from to $to`r`n") } catch {} }
                     try {
                         # POST /subscriptions/{sub}/providers/Microsoft.CostManagement/query
-                        # API version 2023-11-01 — stable release that supports ActualCost queries.
+                        # API version 2023-11-01 - stable release that supports ActualCost queries.
                         #
                         # filter: restrict to the exact OS disk resource IDs for this tab's VMs.
-                        #   'In' is the only supported operator for Dimension filters — 'Contains'
+                        #   'In' is the only supported operator for Dimension filters - 'Contains'
                         #   and 'StartsWith' are not valid and will return a 400 BadRequest.
                         #
                         # grouping: ResourceId + Meter gives one row per disk per meter type.
@@ -251,7 +251,7 @@ $script:shCostTimer.Add_Tick({
                         #   whose Meter value contains "Operations".
                         #
                         # aggregation: sum the Cost column (billed amount in the subscription's
-                        #   billing currency — typically GBP for UK subscriptions).
+                        #   billing currency - typically GBP for UK subscriptions).
                         $body = @{
                             type       = 'ActualCost'
                             timeframe  = 'Custom'
@@ -268,7 +268,7 @@ $script:shCostTimer.Add_Tick({
                         }
                         $resp = Invoke-Arm -Method POST -Path "/subscriptions/$subId/providers/Microsoft.CostManagement/query" -Token $tok -ApiVersion '2023-11-01' -Body $body -FullResponse
 
-                        # Column order in the response is not guaranteed — find Cost, ResourceId
+                        # Column order in the response is not guaranteed - find Cost, ResourceId
                         # and Meter indices by name before iterating over data rows.
                         $costIdx = -1; $ridIdx = -1; $meterIdx = -1
                         for ($i = 0; $i -lt $resp.properties.columns.Count; $i++) {
@@ -280,14 +280,14 @@ $script:shCostTimer.Add_Tick({
                             $meter = if ($meterIdx -ge 0) { [string]$dataRow[$meterIdx] } else { 'Operations' }
                             # Skip non-operations meters (e.g. "E10 LRS" storage capacity rows).
                             # Operations meters are named like "E10 LRS Disk Operations" or
-                            # "S4 LRS Disk Operations" — the wildcard catches all tiers/sizes.
+                            # "S4 LRS Disk Operations" - the wildcard catches all tiers/sizes.
                             if ($meter -notlike '*Operations*') { continue }
                             $cost = [double]$dataRow[$costIdx]
                             $rid  = ([string]$dataRow[$ridIdx]).ToLower()
                             # Match the response ResourceId back to the VM name via the rows list.
                             $match = $rows | Where-Object { $_.OsDiskResourceId -eq $rid }
                             if ($match) {
-                                # Accumulate — a single disk can have multiple operations meter rows
+                                # Accumulate - a single disk can have multiple operations meter rows
                                 # if the billing period spans a tier change.
                                 $txnMoMap[$match.VmName] = ($txnMoMap[$match.VmName] -as [double]) + $cost
                                 if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [TxnCost] $($match.VmName) [$meter]: +$([math]::Round($cost,4)) -> total=$([math]::Round($txnMoMap[$match.VmName],4))`r`n") } catch {} }
@@ -310,7 +310,7 @@ $script:shCostTimer.Add_Tick({
                 $script:shTxnCostTimer.Start()
                 # Button re-enabled by shTxnCostTimer tick when Cost Management fetch completes
             } else {
-                # No Standard SSD/HDD VMs — re-enable immediately
+                # No Standard SSD/HDD VMs - re-enable immediately
                 if ($script:SHLoadCostsButton) { $script:SHLoadCostsButton.IsEnabled = $true; $script:SHLoadCostsButton.Content = 'Load Costs' }
             }
         }
@@ -354,13 +354,13 @@ $script:shTxnCostTimer.Add_Tick({
         # Surface any API errors from the scriptblock even when logging is off.
         # Cost Management returns BadRequest for unsupported subscription offer types
         # (e.g. MS-AZR-0036P internal/MSDN subs). In that case the retail price costs
-        # still loaded fine — show a status bar warning only, not a blocking dialog.
+        # still loaded fine - show a status bar warning only, not a blocking dialog.
         if ($result -and $result.Count -gt 0 -and $result[0].Errors -and $result[0].Errors.Count -gt 0) {
             $errDetail = $result[0].Errors -join "`n"
             if ($script:LogFile) { try { [IO.File]::AppendAllText($script:LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [TxnCost] Errors from scriptblock:`n$errDetail`r`n") } catch {} }
             $isOfferUnsupported = $errDetail -match 'offer.*not supported|Cost management data is unavailable'
             if ($isOfferUnsupported) {
-                # Subscription offer type doesn't support Cost Management — suppress the
+                # Subscription offer type doesn't support Cost Management - suppress the
                 # blocking dialog and just note it in the status bar.
                 if ($script:SHActionStatus) { $script:SHActionStatus.Text = 'Txn costs unavailable: subscription offer type not supported by Cost Management' }
             } else {
@@ -528,7 +528,7 @@ function Invoke-SessionHostsCostFetch {
                 Write-CostLog "Compute GET (AHB=$UseAHB): $url"
                 $resp = Invoke-RestMethod -Uri $url -Method GET -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
                 Write-CostLog "Compute response: $($resp.Count) item(s) - items: $(($resp.Items | ForEach-Object { "$($_.skuName) $($_.unitOfMeasure) $($_.retailPrice)" }) -join ' | ')"
-                # Exclude Spot and Low Priority — item order varies by region so we cannot rely
+                # Exclude Spot and Low Priority - item order varies by region so we cannot rely
                 # on Select-Object -First 1 alone; we must filter to the standard on-demand rate.
                 $item = $resp.Items | Where-Object { $_.unitOfMeasure -eq '1 Hour' -and $_.skuName -notlike '*Spot*' -and $_.skuName -notlike '*Low Priority*' } | Select-Object -First 1
                 if ($item) { $computeMap[$combo] = [double]$item.retailPrice; Write-CostLog "Compute price for $combo = $($item.retailPrice)/hr (skuName='$($item.skuName)') -> $([math]::Round($item.retailPrice * $HoursPerMonth,4))/mo" }
@@ -635,11 +635,11 @@ function Invoke-SessionHostsCostFetch {
 #   Replication type (LRS / ZRS / GRS) is extracted from sku.name and used as
 #   the skuName filter so pricing matches the storage account's replication config.
 #
-# Transaction costs (per-operation charges) are NOT included — they depend on
+# Transaction costs (per-operation charges) are NOT included - they depend on
 # actual I/O volume which is not available at this point.
 # =============================================================================
 
-# DispatcherTimer for Azure Files cost poll — MUST be at script scope (same reason
+# DispatcherTimer for Azure Files cost poll - MUST be at script scope (same reason
 # as $script:shCostTimer above: tick callbacks need access to $script: variables).
 $script:afCostTimer          = New-Object System.Windows.Threading.DispatcherTimer
 $script:afCostTimer.Interval = [TimeSpan]::FromMilliseconds(500)
@@ -748,7 +748,7 @@ function Invoke-AzureFilesCostFetch {
     if ($script:LogFile) { try { [IO.File]::AppendAllText($script:LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [CostLookup-Files] Starting price fetch - Currency: $script:PricingCurrency`r`n") } catch {} }
 
     # Snapshot the unique pricing combos from the current DataTable.
-    # combos HashSet: "ProductName|Replication|Region" — one API call per unique combo.
+    # combos HashSet: "ProductName|Replication|Region" - one API call per unique combo.
     # afCostRowSnap: full row snapshot so the tick handler can map prices back to shares.
     $combos = [System.Collections.Generic.HashSet[string]]::new()
     $script:afCostRowSnap = @(foreach ($dr in $script:afDataTable.Rows) {
@@ -828,7 +828,7 @@ function Invoke-AzureFilesCostFetch {
                 $targetSku  = "$skuTier $replication"   # e.g. "Standard LRS", "Premium LRS", "Cool ZRS"
 
                 # Prefer "Files v2" over legacy "Files" as it is the current product.
-                # Exclude Snapshots and Metadata meters — we want the capacity/provisioned rate only.
+                # Exclude Snapshots and Metadata meters - we want the capacity/provisioned rate only.
                 # For premium shares the meterName is "Premium LRS Provisioned"; for standard it is
                 # "LRS Data Stored", "Hot LRS Data Stored" etc. Snapshots come back first in some
                 # regions and would otherwise be picked by Select-Object -First 1.
@@ -867,7 +867,7 @@ function Invoke-AzureFilesCostFetch {
 # =============================================================================
 # Infrastructure tab cost fetch
 #
-# Identical pattern to Invoke-SessionHostsCostFetch — same DispatcherTimer +
+# Identical pattern to Invoke-SessionHostsCostFetch - same DispatcherTimer +
 # background runspace, same Azure Retail Prices API, same pricing config.
 #
 # Columns populated:
@@ -926,9 +926,9 @@ $script:isCostTimer.Add_Tick({
 
             _IS_UpdateGrid -VmRows $script:infraLastVmRows -Timestamp (Get-Date)
 
-            # ── Phase 5 (Infra): Cost Management — 30-day actual disk transaction charges ──
+            # ── Phase 5 (Infra): Cost Management - 30-day actual disk transaction charges ──
             #
-            # Identical approach to the Session Hosts tab — see that section for full
+            # Identical approach to the Session Hosts tab - see that section for full
             # commentary on why Cost Management is used instead of Azure Monitor and how
             # the single-POST batch query works.
             #
@@ -953,7 +953,7 @@ $script:isCostTimer.Add_Tick({
                     $txnMoMap = @{}; $errors = [System.Collections.Generic.List[string]]::new()
 
                     # Rolling 30-day window ending now (UTC).  Cost Management 'Custom' timeframe
-                    # requires dates in yyyy-MM-dd format — time components are not accepted.
+                    # requires dates in yyyy-MM-dd format - time components are not accepted.
                     $end  = [datetime]::UtcNow; $start = $end.AddDays(-30)
                     $from = $start.ToString('yyyy-MM-dd'); $to = $end.ToString('yyyy-MM-dd')
 
@@ -991,7 +991,7 @@ $script:isCostTimer.Add_Tick({
                         }
                         $resp = Invoke-Arm -Method POST -Path "/subscriptions/$subId/providers/Microsoft.CostManagement/query" -Token $tok -ApiVersion '2023-11-01' -Body $body -FullResponse
 
-                        # Column order in the response is not guaranteed — find indices by name.
+                        # Column order in the response is not guaranteed - find indices by name.
                         $costIdx = -1; $ridIdx = -1; $meterIdx = -1
                         for ($i = 0; $i -lt $resp.properties.columns.Count; $i++) {
                             if ($resp.properties.columns[$i].name -eq 'Cost')       { $costIdx  = $i }
@@ -1030,7 +1030,7 @@ $script:isCostTimer.Add_Tick({
                 $script:isTxnCostTimer.Start()
                 # Button re-enabled by isTxnCostTimer tick when Cost Management fetch completes
             } else {
-                # No Standard SSD/HDD VMs — re-enable button immediately
+                # No Standard SSD/HDD VMs - re-enable button immediately
                 if ($script:ISLoadCostsButton) { $script:ISLoadCostsButton.IsEnabled = $true; $script:ISLoadCostsButton.Content = 'Load Costs' }
             }
         }
@@ -1053,7 +1053,7 @@ $script:isCostTimer.Add_Tick({
 $script:isTxnMoCache  = @{}  # VmName -> monthly transaction cost (double)
 
 # DispatcherTimer that polls the Azure Monitor 30-day transaction cost runspace for Infrastructure.
-# Fires after the Infrastructure pricing fetch completes — only for Standard SSD/HDD VMs.
+# Fires after the Infrastructure pricing fetch completes - only for Standard SSD/HDD VMs.
 $script:isTxnCostTimer          = New-Object System.Windows.Threading.DispatcherTimer
 $script:isTxnCostTimer.Interval = [TimeSpan]::FromMilliseconds(500)
 $script:isTxnCostTimer.Add_Tick({
@@ -1079,13 +1079,13 @@ $script:isTxnCostTimer.Add_Tick({
         # Surface any API errors from the scriptblock even when logging is off.
         # Cost Management returns BadRequest for unsupported subscription offer types
         # (e.g. MS-AZR-0036P internal/MSDN subs). In that case retail price costs
-        # still loaded fine — show a status bar warning only, not a blocking dialog.
+        # still loaded fine - show a status bar warning only, not a blocking dialog.
         if ($result -and $result.Count -gt 0 -and $result[0].Errors -and $result[0].Errors.Count -gt 0) {
             $errDetail = $result[0].Errors -join "`n"
             if ($script:LogFile) { try { [IO.File]::AppendAllText($script:LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [TxnCost-Infra] Errors from scriptblock:`n$errDetail`r`n") } catch {} }
             $isOfferUnsupported = $errDetail -match 'offer.*not supported|Cost management data is unavailable'
             if ($isOfferUnsupported) {
-                # Subscription offer type doesn't support Cost Management — suppress the
+                # Subscription offer type doesn't support Cost Management - suppress the
                 # blocking dialog and just note it in the status bar.
                 if ($script:ISActionStatus) { $script:ISActionStatus.Text = 'Txn costs unavailable: subscription offer type not supported by Cost Management' }
             } else {

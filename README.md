@@ -22,8 +22,10 @@ A Windows Presentation Foundation (WPF) live dashboard for monitoring Azure Virt
 | `Launch-AVD-Dashboard-Select.cmd` | Quick-launch shortcut — prompts to choose between Device Authentication, Existing Context, PowerShell 7, or Service Principal before launching |
 | `Launch-AVD-Dashboard-Logging.cmd` | Quick-launch shortcut — runs the dashboard with REST API logging enabled |
 | `Launch-Profile-Tools.cmd` | Quick-launch shortcut — runs Profile Tools with a hidden console window |
+| `Launch-Profile-Tools-Select.cmd` | Quick-launch shortcut — prompts to choose between Interactive Browser, Device Authentication, Existing Context, or Service Principal before launching |
 | `Launch-Profile-Tools-Logging.cmd` | Quick-launch shortcut — runs Profile Tools with REST API logging enabled |
 | `Check-AVD-Permissions.cmd` | Quick-launch shortcut — runs the Azure RBAC permissions checker |
+| `Create-Dashboard-Role.cmd` | Quick-launch shortcut — creates a custom Azure RBAC role with the minimum permissions required to run the dashboard |
 | `Edit-AVD-Config.cmd` | Quick-launch shortcut — opens the WPF config editor |
 | `config/config.psd1` | **Customer/environment configuration — edit this file for each deployment** |
 | `config/EXAMPLE-config.psd1` | Annotated example configuration — copy to `config.psd1` and edit for your environment |
@@ -33,13 +35,15 @@ A Windows Presentation Foundation (WPF) live dashboard for monitoring Azure Virt
 | `scripts/tab-azurefiles.ps1` | Azure Files tab module — dot-sourced by avd-live-dashboard.ps1 at startup |
 | `scripts/tab-monitoring.ps1` | Monitoring tab module — dot-sourced by avd-live-dashboard.ps1 at startup |
 | `scripts/tab-infrastructure.ps1` | Infrastructure tab module — dot-sourced by avd-live-dashboard.ps1 at startup |
+| `scripts/tab-images.ps1` | Images tab module — dot-sourced by avd-live-dashboard.ps1 at startup. Monitors image/golden VMs in configured resource groups; supports Start, Deallocate, Restart, Create Image, Clean Snapshots, and Clean Gallery actions |
 | `scripts/tab-azuredevops.ps1` | Azure DevOps tab module — dot-sourced by avd-live-dashboard.ps1 at startup. Displays pipeline definitions and recent runs; supports Run, Cancel, Delete, and View Log actions. PAT stored encrypted at `%APPDATA%\AVDDashboard\ado-pat.xml` |
 | `scripts/session-detail.ps1` | Session detail windows, shadow, RDP and messaging — dot-sourced by avd-live-dashboard.ps1 at startup |
 | `scripts/run-command.ps1` | Run Command engine (picker, execution, output, timer) — dot-sourced by avd-live-dashboard.ps1; called from Session Hosts and Session Detail context menus |
 | `scripts/cost-lookup.ps1` | Cost fetch module for Session Hosts and Azure Files tabs — dot-sourced by avd-live-dashboard.ps1; queries the Azure Retail Prices API (no auth required) in background runspaces. Session Hosts: Compute GBP/mo, Disk GBP/mo, Txn GBP/10K. Azure Files: Storage GBP/mo. Currency, country, and Azure Hybrid Benefit toggle are configured at the top of this file |
 | `scripts/tab-sessioninfo.ps1` | Session History tab module — dot-sourced by avd-live-dashboard.ps1 at startup |
 | `scripts/adv-session-detail.ps1` | Advanced Session Detail module — dot-sourced by session-detail.ps1; queries LAW for lock/unlock and session lifecycle events per user across all hosts |
-| `scripts/Check-Permissions.ps1` | Azure RBAC permissions checker — validates that the signed-in account holds all roles required by the dashboard and its supporting scripts |
+| `scripts/connect-azure.ps1` | Shared Azure authentication helper — dot-sourced by avd-live-dashboard.ps1 and profile-tools.ps1; provides `Connect-AzureDashboard` supporting interactive browser, device code, existing context, and service principal modes |
+| `scripts/check-permissions.ps1` | Azure RBAC permissions checker — validates that the signed-in account holds all roles required by the dashboard and its supporting scripts |
 | `scripts/edit-config.ps1` | WPF GUI editor for `config.psd1` — opens a tabbed form covering every section of the configuration file; saves a clean, fully commented PSD1 |
 | `data/run-commands.psd1` | Predefined Run Command definitions — edit to add, remove or reorder commands without modifying the main scripts |
 | `data/runcommands/*.ps1` | External script files referenced by `ScriptFile` entries in `run-commands.psd1` — complex commands stored as readable multi-line scripts |
@@ -349,7 +353,7 @@ AVDHostPools = @{
 Dashboard = @{
     # Tabs to fully collapse from the tab strip. Leave as @() to show all tabs.
     # Valid names: 'Per Host Pool', 'By Region', 'Session Hosts',
-    #              'Azure Files', 'Monitoring', 'Infrastructure', 'Azure DevOps'
+    #              'Azure Files', 'Images', 'Monitoring', 'Infrastructure', 'Azure DevOps'
     HiddenTabs = @('Azure DevOps')  # Azure DevOps hidden by default until configured
 
     # Hide the Settings button from the toolbar. When $true, settings can only be
@@ -669,6 +673,37 @@ Both enrichment buttons can be clicked multiple times - they re-query and overwr
 
 Requires `LogAnalytics.WorkspaceResourceId` to be configured in `config.psd1`.
 
+### Images Tab
+
+Monitors image/golden VMs in one or more configured Azure resource groups — intended for tracking the VMs used to build and maintain AVD session host images. Refreshes automatically every 60 seconds (configurable).
+
+Columns shown:
+
+- VM Name, Resource Group, Region, Power State, OS Type, IP Address, VM SKU, Availability Zone
+
+A **Filter** box filters across all columns in real time. Right-clicking a row opens a context menu with:
+
+| Option | Action |
+| --- | --- |
+| RDP | Connects to the VM via Remote Desktop |
+| Create Image... | Triggers an image creation run and streams output into the **Image Creation Output** panel at the bottom of the tab |
+
+**Toolbar buttons:**
+
+| Button | Action |
+| --- | --- |
+| Start | Powers on the selected VM(s) |
+| Deallocate | Deallocates the selected VM(s) |
+| Restart | Restarts the selected VM(s) |
+| Clean Snapshots | Lists all snapshots in the configured image resource groups and prompts before deleting them all |
+| Clean Gallery | Deletes the oldest image versions from each Azure Compute Gallery definition in the configured RGs, keeping the newest N versions (configured in Settings) |
+| Refresh | Forces an immediate refresh |
+| Export CSV | Exports the current grid to a CSV file |
+
+The **Image Creation Output** panel (bottom, collapsed by default) opens a tab per image creation run and streams build output in real time. Multiple runs can be in progress simultaneously. A **Stop** button cancels a running build; a **Close** button removes a completed tab.
+
+Configure using the `Images` section in `config.psd1` — set `ResourceGroups` to the RGs containing your image VMs, and optionally `IncludePatterns` to filter by VM name substring.
+
 ### Infrastructure Tab
 
 Displays a filterable grid of plain Azure VMs from one or more configured resource groups — intended for domain controllers, file servers, and other infrastructure VMs that sit alongside an AVD deployment. Unlike the Session Hosts tab, this tab queries Azure Compute directly rather than the AVD agent layer.
@@ -967,6 +1002,24 @@ Shadow and RDP connections are configured in `config.psd1` and can also be adjus
 **RDP to Session Host** launches a direct full-desktop RDP session to the VM itself rather than shadowing a specific user session. Available on any row regardless of session state.
 
 VM private IP resolution for both Shadow and RDP uses a VM-to-ResourceGroup mapping cached during each data refresh, so no additional subscription-wide API calls are made when connecting.
+
+### MSTSC shadow requirements
+
+- **Port 445** must be open from the dashboard machine to the session hosts. The **"Remote Desktop - Shadow (TCP-In)"** firewall rule must be enabled on session hosts.
+- **GPO / registry** — set `HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\Shadow` on session hosts:
+  - `1` = full control with user consent
+  - `2` = full control without consent (recommended for helpdesk use)
+
+If port 445 is blocked in your environment, use `ShadowMethod = 'MSRA'` instead.
+
+### MSRA (Remote Assistance) requirements
+
+- **Enable Remote Assistance** on session hosts via GPO or registry:
+  - `HKLM\SYSTEM\CurrentControlSet\Control\Remote Assistance\fAllowToGetHelp = 1`
+  - Or GPO: **Computer Configuration > Administrative Templates > System > Remote Assistance > "Configure Offer Remote Assistance"** — set to Enabled and add helpdesk accounts/groups as helpers.
+- **Firewall** — "Remote Assistance (TCP-In)" rules must be enabled on session hosts (port 3389/135). Port 445 is not required.
+- **Local admin** — the account initiating the shadow must have local administrator rights on the session host.
+- **Domain/hybrid joined** — MSRA Offer RA requires session hosts to be domain joined or hybrid Azure AD joined. Pure Azure AD joined hosts do not support MSRA offer mode.
 
 ---
 

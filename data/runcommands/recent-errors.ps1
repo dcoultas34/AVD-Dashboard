@@ -16,7 +16,7 @@ $totalCritical = 0
 
 try {
     # Query all logs for Critical (Level 1) and Error (Level 2) events.
-    # LogName = '*' is required in PS 5.1 — omitting it throws "You must specify
+    # LogName = '*' is required in PS 5.1 - omitting it throws "You must specify
     # at least one Log, Provider or Path key-value pair."
     $events = Get-WinEvent -FilterHashtable @{
         LogName   = '*'

@@ -78,8 +78,8 @@ $SessionInfoTab_Xaml = @'
          xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <DockPanel>
         <!-- ═══ Top bar: tiles, filter, status, countdown and buttons ═══ -->
-        <Border DockPanel.Dock="Top" Background="#F4F6F9"
-                BorderBrush="#DDE1E7" BorderThickness="0,0,0,1"
+        <Border DockPanel.Dock="Top" Background="{DynamicResource Avd.NearWhite.Bg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,0,1"
                 Padding="12,7" Height="41">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -97,46 +97,46 @@ $SessionInfoTab_Xaml = @'
                 </Grid.ColumnDefinitions>
                 <!-- Filter box first (matches Session Hosts layout) -->
                 <TextBlock Grid.Column="0" Text="Filter:" VerticalAlignment="Center"
-                           FontSize="12" Foreground="#555" Margin="0,0,8,0"/>
+                           FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,0,8,0"/>
                 <TextBox x:Name="SI_FilterBox" Grid.Column="1"
                          FontSize="12" Padding="8,4"
                          VerticalContentAlignment="Center" VerticalAlignment="Center"
-                         BorderBrush="#C8CDD3" BorderThickness="1"
-                         Background="White" Foreground="#333"/>
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" Foreground="{DynamicResource Avd.Fg.Label}"/>
                 <!-- Unique User tiles (clickable) -->
-                <Border x:Name="SI_Tile24h" Grid.Column="2" Background="White" CornerRadius="4" Padding="8,3"
-                        BorderBrush="#DDE1E7" BorderThickness="1" Margin="8,0,8,0"
+                <Border x:Name="SI_Tile24h" Grid.Column="2" Background="{DynamicResource Avd.Card.Bg}" CornerRadius="4" Padding="8,3"
+                        BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" Margin="8,0,8,0"
                         VerticalAlignment="Center" Height="26" Cursor="Hand">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock x:Name="SI_Users24h" Text="-"
-                                   FontSize="14" FontWeight="Bold" Foreground="#0078D4"
+                                   FontSize="14" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"
                                    VerticalAlignment="Center"/>
                         <TextBlock Text=" Unique Users (24h)"
-                                   FontSize="11" Foreground="#888"
+                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    VerticalAlignment="Center" Margin="4,0,0,0"/>
                     </StackPanel>
                 </Border>
-                <Border x:Name="SI_Tile7d" Grid.Column="3" Background="White" CornerRadius="4" Padding="8,3"
-                        BorderBrush="#DDE1E7" BorderThickness="1" Margin="0,0,8,0"
+                <Border x:Name="SI_Tile7d" Grid.Column="3" Background="{DynamicResource Avd.Card.Bg}" CornerRadius="4" Padding="8,3"
+                        BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" Margin="0,0,8,0"
                         VerticalAlignment="Center" Height="26" Cursor="Hand">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock x:Name="SI_Users7d" Text="-"
-                                   FontSize="14" FontWeight="Bold" Foreground="#0078D4"
+                                   FontSize="14" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"
                                    VerticalAlignment="Center"/>
                         <TextBlock Text=" Unique Users (7d)"
-                                   FontSize="11" Foreground="#888"
+                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    VerticalAlignment="Center" Margin="4,0,0,0"/>
                     </StackPanel>
                 </Border>
-                <Border x:Name="SI_Tile30d" Grid.Column="4" Background="White" CornerRadius="4" Padding="8,3"
-                        BorderBrush="#DDE1E7" BorderThickness="1" Margin="0,0,16,0"
+                <Border x:Name="SI_Tile30d" Grid.Column="4" Background="{DynamicResource Avd.Card.Bg}" CornerRadius="4" Padding="8,3"
+                        BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" Margin="0,0,16,0"
                         VerticalAlignment="Center" Height="26" Cursor="Hand">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock x:Name="SI_Users30d" Text="-"
-                                   FontSize="14" FontWeight="Bold" Foreground="#0078D4"
+                                   FontSize="14" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"
                                    VerticalAlignment="Center"/>
                         <TextBlock Text=" Unique Users (30d)"
-                                   FontSize="11" Foreground="#888"
+                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    VerticalAlignment="Center" Margin="4,0,0,0"/>
                     </StackPanel>
                 </Border>
@@ -178,14 +178,18 @@ $SessionInfoTab_Xaml = @'
                         </ControlTemplate>
                     </Button.Template>
                 </Button>
+                <TextBlock Grid.Column="7" Text="Showing: last 24 hours"
+                           VerticalAlignment="Center" HorizontalAlignment="Left"
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
+                           FontStyle="Italic" Margin="12,0,0,0"/>
                 <TextBlock x:Name="SI_Countdown" Grid.Column="8"
                            VerticalAlignment="Center"
-                           FontSize="12" Foreground="#777"
+                           FontSize="12" Foreground="{DynamicResource Avd.Fg.Muted}"
                            Margin="0,0,12,0"/>
                 <!-- SI_RefreshButton: triggers an immediate out-of-schedule refresh -->
                 <Button x:Name="SI_RefreshButton" Grid.Column="9"
                         Content="Refresh"
-                        Background="#0078D4" Foreground="White"
+                        Background="{DynamicResource Avd.Btn.Accent.Bg}" Foreground="White"
                         BorderThickness="0" FontSize="12"
                         FontWeight="SemiBold" Cursor="Hand"
                         Padding="12,5" Margin="0,0,6,0"
@@ -198,10 +202,10 @@ $SessionInfoTab_Xaml = @'
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="BdRef" Property="Background" Value="#005A9E"/>
+                                    <Setter TargetName="BdRef" Property="Background" Value="{DynamicResource Avd.Btn.Accent.Hover}"/>
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
-                                    <Setter TargetName="BdRef" Property="Background" Value="#003D6B"/>
+                                    <Setter TargetName="BdRef" Property="Background" Value="{DynamicResource Avd.Btn.Accent.Press}"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -210,7 +214,7 @@ $SessionInfoTab_Xaml = @'
                 <!-- SI_ExportCsvButton: exports the current grid contents to CSV -->
                 <Button x:Name="SI_ExportCsvButton" Grid.Column="10"
                         Content="Export CSV"
-                        Background="#005A9E" Foreground="White"
+                        Background="{DynamicResource Avd.Btn.Std.Bg}" Foreground="White"
                         BorderThickness="0" FontSize="12"
                         FontWeight="SemiBold" Cursor="Hand"
                         Padding="14,5"
@@ -227,10 +231,10 @@ $SessionInfoTab_Xaml = @'
                                     <Setter TargetName="BdEx" Property="Background" Value="#888"/>
                                 </Trigger>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="BdEx" Property="Background" Value="#004F8C"/>
+                                    <Setter TargetName="BdEx" Property="Background" Value="{DynamicResource Avd.Btn.Std.Hover}"/>
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
-                                    <Setter TargetName="BdEx" Property="Background" Value="#003D6B"/>
+                                    <Setter TargetName="BdEx" Property="Background" Value="{DynamicResource Avd.Btn.Std.Press}"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -243,21 +247,23 @@ $SessionInfoTab_Xaml = @'
         <DataGrid x:Name="SI_Grid" AutoGenerateColumns="True" IsReadOnly="True"
                   CanUserSortColumns="True" CanUserReorderColumns="False"
                   HeadersVisibility="Column" GridLinesVisibility="None"
-                  AlternatingRowBackground="#F0F4FA" RowBackground="White"
-                  BorderBrush="#D0D5DD" BorderThickness="1"
+                  AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}" RowBackground="{DynamicResource Avd.Card.Bg}"
+                  BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
                   ColumnHeaderHeight="32" RowHeight="28" FontSize="12"
                   SelectionMode="Single" SelectionUnit="FullRow"
+                  RowHeaderWidth="0"
+                  UseLayoutRounding="True"
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto">
             <DataGrid.ColumnHeaderStyle>
                 <Style TargetType="DataGridColumnHeader">
-                    <Setter Property="Background"                 Value="#0078D4"/>
+                    <Setter Property="Background"                 Value="{DynamicResource Avd.ColHeader.Bg}"/>
                     <Setter Property="Foreground"                 Value="White"/>
                     <Setter Property="FontWeight"                 Value="SemiBold"/>
                     <Setter Property="FontSize"                   Value="12"/>
                     <Setter Property="Padding"                    Value="8,0"/>
                     <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                    <Setter Property="BorderBrush"                Value="#005A9E"/>
+                    <Setter Property="BorderBrush"                Value="{DynamicResource Avd.ColHeader.Border}"/>
                     <Setter Property="BorderThickness"            Value="0,0,1,0"/>
                 </Style>
             </DataGrid.ColumnHeaderStyle>
@@ -281,7 +287,7 @@ $SessionInfoTab_Xaml = @'
         <!-- Status overlay - shown in the white grid area when no data -->
         <TextBlock x:Name="SI_Status" Text="Waiting for first query..."
                    HorizontalAlignment="Center" VerticalAlignment="Top"
-                   Margin="0,50,0,0" FontSize="14" Foreground="#999"
+                   Margin="0,50,0,0" FontSize="14" Foreground="{DynamicResource Avd.Fg.Hint}"
                    IsHitTestVisible="False"/>
         </Grid>
     </DockPanel>
@@ -306,7 +312,6 @@ function script:_SIRefreshData {
     } catch {}
 
     try {
-        $tok   = Get-ArmToken
         $lawId = $script:LawWorkspaceResourceId
 
         if (-not $lawId) {
@@ -406,13 +411,8 @@ lockData
 
         $sw = $null; if ($script:LogFile) { $sw = [System.Diagnostics.Stopwatch]::StartNew() }
 
-        $body = @{ query = $kql; timespan = 'PT24H' }
-        $resp = Invoke-ArmRestMethod -Method POST `
-            -Path "$lawId/api/query" `
-            -Token $tok `
-            -ApiVersion '2020-08-01' `
-            -Body $body `
-            -FullResponse
+        $resp = Invoke-LawQuery -Kql $kql -Timespan 'PT24H' `
+            -WorkspaceResourceId $lawId -QueryBaseUrl $script:LawQueryBaseUrl
         if ($sw) { $sw.Stop() }
 
         # Unique User Stats Query (24h and 7d)
@@ -430,12 +430,8 @@ let u30d = ev | where TimeGenerated > ago(30d) | summarize dcount(ShortUser);
 union (u24h | extend Period="24h"), (u7d | extend Period="7d"), (u30d | extend Period="30d")
 | project Period, Count=dcount_ShortUser
 '@
-            $statsResp = Invoke-ArmRestMethod -Method POST `
-                -Path "$lawId/api/query" `
-                -Token $tok `
-                -ApiVersion '2020-08-01' `
-                -Body @{ query = $statsKql; timespan = 'P30D' } `
-                -FullResponse
+            $statsResp = Invoke-LawQuery -Kql $statsKql -Timespan 'P30D' `
+                -WorkspaceResourceId $lawId -QueryBaseUrl $script:LawQueryBaseUrl
 
             if ($statsResp.tables -and $statsResp.tables[0].rows) {
                 foreach ($r in $statsResp.tables[0].rows) {
@@ -638,7 +634,9 @@ Event
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Unique Users - $periodLabel" Width="900" Height="560"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
-        Background="#F5F6FA" FontFamily="Segoe UI">
+        Background="{DynamicResource Avd.Window.Bg}" Foreground="{DynamicResource Avd.Window.Fg}"
+        FontFamily="Segoe UI">
+    <Window.Resources><!-- THEME_SLOT --></Window.Resources>
     <DockPanel>
         <!-- Button bar -->
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" HorizontalAlignment="Right"
@@ -708,8 +706,10 @@ Event
             </Button>
         </StackPanel>
         <!-- Footer status bar -->
-        <Border DockPanel.Dock="Bottom" Background="#E8ECF0" Padding="12,6">
-            <TextBlock x:Name="UU_Title" Text="Loading..." FontSize="11" Foreground="#333"/>
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.Header.Bg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,1,0,0" Padding="12,6">
+            <TextBlock x:Name="UU_Title" Text="Loading..." FontSize="11"
+                       Foreground="{DynamicResource Avd.Fg.Secondary}"/>
         </Border>
         <!-- DataGrid fills remaining space -->
         <DataGrid x:Name="UU_Grid" AutoGenerateColumns="False" IsReadOnly="True"
@@ -717,27 +717,30 @@ Event
                   ColumnWidth="Auto"
                   CanUserSortColumns="True" CanUserReorderColumns="False"
                   HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                  HorizontalGridLinesBrush="#D0D5DD"
-                  AlternatingRowBackground="#F0F4FA" RowBackground="White"
-                  BorderBrush="#D0D5DD" BorderThickness="1"
+                  HorizontalGridLinesBrush="{DynamicResource Avd.Border.Grid}"
+                  AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}"
+                  RowBackground="{DynamicResource Avd.Grid.Bg}"
+                  Background="{DynamicResource Avd.Grid.Bg}"
+                  BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
                   ColumnHeaderHeight="30" MinRowHeight="26" FontSize="12"
                   SelectionMode="Single" SelectionUnit="FullRow"
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto">
             <DataGrid.ColumnHeaderStyle>
                 <Style TargetType="DataGridColumnHeader">
-                    <Setter Property="Background"                 Value="#0078D4"/>
-                    <Setter Property="Foreground"                 Value="White"/>
+                    <Setter Property="Background"                 Value="{DynamicResource Avd.ColHeader.Bg}"/>
+                    <Setter Property="Foreground"                 Value="{DynamicResource Avd.ColHeader.Fg}"/>
                     <Setter Property="FontWeight"                 Value="SemiBold"/>
                     <Setter Property="FontSize"                   Value="12"/>
                     <Setter Property="Padding"                    Value="8,0"/>
                     <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                    <Setter Property="BorderBrush"                Value="#005A9E"/>
+                    <Setter Property="BorderBrush"                Value="{DynamicResource Avd.ColHeader.Border}"/>
                     <Setter Property="BorderThickness"            Value="0,0,1,0"/>
                 </Style>
             </DataGrid.ColumnHeaderStyle>
             <DataGrid.CellStyle>
                 <Style TargetType="DataGridCell">
+                    <Setter Property="Foreground" Value="{DynamicResource Avd.Window.Fg}"/>
                     <Setter Property="Template">
                         <Setter.Value>
                             <ControlTemplate TargetType="DataGridCell">
@@ -757,7 +760,16 @@ Event
 </Window>
 "@
 
-    $popWin = [Windows.Markup.XamlReader]::Parse($popXaml)
+    $popXaml = $popXaml -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\..\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    $popReader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($popXaml))
+    $popWin = [Windows.Markup.XamlReader]::Load($popReader)
+    if ($script:DarkTheme) {
+        $popWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($popWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
     # Use script-scope so click handlers can access these
     $script:_uuTitle       = $popWin.FindName('UU_Title')
     $script:_uuGrid        = $popWin.FindName('UU_Grid')
@@ -778,7 +790,7 @@ Event
     # Col 0: User
     [void]$uuGrid.Columns.Add((& $mkCol 'User' 'User' 120))
 
-    # Col 1: Host Pools — wrapping template column
+    # Col 1: Host Pools - wrapping template column
     $factory = [System.Windows.FrameworkElementFactory]::new([System.Windows.Controls.TextBlock])
     $factory.SetValue([System.Windows.Controls.TextBlock]::TextWrappingProperty, [System.Windows.TextWrapping]::Wrap)
     $factory.SetValue([System.Windows.Controls.TextBlock]::TextAlignmentProperty, [System.Windows.TextAlignment]::Center)
@@ -828,8 +840,6 @@ Event
     [System.Windows.Threading.Dispatcher]::PushFrame($frame2)
 
     try {
-        $tok = Get-ArmToken
-
         # If the Session Hosts tab hasn't been visited yet, shToPoolMap will be empty
         # and all users would show "-" in the Host Pools column. Do a lightweight
         # refresh (just host pool names + session host names, no metrics) so the
@@ -841,16 +851,13 @@ Event
 
         Write-Log "[UniqueUsers] Querying LAW for $Period unique users"
 
-        $resp = Invoke-ArmRestMethod -Method POST `
-            -Path "$lawId/api/query" `
-            -Token $tok `
-            -ApiVersion '2020-08-01' `
-            -Body @{ query = $kql; timespan = $(switch ($Period) { '24h' { 'P1D' }; '7d' { 'P7D' }; '30d' { 'P30D' }; default { 'P7D' } }) } `
-            -FullResponse
+        $resp = Invoke-LawQuery -Kql $kql -WorkspaceResourceId $lawId `
+            -Timespan $(switch ($Period) { '24h' { 'P1D' }; '7d' { 'P7D' }; '30d' { 'P30D' }; default { 'P7D' } }) `
+            -QueryBaseUrl $script:LawQueryBaseUrl
 
         if ($resp.tables -and $resp.tables[0].rows -and $resp.tables[0].rows.Count -gt 0) {
-            # Use the shared shToPoolMap — same map as the main grid, always current.
-            # A user may have used session hosts in multiple host pools — we collect
+            # Use the shared shToPoolMap - same map as the main grid, always current.
+            # A user may have used session hosts in multiple host pools - we collect
             # all distinct pools from their SessionHosts list and join with ', '.
             $uuShToPool = if ($script:shToPoolMap) { $script:shToPoolMap } else { @{} }
 
@@ -864,7 +871,7 @@ Event
             [void]$dt.Columns.Add('Sessions', [int])
 
             foreach ($r in $resp.tables[0].rows) {
-                # r[3] = SessionHosts — KQL make_set() dynamic column.
+                # r[3] = SessionHosts - KQL make_set() dynamic column.
                 # The LAW REST API may return this as either:
                 #   - A PS array (Object[]) when the response is deeply deserialised
                 #   - A JSON string e.g. '["avd-vm-prod-1","avd-vm-prod-2"]' when not
@@ -1370,7 +1377,7 @@ function Initialize-SessionInfoTab {
     # ── AD Group Export button ──
     $siADGroupBtn = $Window.FindName('SI_ADGroupExport')
     $siADGroupBtn.Add_Click({
-        $groupName = _SIPromptGroupName -Title 'AD Group Export' -Label 'Enter AD group name:'
+        $groupName = _SISearchSelectGroup -Title 'AD Group Export' -Mode 'AD'
         if (-not $groupName) { return }
         $script:StatusText.Text = "Session History: Querying AD group '$groupName'..."
         # Force UI update
@@ -1422,41 +1429,46 @@ function Initialize-SessionInfoTab {
     # ── Entra Group Export button ──
     $siEntraGroupBtn = $Window.FindName('SI_EntraGroupExport')
     $siEntraGroupBtn.Add_Click({
-        $groupName = _SIPromptGroupName -Title 'Entra Group Export' -Label 'Enter Entra ID group name:'
-        if (-not $groupName) { return }
-        $script:StatusText.Text = "Session History: Querying Entra ID group '$groupName'..."
-        # Force UI update
         try {
-            $f = [System.Windows.Threading.DispatcherFrame]::new()
-            [System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvoke(
-                [System.Windows.Threading.DispatcherPriority]::Background,
-                [Action]{ $f.Continue = $false }) | Out-Null
-            [System.Windows.Threading.Dispatcher]::PushFrame($f)
-        } catch {}
-
-        try {
-            # Ensure Microsoft.Graph module is available
+            # Ensure Microsoft.Graph modules are available before opening the search dialog
             if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Groups -ErrorAction SilentlyContinue)) {
                 $script:StatusText.Text = "Session History: Microsoft.Graph.Groups module not installed. Run: Install-Module Microsoft.Graph.Groups -Scope CurrentUser"
                 return
             }
             Import-Module Microsoft.Graph.Groups -ErrorAction Stop
-            Import-Module Microsoft.Graph.Users -ErrorAction Stop
+            Import-Module Microsoft.Graph.Users  -ErrorAction Stop
             # Connect if not already connected
             $mgCtx = $null
             try { $mgCtx = Get-MgContext -ErrorAction SilentlyContinue } catch {}
             if (-not $mgCtx) {
                 $script:StatusText.Text = "Session History: Connecting to Microsoft Graph..."
                 try {
-                    $f2 = [System.Windows.Threading.DispatcherFrame]::new()
+                    $f = [System.Windows.Threading.DispatcherFrame]::new()
                     [System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvoke(
                         [System.Windows.Threading.DispatcherPriority]::Background,
-                        [Action]{ $f2.Continue = $false }) | Out-Null
-                    [System.Windows.Threading.Dispatcher]::PushFrame($f2)
+                        [Action]{ $f.Continue = $false }) | Out-Null
+                    [System.Windows.Threading.Dispatcher]::PushFrame($f)
                 } catch {}
                 Connect-MgGraph -Scopes 'GroupMember.Read.All','User.Read.All' -NoWelcome -ErrorAction Stop
             }
-            # Find the group
+        } catch {
+            $script:StatusText.Text = "Session History: Graph connection failed: $_"
+            return
+        }
+
+        $groupName = _SISearchSelectGroup -Title 'Entra Group Export' -Mode 'Entra'
+        if (-not $groupName) { return }
+        $script:StatusText.Text = "Session History: Querying Entra ID group '$groupName'..."
+        try {
+            $f2 = [System.Windows.Threading.DispatcherFrame]::new()
+            [System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::Background,
+                [Action]{ $f2.Continue = $false }) | Out-Null
+            [System.Windows.Threading.Dispatcher]::PushFrame($f2)
+        } catch {}
+
+        try {
+            # Find the group by exact display name (user selected it from search results)
             $escapedName = $groupName.Replace("'","''")
             $group = Get-MgGroup -Filter "displayName eq '$escapedName'" -Top 1 -ErrorAction Stop
             if (-not $group) {
@@ -1521,32 +1533,47 @@ function script:_SIPromptGroupName {
     $inputXaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="$Title" Width="400" Height="160"
+        Title="$Title" Width="420" Height="185"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
-        Background="#F5F6FA" FontFamily="Segoe UI">
-    <StackPanel Margin="20,16">
-        <TextBlock Text="$Label" FontSize="13" Margin="0,0,0,8"/>
-        <TextBox x:Name="InputBox" FontSize="13" Padding="6,4" Height="28"/>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-            <Button x:Name="OkBtn" Content="OK" Width="80" Height="28"
+        Background="{DynamicResource Avd.Window.Bg}" Foreground="{DynamicResource Avd.Window.Fg}"
+        FontFamily="Segoe UI">
+    <Window.Resources><!-- THEME_SLOT --></Window.Resources>
+    <StackPanel Margin="20,18">
+        <TextBlock Text="$Label" FontSize="13" Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,10"/>
+        <TextBox x:Name="InputBox" FontSize="13" Padding="6,5" Height="30"
+                 Background="{DynamicResource Avd.Input.Bg}"
+                 Foreground="{DynamicResource Avd.Fg.Label}"
+                 BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button x:Name="OkBtn" Content="OK" Width="80" Height="30"
                     Background="#0078D4" Foreground="White" BorderThickness="0"
                     FontSize="12" FontWeight="SemiBold" Cursor="Hand" Margin="0,0,6,0" IsDefault="True">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="4,2">
+                        <Border x:Name="BdOk" Background="{TemplateBinding Background}" CornerRadius="4" Padding="4,2">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="BdOk" Property="Background" Value="#005A9E"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Button.Template>
             </Button>
-            <Button x:Name="CancelBtn" Content="Cancel" Width="80" Height="28"
-                    Background="#E0E0E0" Foreground="#333" BorderThickness="0"
-                    FontSize="12" Cursor="Hand" IsCancel="True">
+            <Button x:Name="CancelBtn" Content="Cancel" Width="80" Height="30"
+                    Background="{DynamicResource Avd.Btn.Cancel.Bg}" Foreground="{DynamicResource Avd.Window.Fg}"
+                    BorderThickness="0" FontSize="12" Cursor="Hand" IsCancel="True">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="4,2">
+                        <Border x:Name="BdCancel" Background="{TemplateBinding Background}" CornerRadius="4" Padding="4,2">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="BdCancel" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Hover}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Button.Template>
             </Button>
@@ -1554,8 +1581,16 @@ function script:_SIPromptGroupName {
     </StackPanel>
 </Window>
 "@
+    $inputXaml = $inputXaml -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\..\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
     $reader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($inputXaml))
     $dlgWin = [System.Windows.Markup.XamlReader]::Load($reader)
+    if ($script:DarkTheme) {
+        $dlgWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($dlgWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
     $inputBox  = $dlgWin.FindName('InputBox')
     $okBtn     = $dlgWin.FindName('OkBtn')
     $cancelBtn = $dlgWin.FindName('CancelBtn')
@@ -1565,6 +1600,192 @@ function script:_SIPromptGroupName {
     if ($dlgWin.Owner -and $dlgWin.Owner.Icon) { $dlgWin.Icon = $dlgWin.Owner.Icon }
     $dlgWin.ShowDialog() | Out-Null
     return $dlgWin.Tag
+}
+
+# =============================================================================
+# Helper: Search-and-select group dialog (AD or Entra)
+# =============================================================================
+
+function script:_SISearchSelectGroup {
+    param([string]$Title, [string]$Mode)  # Mode: 'AD' or 'Entra'
+
+    $srchXaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="$Title" Width="480" Height="420"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="{DynamicResource Avd.Window.Bg}" Foreground="{DynamicResource Avd.Window.Fg}"
+        FontFamily="Segoe UI">
+    <Window.Resources><!-- THEME_SLOT -->
+        <Style TargetType="ListBox">
+            <Setter Property="Background"    Value="{DynamicResource Avd.Input.Bg}"/>
+            <Setter Property="Foreground"    Value="{DynamicResource Avd.Fg.Label}"/>
+            <Setter Property="BorderBrush"   Value="{DynamicResource Avd.Border.Input}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Label}"/>
+            <Setter Property="Padding"    Value="10,6"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource Avd.Hover.Bg}"/>
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource Avd.Selected.Bg}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Selected}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    <DockPanel Margin="16,14">
+        <!-- Search row -->
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="SearchBox" Grid.Column="0" FontSize="12" Padding="6,5" Height="30"
+                     Background="{DynamicResource Avd.Input.Bg}"
+                     Foreground="{DynamicResource Avd.Fg.Label}"
+                     BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"/>
+            <Button x:Name="SearchBtn" Grid.Column="1" Content="Search" Width="80" Height="30"
+                    Margin="8,0,0,0" Background="#0078D4" Foreground="White"
+                    BorderThickness="0" FontSize="12" FontWeight="SemiBold" Cursor="Hand">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="BdS" Background="{TemplateBinding Background}" CornerRadius="4" Padding="4,2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="BdS" Property="Background" Value="#005A9E"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </Grid>
+        <!-- Status text -->
+        <TextBlock x:Name="SrchStatus" DockPanel.Dock="Top" FontSize="11"
+                   Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,8"
+                   Text="Enter a search term and click Search"/>
+        <!-- Button row -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button x:Name="OkBtn" Content="Export" Width="80" Height="30" IsDefault="True"
+                    IsEnabled="False" Background="#0078D4" Foreground="White"
+                    BorderThickness="0" FontSize="12" FontWeight="SemiBold"
+                    Cursor="Hand" Margin="0,0,6,0">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="BdOk" Background="{TemplateBinding Background}" CornerRadius="4" Padding="4,2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="BdOk" Property="Background" Value="#888"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="BdOk" Property="Background" Value="#005A9E"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+            <Button x:Name="CancelBtn" Content="Cancel" Width="80" Height="30" IsCancel="True"
+                    Background="{DynamicResource Avd.Btn.Cancel.Bg}"
+                    Foreground="{DynamicResource Avd.Window.Fg}"
+                    BorderThickness="0" FontSize="12" Cursor="Hand">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="BdC" Background="{TemplateBinding Background}" CornerRadius="4" Padding="4,2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="BdC" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Hover}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </StackPanel>
+        <!-- Results list -->
+        <ListBox x:Name="ResultsList" FontSize="12"/>
+    </DockPanel>
+</Window>
+"@
+
+    $srchXaml   = $srchXaml -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\..\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    $srchReader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($srchXaml))
+    $srchWin    = [Windows.Markup.XamlReader]::Load($srchReader)
+    if ($script:DarkTheme) {
+        $srchWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($srchWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
+
+    $srchBox     = $srchWin.FindName('SearchBox')
+    $srchBtn     = $srchWin.FindName('SearchBtn')
+    $srchStatus  = $srchWin.FindName('SrchStatus')
+    $resultsList = $srchWin.FindName('ResultsList')
+    $okBtn       = $srchWin.FindName('OkBtn')
+    $cancelBtn   = $srchWin.FindName('CancelBtn')
+
+    $doSearch = {
+        $term = $srchBox.Text.Trim()
+        if (-not $term) { $srchStatus.Text = 'Enter a search term first.'; return }
+        $srchStatus.Text = 'Searching...'
+        $resultsList.Items.Clear()
+        $okBtn.IsEnabled = $false
+        try {
+            $f = [System.Windows.Threading.DispatcherFrame]::new()
+            [System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::Background,
+                [Action]{ $f.Continue = $false }) | Out-Null
+            [System.Windows.Threading.Dispatcher]::PushFrame($f)
+        } catch {}
+        try {
+            if ($Mode -eq 'AD') {
+                $groups = @(Get-ADGroup -Filter "Name -like '*$term*'" -ErrorAction Stop |
+                    Select-Object -ExpandProperty Name | Sort-Object)
+            } else {
+                $groups = @(Get-MgGroup -Search "displayName:$term" -ConsistencyLevel eventual `
+                    -Top 50 -ErrorAction Stop |
+                    Select-Object -ExpandProperty DisplayName | Sort-Object)
+            }
+            if ($groups.Count -gt 0) {
+                foreach ($g in $groups) { [void]$resultsList.Items.Add($g) }
+                $srchStatus.Text = "$($groups.Count) group(s) found - select one then click Export"
+            } else {
+                $srchStatus.Text = 'No groups found matching that term.'
+            }
+        } catch {
+            $srchStatus.Text = "Search failed: $_"
+        }
+    }.GetNewClosure()
+
+    $srchBtn.Add_Click($doSearch)
+    $srchBox.Add_KeyDown({
+        if ($_.Key -eq [System.Windows.Input.Key]::Return) { & $doSearch }
+    }.GetNewClosure())
+    $resultsList.Add_SelectionChanged({
+        $okBtn.IsEnabled = ($null -ne $resultsList.SelectedItem)
+    }.GetNewClosure())
+    $resultsList.Add_MouseDoubleClick({
+        if ($resultsList.SelectedItem) { $srchWin.Tag = $resultsList.SelectedItem; $srchWin.Close() }
+    }.GetNewClosure())
+    $okBtn.Add_Click({
+        if ($resultsList.SelectedItem) { $srchWin.Tag = $resultsList.SelectedItem; $srchWin.Close() }
+    }.GetNewClosure())
+    $cancelBtn.Add_Click({ $srchWin.Tag = $null; $srchWin.Close() })
+
+    $srchWin.Owner = $script:_siWindow
+    if ($srchWin.Owner -and $srchWin.Owner.Icon) { $srchWin.Icon = $srchWin.Owner.Icon }
+    $srchWin.ShowDialog() | Out-Null
+    return $srchWin.Tag
 }
 
 # =============================================================================

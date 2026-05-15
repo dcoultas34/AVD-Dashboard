@@ -23,7 +23,7 @@
 #      power state ($expand=instanceView is only supported for VMSS, not regular VMs)
 #   2. For each VM, resolves the private IP via REST GET on the first NIC resource ID
 #   3. Returns VM Name, Resource Group, Region, Power State, OS Type, IP Address,
-#      VM SKU and Availability Zone — all in a single pass, no on-demand button needed
+#      VM SKU and Availability Zone - all in a single pass, no on-demand button needed
 #
 # VMs whose names match any entry in InfrastructureServers.ExcludePatterns
 # (case-insensitive substring match) are silently skipped.
@@ -62,8 +62,8 @@ $InfrastructureTab_Xaml = @'
          xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <DockPanel>
         <!-- ═══ Top bar: filter input, status text and manual refresh button ═══ -->
-        <Border DockPanel.Dock="Top" Background="#F4F6F9"
-                BorderBrush="#DDE1E7" BorderThickness="0,0,0,1"
+        <Border DockPanel.Dock="Top" Background="{DynamicResource Avd.CostBar.Bg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,0,1"
                 Padding="12,7">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -77,23 +77,23 @@ $InfrastructureTab_Xaml = @'
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="Filter:"
                            VerticalAlignment="Center"
-                           FontSize="12" Foreground="#555"
+                           FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}"
                            Margin="0,0,8,0"/>
                 <!-- ISFilterBox: TextChanged fires a DataView.RowFilter update -->
                 <TextBox x:Name="ISFilterBox" Grid.Column="1"
                          FontSize="12" Padding="8,4"
                          VerticalContentAlignment="Center"
-                         BorderBrush="#C8CDD3" BorderThickness="1"
-                         Background="White" Foreground="#333"/>
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" Foreground="{DynamicResource Avd.Fg.Label}"/>
                 <!-- ISStatusText: shows "Running: X  Other: Y | Updated: HH:mm:ss  Next in Ns" -->
                 <TextBlock x:Name="ISStatusText" Grid.Column="3"
                            VerticalAlignment="Center"
-                           FontSize="12" Foreground="#777"
+                           FontSize="12" Foreground="{DynamicResource Avd.Fg.Hint}"
                            Margin="0,0,12,0"/>
                 <!-- ISRefreshButton: triggers an immediate out-of-schedule refresh -->
                 <Button x:Name="ISRefreshButton" Grid.Column="4"
                         Content="Refresh"
-                        Background="#0078D4" Foreground="White"
+                        Background="{DynamicResource Avd.Btn.Accent.Bg}" Foreground="White"
                         BorderThickness="0" FontSize="12"
                         FontWeight="SemiBold" Cursor="Hand"
                         Padding="12,3" Margin="0,0,6,0">
@@ -105,7 +105,7 @@ $InfrastructureTab_Xaml = @'
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="BdIR" Property="Background" Value="#005A9E"/>
+                                    <Setter TargetName="BdIR" Property="Background" Value="{DynamicResource Avd.Btn.Accent.Hover}"/>
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
                                     <Setter TargetName="BdIR" Property="Background" Value="#003D6B"/>
@@ -175,32 +175,32 @@ $InfrastructureTab_Xaml = @'
         </Border>
 
         <!-- ═══ Cost totals bar - shown after Load Costs is clicked ═══ -->
-        <Border x:Name="ISTotalsBar" DockPanel.Dock="Bottom" Background="#EEF4FC"
-                BorderBrush="#DDE1E7" BorderThickness="0,1,0,0"
+        <Border x:Name="ISTotalsBar" DockPanel.Dock="Bottom" Background="{DynamicResource Avd.CostBar.Bg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,1,0,0"
                 Height="28" Visibility="Collapsed">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
                         VerticalAlignment="Center" Margin="12,0">
                 <TextBlock Text="Totals:" FontSize="11" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,16,0" VerticalAlignment="Center"/>
-                <TextBlock Text="Compute GBP/mo:" FontSize="11" Foreground="#555"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,16,0" VerticalAlignment="Center"/>
+                <TextBlock Text="Compute GBP/mo:" FontSize="11" Foreground="{DynamicResource Avd.Fg.Secondary}"
                            Margin="0,0,6,0" VerticalAlignment="Center"/>
                 <TextBlock x:Name="ISTotalCompute" FontSize="11" FontWeight="SemiBold"
-                           Foreground="#0078D4" Margin="0,0,20,0" VerticalAlignment="Center"/>
-                <TextBlock Text="Disk GBP/mo:" FontSize="11" Foreground="#555"
+                           Foreground="{DynamicResource Avd.Fg.Accent}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                <TextBlock Text="Disk GBP/mo:" FontSize="11" Foreground="{DynamicResource Avd.Fg.Secondary}"
                            Margin="0,0,6,0" VerticalAlignment="Center"/>
                 <TextBlock x:Name="ISTotalDisk" FontSize="11" FontWeight="SemiBold"
-                           Foreground="#0078D4" VerticalAlignment="Center"/>
-                <TextBlock Text="Txn GBP/mo:" FontSize="11" Foreground="#555"
+                           Foreground="{DynamicResource Avd.Fg.Accent}" VerticalAlignment="Center"/>
+                <TextBlock Text="Txn GBP/mo:" FontSize="11" Foreground="{DynamicResource Avd.Fg.Secondary}"
                            Margin="16,0,6,0" VerticalAlignment="Center"/>
                 <TextBlock x:Name="ISTotalTxn" FontSize="11" FontWeight="SemiBold"
-                           Foreground="#0078D4" VerticalAlignment="Center"/>
+                           Foreground="{DynamicResource Avd.Fg.Accent}" VerticalAlignment="Center"/>
             </StackPanel>
         </Border>
 
         <!-- ═══ Bottom action bar: result label + power action buttons ═══ -->
         <!-- Drain mode is not applicable to infrastructure VMs - no drain buttons here -->
-        <Border DockPanel.Dock="Bottom" Background="#F4F6F9"
-                BorderBrush="#DDE1E7" BorderThickness="0,1,0,0"
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.CostBar.Bg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,1,0,0"
                 Height="38">
             <Grid Margin="12,0">
                 <Grid.ColumnDefinitions>
@@ -209,7 +209,7 @@ $InfrastructureTab_Xaml = @'
                 </Grid.ColumnDefinitions>
                 <!-- ISActionStatus: displays in-progress and result messages for power actions -->
                 <TextBlock x:Name="ISActionStatus" Grid.Column="0"
-                           Foreground="#555" FontSize="12"
+                           Foreground="{DynamicResource Avd.Fg.Secondary}" FontSize="12"
                            VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal"
                             VerticalAlignment="Center">
@@ -266,7 +266,7 @@ $InfrastructureTab_Xaml = @'
                     <!-- Restart: blue - reboots the OS while keeping the VM allocated -->
                     <Button x:Name="ISRestartButton" Content="Restart"
                             IsEnabled="False" Margin="0,4,4,4"
-                            Background="#0078D4" Foreground="White"
+                            Background="{DynamicResource Avd.Btn.Accent.Bg}" Foreground="White"
                             BorderThickness="0" FontSize="12"
                             FontWeight="SemiBold" Cursor="Hand"
                             Padding="14,4"
@@ -282,7 +282,7 @@ $InfrastructureTab_Xaml = @'
                                         <Setter TargetName="BdIR2" Property="Background" Value="#888"/>
                                     </Trigger>
                                     <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="BdIR2" Property="Background" Value="#005A9E"/>
+                                        <Setter TargetName="BdIR2" Property="Background" Value="{DynamicResource Avd.Btn.Accent.Hover}"/>
                                     </Trigger>
                                 </ControlTemplate.Triggers>
                             </ControlTemplate>
@@ -342,7 +342,7 @@ $script:infraRefreshScript = {
     $vmRows = [System.Collections.Generic.List[PSCustomObject]]::new()
 
     foreach ($rg in $infraRGs) {
-        # List VMs in RG (no $expand — instanceView expand only works for VMSS).
+        # List VMs in RG (no $expand - instanceView expand only works for VMSS).
         $vms = @(Invoke-Arm -Path "/subscriptions/$SubId/resourceGroups/$rg/providers/Microsoft.Compute/virtualMachines" -Token $ArmToken -ApiVersion '2024-07-01')
         if ($vms.Count -eq 0) { continue }
 
@@ -657,6 +657,10 @@ function Initialize-InfrastructureTab {
     $menuISRDP        = New-Object System.Windows.Controls.MenuItem
     $menuISRDP.Header = "RDP to Server"
     [void]$isCtxMenu.Items.Add($menuISRDP)
+    [void]$isCtxMenu.Items.Add((New-Object System.Windows.Controls.Separator))
+    $menuISOpenPortal        = New-Object System.Windows.Controls.MenuItem
+    $menuISOpenPortal.Header = "Open Resource Group in Portal"
+    [void]$isCtxMenu.Items.Add($menuISOpenPortal)
 
     $isGrid = $script:ISGrid
 
@@ -670,7 +674,9 @@ function Initialize-InfrastructureTab {
 
     $isGrid.Add_ContextMenuOpening({
         $sel = @($isGrid.SelectedItems)
-        $isCtxMenu.Items[0].IsEnabled = $sel.Count -gt 0 -and $null -ne $sel[0]
+        $hasOne = $sel.Count -gt 0 -and $null -ne $sel[0]
+        $isCtxMenu.Items[0].IsEnabled = $hasOne   # RDP to Server
+        $isCtxMenu.Items[2].IsEnabled = $hasOne   # Open Resource Group in Portal
     }.GetNewClosure())
 
     $menuISRDP.Add_Click({
@@ -686,6 +692,16 @@ function Initialize-InfrastructureTab {
         catch {
             [System.Windows.MessageBox]::Show("Failed to launch RDP: $_", "RDP Error", "OK", "Error") | Out-Null
         }
+    }.GetNewClosure())
+
+    $isPortalSubId    = $SubscriptionId
+    $isPortalTenantId = $DefaultTenantId
+    $menuISOpenPortal.Add_Click({
+        $sel = @($isGrid.SelectedItems)
+        if ($sel.Count -eq 0 -or $null -eq $sel[0]) { return }
+        $rg  = [string]$sel[0]['_RG']
+        $url = "https://portal.azure.com/#@$isPortalTenantId/resource/subscriptions/$isPortalSubId/resourceGroups/$rg/overview"
+        Start-Process $url
     }.GetNewClosure())
 
     $isGrid.ContextMenu = $isCtxMenu
@@ -967,7 +983,7 @@ function _IS_UpdateGrid {
                 $state = [string]$row['Power State']
                 $row['Compute GBP/mo']   = if ($c.Compute -gt 0)  { '{0:F2}' -f $c.Compute } elseif ($state -ne 'Running') { '0.00' } else { '-' }
                 $row['Disk GBP/mo']      = if ($c.Disk -gt 0)     { '{0:F2}' -f $c.Disk    } else { '-' }
-                # Txn -lt 0 means Premium SSD — no per-I/O billing, show N/A for both txn columns.
+                # Txn -lt 0 means Premium SSD - no per-I/O billing, show N/A for both txn columns.
                 $row['Txn GBP/10K']      = if ($c.Txn -ge 0) { '{0:F4}' -f $c.Txn } else { 'N/A' }
                 $row['_ComputeCostSort'] = $c.Compute
                 $row['_DiskCostSort']    = $c.Disk

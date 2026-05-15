@@ -17,7 +17,7 @@ if errorlevel 1 goto device
 goto end
 
 :device
-start "" powershell.exe -WindowStyle Normal -ExecutionPolicy Bypass -File "%~dp0avd-live-dashboard.ps1" -UseDeviceAuthentication
+start "" powershell.exe -NoProfile -WindowStyle Normal -ExecutionPolicy Bypass -File "%~dp0avd-live-dashboard.ps1" -UseDeviceAuthentication
 goto end
 
 :existing

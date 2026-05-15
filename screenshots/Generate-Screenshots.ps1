@@ -204,6 +204,7 @@ $filesTabXaml = Get-XamlFromScript -Path (Join-Path $scriptRoot 'scripts\tab-azu
 $monTabXaml   = Get-XamlFromScript -Path (Join-Path $scriptRoot 'scripts\tab-monitoring.ps1')     -VariableName '$MonitoringTab_Xaml'
 $infraTabXaml = Get-XamlFromScript -Path (Join-Path $scriptRoot 'scripts\tab-infrastructure.ps1') -VariableName '$InfrastructureTab_Xaml'
 $siTabXaml    = Get-XamlFromScript -Path (Join-Path $scriptRoot 'scripts\tab-sessioninfo.ps1')   -VariableName '$SessionInfoTab_Xaml'
+$imgTabXaml   = Get-XamlFromScript -Path (Join-Path $scriptRoot 'scripts\tab-images.ps1')        -VariableName '$ImagesTab_Xaml'
 
 $dashRaw = Get-XamlFromScript -Path (Join-Path $scriptRoot 'avd-live-dashboard.ps1') -VariableName '$rawXaml'
 
@@ -212,7 +213,8 @@ $dashFull = $dashRaw `
     -replace '<!-- TAB:AZURE_FILES -->',   $filesTabXaml `
     -replace '<!-- TAB:MONITORING -->',    $monTabXaml `
     -replace '<!-- TAB:INFRASTRUCTURE -->', $infraTabXaml `
-    -replace '<!-- TAB:SESSION_INFO -->',  $siTabXaml
+    -replace '<!-- TAB:SESSION_INFO -->',  $siTabXaml `
+    -replace '<!-- TAB:IMAGES -->',        $imgTabXaml
 
 # Clean up labels for screenshots
 $dashFull = $dashFull -replace 'DEVELOPMENT BUILD', ''
@@ -284,10 +286,16 @@ $infraData = @(
     [PSCustomObject]@{ 'VM Name'='MGMT-UKS-001'; 'Resource Group'='RG-INFRA-UKS'; 'Region'='uksouth'; 'Power State'='VM deallocated'; 'OS Type'='Windows'; 'IP Address'='10.0.1.20'; 'VM SKU'='Standard_B2ms'; 'Avail Zone'='-' }
 )
 
+$imgData = @(
+    [PSCustomObject]@{ 'VM Name'='IMG-UKS-001'; 'Resource Group'='RG-IMAGES-UKS'; 'Region'='uksouth'; 'Power State'='VM running'; 'OS Type'='Windows'; 'IP Address'='10.0.2.4'; 'VM SKU'='Standard_D4s_v5'; 'Avail Zone'='-' }
+    [PSCustomObject]@{ 'VM Name'='IMG-UKS-002'; 'Resource Group'='RG-IMAGES-UKS'; 'Region'='uksouth'; 'Power State'='VM deallocated'; 'OS Type'='Windows'; 'IP Address'='10.0.2.5'; 'VM SKU'='Standard_D4s_v5'; 'Avail Zone'='-' }
+    [PSCustomObject]@{ 'VM Name'='IMG-FRC-001'; 'Resource Group'='RG-IMAGES-FRC'; 'Region'='francecentral'; 'Power State'='VM deallocated'; 'OS Type'='Windows'; 'IP Address'='10.1.2.4'; 'VM SKU'='Standard_D4s_v5'; 'Avail Zone'='-' }
+)
+
 # =============================================================================
 # 1. Per Host Pool tab
 # =============================================================================
-Write-Host "  [1/12] Per Host Pool tab..."
+Write-Host "  [1/13] Per Host Pool tab..."
 $w1 = New-WpfWindow -Xaml $dashFull
 Initialize-DashboardWindow $w1
 Set-GridData -Grid $w1.FindName("PoolGrid") `
@@ -299,7 +307,7 @@ Save-WindowScreenshot -Window $w1 -OutputPath (Join-Path $outDir 'dashboard.png'
 # =============================================================================
 # 2. Azure Files tab
 # =============================================================================
-Write-Host "  [2/12] Azure Files tab..."
+Write-Host "  [2/13] Azure Files tab..."
 $w2 = New-WpfWindow -Xaml $dashFull
 Initialize-DashboardWindow $w2
 Set-GridData -Grid $w2.FindName("FilesGrid") `
@@ -312,7 +320,7 @@ Save-WindowScreenshot -Window $w2 -OutputPath (Join-Path $outDir 'azure-files.pn
 # =============================================================================
 # 3. Session Hosts tab
 # =============================================================================
-Write-Host "  [3/12] Session Hosts tab..."
+Write-Host "  [3/13] Session Hosts tab..."
 $w3 = New-WpfWindow -Xaml $dashFull
 Initialize-DashboardWindow $w3 -Width 1500
 $shGrid = $w3.FindName("SHGrid")
@@ -343,7 +351,7 @@ Save-WindowScreenshot -Window $w3 -OutputPath (Join-Path $outDir 'session-hosts.
 # =============================================================================
 # 4. Infrastructure tab
 # =============================================================================
-Write-Host "  [4/12] Infrastructure tab..."
+Write-Host "  [4/13] Infrastructure tab..."
 $w4 = New-WpfWindow -Xaml $dashFull
 Initialize-DashboardWindow $w4
 $isGrid = $w4.FindName("ISGrid")
@@ -358,9 +366,26 @@ Select-Tab $w4 'Infrastructure'
 Save-WindowScreenshot -Window $w4 -OutputPath (Join-Path $outDir 'infrastructure.png') -Show:$ShowWindows
 
 # =============================================================================
-# 5. Settings dialog
+# 5. Images tab
 # =============================================================================
-Write-Host "  [5/12] Settings dialog..."
+Write-Host "  [5/13] Images tab..."
+$wImg = New-WpfWindow -Xaml $dashFull
+Initialize-DashboardWindow $wImg
+$imgGrid = $wImg.FindName("IMGGrid")
+if ($imgGrid) {
+    Set-GridData -Grid $imgGrid `
+        -Columns @('VM Name','Resource Group','Region','Power State','OS Type','IP Address','VM SKU','Avail Zone') `
+        -Data $imgData
+}
+$imgStatus = $wImg.FindName("IMGStatusText")
+if ($imgStatus) { $imgStatus.Text = "3 VMs (1 running, 2 deallocated) - Next refresh in 52s" }
+Select-Tab $wImg 'Images'
+Save-WindowScreenshot -Window $wImg -OutputPath (Join-Path $outDir 'images.png') -Show:$ShowWindows
+
+# =============================================================================
+# 6. Settings dialog
+# =============================================================================
+Write-Host "  [7/13] Settings dialog..."
 $settingsXaml = Get-XamlFromScript -Path (Join-Path $scriptRoot 'avd-live-dashboard.ps1') -VariableName '$settingsXaml'
 $ws = New-WpfWindow -Xaml $settingsXaml
 # Left column: Operational Settings
@@ -388,7 +413,7 @@ Save-WindowScreenshot -Window $ws -OutputPath (Join-Path $outDir 'settings.png')
 # =============================================================================
 # 6. Profile Tools
 # =============================================================================
-Write-Host "  [6/12] Profile Tools..."
+Write-Host "  [8/13] Profile Tools..."
 $ptXaml = Get-XamlFromScript -Path (Join-Path $scriptRoot 'profile-tools.ps1') -VariableName '$xaml'
 $wp = New-WpfWindow -Xaml $ptXaml
 $subText = $wp.FindName("SubText")
@@ -400,7 +425,7 @@ Save-WindowScreenshot -Window $wp -OutputPath (Join-Path $outDir 'profile-tools.
 # =============================================================================
 # 7. Performance History popup
 # =============================================================================
-Write-Host "  [7/12] Performance History popup..."
+Write-Host "  [9/13] Performance History popup..."
 
 # Generate mock CPU and Mem data over 1 hour with 1-minute bins (~60 points)
 $baseTime = (Get-Date).AddHours(-1)
@@ -626,7 +651,7 @@ Write-Host "  Saved: $perfOutPath"
 # =============================================================================
 # 8. Session Detail window
 # =============================================================================
-Write-Host "  [8/12] Session Detail window..."
+Write-Host "  [10/13] Session Detail window..."
 $sdXaml = Get-XamlFromScript -Path (Join-Path $scriptRoot 'scripts\session-detail.ps1') -VariableName '$sessionXaml'
 $sdWin  = New-WpfWindow -Xaml $sdXaml
 $sdWin.Width  = 1920
@@ -667,7 +692,7 @@ Save-WindowScreenshot -Window $sdWin -OutputPath (Join-Path $outDir 'session-det
 # =============================================================================
 # 9. Run Command picker
 # =============================================================================
-Write-Host "  [9/12] Run Command picker..."
+Write-Host "  [11/13] Run Command picker..."
 
 # Build programmatically to match the real picker layout
 $rcWin = New-Object System.Windows.Window
@@ -811,7 +836,7 @@ Save-WindowScreenshot -Window $rcWin -OutputPath (Join-Path $outDir 'run-command
 # =============================================================================
 # 10. Send Message dialog
 # =============================================================================
-Write-Host "  [10/12] Send Message dialog..."
+Write-Host "  [12/13] Send Message dialog..."
 $smXaml = Get-XamlFromScript -Path (Join-Path $scriptRoot 'scripts\session-detail.ps1') -VariableName '$msgXaml'
 $smWin  = New-WpfWindow -Xaml $smXaml
 
@@ -824,7 +849,7 @@ Save-WindowScreenshot -Window $smWin -OutputPath (Join-Path $outDir 'send-messag
 # =============================================================================
 # 11. Session History tab
 # =============================================================================
-Write-Host "  [11/12] Session History tab..."
+Write-Host "  [13/13] Session History tab..."
 $wSI = New-WpfWindow -Xaml $dashFull
 Initialize-DashboardWindow $wSI -Width 1600
 
@@ -872,7 +897,7 @@ Save-WindowScreenshot -Window $wSI -OutputPath (Join-Path $outDir 'session-histo
 # =============================================================================
 # 12. Log Viewer
 # =============================================================================
-Write-Host "  [12/12] Log Viewer..."
+Write-Host "  [13/13] Log Viewer..."
 # Cannot use Get-XamlFromScript here because log-viewer.ps1 uses a double-quoted
 # here-string with $_ variable interpolation (for the icon path) which produces
 # a literal $ in the extracted XAML and causes XamlReader to throw.

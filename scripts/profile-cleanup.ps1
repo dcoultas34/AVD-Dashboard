@@ -153,5 +153,5 @@ foreach ($rootPath in $Paths) {
     }
 }
 
-# Return results unsorted — sorting and grouping is handled by profile-tools.ps1
+# Return results unsorted - sorting and grouping is handled by profile-tools.ps1
 $results

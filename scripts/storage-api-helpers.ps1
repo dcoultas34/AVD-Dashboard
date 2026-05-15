@@ -152,7 +152,7 @@ function Invoke-StorageFileRest {
     if ($BodyBytes -and $BodyBytes.Length -gt 0) {
         $splat["Body"] = $BodyBytes
     }
-    # No Body for PUT without $BodyBytes — Azure Files accepts PUT with no body
+    # No Body for PUT without $BodyBytes - Azure Files accepts PUT with no body
     # for operations like forceclosehandles. Sending an empty byte array would
     # cause PS5.1 to add a default Content-Type header that breaks the signature.
 

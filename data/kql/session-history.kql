@@ -12,16 +12,15 @@
 //   many nearly-identical rows per host. We cannot simply sum all rows.
 //
 //   Stage 1 - per host per bin:
-//     Use percentile(x, 100) which returns the maximum value for that host
-//     within the bin. This is equivalent to max() but operates correctly on
-//     the numeric column type without the arg_max type confusion seen in
-//     this LAW workspace version. Takes the peak reading per host per bin
-//     as a representative snapshot of that host's load.
+//     Use arg_max(TimeGenerated, ...) to get the most recent agent heartbeat
+//     for each host within the bin. This gives a true point-in-time snapshot
+//     rather than the peak, avoiding inflation from hosts peaking at different
+//     moments within the same bin.
 //
 //   Stage 2 - sum across all hosts:
-//     Sum the per-host peaks to get the fleet-wide total for each bin.
+//     Sum the per-host latest readings to get the fleet-wide total for each bin.
 //     This matches the Active/Disconnected counts on the Azure Portal host
-//     pool overview because it uses the same data source.
+//     pool overview because it uses the same data source and same aggregation.
 //
 // HOST POOL FILTER:
 //   WVDAgentHealthStatus._ResourceId contains the full ARM path of the host pool.
@@ -30,8 +29,9 @@
 //
 // COLUMNS RETURNED:
 //   TimeGenerated  - start of each time bin (UTC)
-//   Active         - peak ActiveSessions per host summed across all hosts
-//   Disconnected   - peak InactiveSessions per host summed across all hosts
+//   Active         - latest ActiveSessions per host summed across all hosts
+//   Disconnected   - latest InactiveSessions per host summed across all hosts
+//   Total          - Active + Disconnected (matches the dashboard Total Sessions card)
 //
 // PLACEHOLDERS:
 //   {{DisplayStart}}   - e.g. "ago(48h)" or "datetime(2026-04-01T00:00:00Z)"
@@ -40,20 +40,21 @@
 //   {{HostPoolFilter}} - optional where clause, or empty string
 // =============================================================================
 
-// Stage 1: get the peak session count per host per bin using percentile(x,100).
-// percentile at 100th percentile = maximum value, but returns correct numeric
-// type unlike arg_max which returns the timestamp value in this LAW version.
+// Stage 1: get the latest snapshot per host per bin using arg_max(TimeGenerated, ...).
+// This picks the most recent agent heartbeat within the bin for each host, giving
+// a true point-in-time reading rather than the peak. Summing point-in-time readings
+// across hosts matches the live ARM snapshot shown in the dashboard header cards.
+// Note: arg_max returns columns suffixed with the aggregation key name, so the
+// projected columns are named after the original columns (ActiveSessions, InactiveSessions).
 WVDAgentHealthStatus
 | where TimeGenerated >= {{DisplayStart}} and TimeGenerated <= {{DisplayEnd}}
 {{HostPoolFilter}}
 | extend BinTime = bin(TimeGenerated, {{BinSize}})
+| summarize arg_max(TimeGenerated, ActiveSessions, InactiveSessions) by SessionHostName, BinTime
+// Stage 2: sum the per-host latest readings across all hosts to get fleet-wide totals
 | summarize
-    Active       = toint(percentile(toint(ActiveSessions),   100)),
-    Disconnected = toint(percentile(toint(InactiveSessions), 100))
-  by SessionHostName, BinTime
-// Stage 2: sum the per-host peaks across all hosts to get fleet-wide totals
-| summarize
-    Active       = sum(Active),       // users actively at keyboard
-    Disconnected = sum(Disconnected)  // sessions alive but user disconnected
+    Active       = sum(toint(ActiveSessions)),
+    Disconnected = sum(toint(InactiveSessions))
   by TimeGenerated = BinTime
+| extend Total = Active + Disconnected
 | order by TimeGenerated desc

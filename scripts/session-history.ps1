@@ -87,7 +87,6 @@ function script:_AdvRefreshData {
     } catch {}
 
     try {
-        $tok   = Get-ArmToken
         $lawId = $script:LawWorkspaceResourceId
 
         # --- Build user filter for the KQL query ---
@@ -288,13 +287,8 @@ lockData
 
         # P30D timespan covers the full 30-day range the DatePicker allows;
         # the KQL 'between' clause narrows results to the selected day only.
-        $body = @{ query = $kql; timespan = 'P30D' }
-        $resp = Invoke-ArmRestMethod -Method POST `
-            -Path "$lawId/api/query" `
-            -Token $tok `
-            -ApiVersion '2020-08-01' `
-            -Body $body `
-            -FullResponse
+        $resp = Invoke-LawQuery -Kql $kql -Timespan 'P30D' `
+            -WorkspaceResourceId $lawId -QueryBaseUrl $script:LawQueryBaseUrl
         if ($sw) { $sw.Stop() }
 
         # -----------------------------------------------------------------------
@@ -352,12 +346,8 @@ let u7d  = ev | where TimeGenerated > ago(7d)  | summarize dcount(ShortUser);
 union (u24h | extend Period="24h"), (u7d | extend Period="7d")
 | project Period, Count=dcount_ShortUser
 '@
-            $statsResp = Invoke-ArmRestMethod -Method POST `
-                -Path "$lawId/api/query" `
-                -Token $tok `
-                -ApiVersion '2020-08-01' `
-                -Body @{ query = $statsKql; timespan = 'P7D' } `
-                -FullResponse
+            $statsResp = Invoke-LawQuery -Kql $statsKql -Timespan 'P7D' `
+                -WorkspaceResourceId $lawId -QueryBaseUrl $script:LawQueryBaseUrl
 
             # Parse the two-row result and update the TextBlock tiles on screen.
             # Row[0] is Period ("24h" or "7d"), Row[1] is the dcount integer.
@@ -600,14 +590,19 @@ function script:_AdvShowHistory {
         Title="Lock/Unlock History - $User"
         Height="420" Width="650" MinHeight="300" MinWidth="450"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
-        Background="#F5F6FA" FontFamily="Segoe UI">
+        Background="{DynamicResource Avd.Window.Bg}"
+        Foreground="{DynamicResource Avd.Window.Fg}"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
     <DockPanel Margin="16">
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
             <TextBlock FontSize="14" FontWeight="Bold"
                        Foreground="#0078D4" VerticalAlignment="Center"
                        Text="Lock/Unlock History"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                <TextBlock FontSize="11" Foreground="#666" VerticalAlignment="Center"
+                <TextBlock FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" VerticalAlignment="Center"
                            Margin="0,0,6,0" Text="Time range:"/>
                 <ComboBox x:Name="HistTimeRange" FontSize="11" SelectedIndex="0"
                           VerticalAlignment="Center" Width="80">
@@ -621,30 +616,31 @@ function script:_AdvShowHistory {
                 </ComboBox>
             </StackPanel>
         </DockPanel>
-        <TextBlock DockPanel.Dock="Top" FontSize="11" Foreground="#666"
+        <TextBlock DockPanel.Dock="Top" FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}"
                    Margin="0,0,0,10"
                    Text="User: $User  (all hosts)"/>
         <TextBlock x:Name="HistStatus" DockPanel.Dock="Top" FontSize="11"
-                   Foreground="#666" Margin="0,0,0,10"
+                   Foreground="{DynamicResource Avd.Fg.Muted}" Margin="0,0,0,10"
                    Text="Querying Log Analytics..."/>
         <DataGrid x:Name="HistGrid" AutoGenerateColumns="True" IsReadOnly="True"
                   CanUserSortColumns="True" CanUserReorderColumns="False"
                   HeadersVisibility="Column" GridLinesVisibility="None"
-                  AlternatingRowBackground="#F0F4FA" RowBackground="White"
-                  BorderBrush="#D0D5DD" BorderThickness="1"
+                  Background="{DynamicResource Avd.Grid.Bg}"
+                  AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}" RowBackground="{DynamicResource Avd.Grid.Bg}"
+                  BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
                   ColumnHeaderHeight="32" RowHeight="28" FontSize="12"
                   SelectionMode="Single" SelectionUnit="FullRow"
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto">
             <DataGrid.ColumnHeaderStyle>
                 <Style TargetType="DataGridColumnHeader">
-                    <Setter Property="Background"                 Value="#0078D4"/>
+                    <Setter Property="Background"                 Value="{DynamicResource Avd.ColHeader.Bg}"/>
                     <Setter Property="Foreground"                 Value="White"/>
                     <Setter Property="FontWeight"                 Value="SemiBold"/>
                     <Setter Property="FontSize"                   Value="12"/>
                     <Setter Property="Padding"                    Value="8,0"/>
                     <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                    <Setter Property="BorderBrush"                Value="#005A9E"/>
+                    <Setter Property="BorderBrush"                Value="{DynamicResource Avd.ColHeader.Border}"/>
                     <Setter Property="BorderThickness"            Value="0,0,1,0"/>
                 </Style>
             </DataGrid.ColumnHeaderStyle>
@@ -653,7 +649,32 @@ function script:_AdvShowHistory {
 </Window>
 "@
 
-    $histWin = [System.Windows.Markup.XamlReader]::Parse($histXaml)
+    $histXaml = $histXaml -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\..\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    if ($script:DarkTheme) { $histXaml = $histXaml -replace 'Background="\{DynamicResource Avd\.Window\.Bg\}"', 'Background="#1E1E1E"' }
+    if ($script:DarkTheme) { $histXaml = $histXaml -replace 'WindowStartupLocation="CenterOwner"', 'WindowStartupLocation="Manual" Left="-32000" Top="-32000"' }
+    [xml]$_histXml = $histXaml
+    $histWin = [System.Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $_histXml))
+    try { Set-WindowIcon -Window $histWin -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+    if ($script:DarkTheme) {
+        $histWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($histWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+        $histWin.Add_ContentRendered(({
+            $w = $histWin
+            $o = $histWin.Owner
+            [void]$w.Dispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::ContextIdle,
+                [System.Action]({
+                    if ($null -ne $o) {
+                        $w.Left = $o.Left + ($o.Width  - $w.ActualWidth)  / 2
+                        $w.Top  = $o.Top  + ($o.Height - $w.ActualHeight) / 2
+                    }
+                }.GetNewClosure())
+            )
+        }).GetNewClosure())
+    }
     $script:_histGrid      = $histWin.FindName("HistGrid")
     $script:_histStatus    = $histWin.FindName("HistStatus")
     $script:_histTimeRange = $histWin.FindName("HistTimeRange")
@@ -699,7 +720,6 @@ function script:_AdvShowHistory {
                 default { '12 hours' }
             }
 
-            $tok   = Get-ArmToken
             $lawId = $script:LawWorkspaceResourceId
             $usr = $script:_histUser.Replace('"', '\"')
 
@@ -717,13 +737,8 @@ Event
 "@
 
             $sw2 = $null; if ($script:LogFile) { $sw2 = [System.Diagnostics.Stopwatch]::StartNew() }
-            $body2 = @{ query = $kql; timespan = $apiTs }
-            $resp2 = Invoke-ArmRestMethod -Method POST `
-                -Path "$lawId/api/query" `
-                -Token $tok `
-                -ApiVersion '2020-08-01' `
-                -Body $body2 `
-                -FullResponse
+            $resp2 = Invoke-LawQuery -Kql $kql -Timespan $apiTs `
+                -WorkspaceResourceId $lawId -QueryBaseUrl $script:LawQueryBaseUrl
             if ($sw2) { $sw2.Stop() }
 
             $rc = if ($resp2.tables -and $resp2.tables[0].rows) { $resp2.tables[0].rows.Count } else { 0 }
@@ -777,7 +792,14 @@ Event
         & $script:_histQueryFn
     })
 
-    [void]$histWin.ShowDialog()
+    if ($script:DarkTheme -and $script:_histGrid) {
+        $_darkBrush = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x1E,0x1E,0x1E)
+        $script:_histGrid.Background            = $_darkBrush
+        $script:_histGrid.RowBackground         = $_darkBrush
+        $script:_histGrid.AlternatingRowBackground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x25,0x25,0x26)
+    }
+    if ($script:DarkTheme) { $script:_histStatus.Text = ' ' }
+    $histWin.Show()
 }
 
 # -----------------------------------------------------------------------------
@@ -801,14 +823,19 @@ function script:_AdvShowSessionHistory {
         Title="Session History - $User"
         Height="420" Width="650" MinHeight="300" MinWidth="450"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
-        Background="#F5F6FA" FontFamily="Segoe UI">
+        Background="{DynamicResource Avd.Window.Bg}"
+        Foreground="{DynamicResource Avd.Window.Fg}"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
     <DockPanel Margin="16">
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
             <TextBlock FontSize="14" FontWeight="Bold"
                        Foreground="#0078D4" VerticalAlignment="Center"
                        Text="Session History"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                <TextBlock FontSize="11" Foreground="#666" VerticalAlignment="Center"
+                <TextBlock FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" VerticalAlignment="Center"
                            Margin="0,0,6,0" Text="Time range:"/>
                 <ComboBox x:Name="SessHistTimeRange" FontSize="11" SelectedIndex="0"
                           VerticalAlignment="Center" Width="80">
@@ -822,30 +849,31 @@ function script:_AdvShowSessionHistory {
                 </ComboBox>
             </StackPanel>
         </DockPanel>
-        <TextBlock DockPanel.Dock="Top" FontSize="11" Foreground="#666"
+        <TextBlock DockPanel.Dock="Top" FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}"
                    Margin="0,0,0,10"
                    Text="User: $User  (all hosts)"/>
         <TextBlock x:Name="SessHistStatus" DockPanel.Dock="Top" FontSize="11"
-                   Foreground="#666" Margin="0,0,0,10"
+                   Foreground="{DynamicResource Avd.Fg.Muted}" Margin="0,0,0,10"
                    Text="Querying Log Analytics..."/>
         <DataGrid x:Name="SessHistGrid" AutoGenerateColumns="True" IsReadOnly="True"
                   CanUserSortColumns="True" CanUserReorderColumns="False"
                   HeadersVisibility="Column" GridLinesVisibility="None"
-                  AlternatingRowBackground="#F0F4FA" RowBackground="White"
-                  BorderBrush="#D0D5DD" BorderThickness="1"
+                  Background="{DynamicResource Avd.Grid.Bg}"
+                  AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}" RowBackground="{DynamicResource Avd.Grid.Bg}"
+                  BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
                   ColumnHeaderHeight="32" RowHeight="28" FontSize="12"
                   SelectionMode="Single" SelectionUnit="FullRow"
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto">
             <DataGrid.ColumnHeaderStyle>
                 <Style TargetType="DataGridColumnHeader">
-                    <Setter Property="Background"                 Value="#0078D4"/>
+                    <Setter Property="Background"                 Value="{DynamicResource Avd.ColHeader.Bg}"/>
                     <Setter Property="Foreground"                 Value="White"/>
                     <Setter Property="FontWeight"                 Value="SemiBold"/>
                     <Setter Property="FontSize"                   Value="12"/>
                     <Setter Property="Padding"                    Value="8,0"/>
                     <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                    <Setter Property="BorderBrush"                Value="#005A9E"/>
+                    <Setter Property="BorderBrush"                Value="{DynamicResource Avd.ColHeader.Border}"/>
                     <Setter Property="BorderThickness"            Value="0,0,1,0"/>
                 </Style>
             </DataGrid.ColumnHeaderStyle>
@@ -854,7 +882,32 @@ function script:_AdvShowSessionHistory {
 </Window>
 "@
 
-    $sessHistWin = [System.Windows.Markup.XamlReader]::Parse($sessHistXaml)
+    $sessHistXaml = $sessHistXaml -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\..\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    if ($script:DarkTheme) { $sessHistXaml = $sessHistXaml -replace 'Background="\{DynamicResource Avd\.Window\.Bg\}"', 'Background="#1E1E1E"' }
+    if ($script:DarkTheme) { $sessHistXaml = $sessHistXaml -replace 'WindowStartupLocation="CenterOwner"', 'WindowStartupLocation="Manual" Left="-32000" Top="-32000"' }
+    [xml]$_sessHistXml = $sessHistXaml
+    $sessHistWin = [System.Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $_sessHistXml))
+    try { Set-WindowIcon -Window $sessHistWin -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+    if ($script:DarkTheme) {
+        $sessHistWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($sessHistWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+        $sessHistWin.Add_ContentRendered(({
+            $w = $sessHistWin
+            $o = $sessHistWin.Owner
+            [void]$w.Dispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::ContextIdle,
+                [System.Action]({
+                    if ($null -ne $o) {
+                        $w.Left = $o.Left + ($o.Width  - $w.ActualWidth)  / 2
+                        $w.Top  = $o.Top  + ($o.Height - $w.ActualHeight) / 2
+                    }
+                }.GetNewClosure())
+            )
+        }).GetNewClosure())
+    }
     $script:_sessHistGrid      = $sessHistWin.FindName("SessHistGrid")
     $script:_sessHistStatus    = $sessHistWin.FindName("SessHistStatus")
     $script:_sessHistTimeRange = $sessHistWin.FindName("SessHistTimeRange")
@@ -898,7 +951,6 @@ function script:_AdvShowSessionHistory {
                 default { '12 hours' }
             }
 
-            $tok   = Get-ArmToken
             $lawId = $script:LawWorkspaceResourceId
             $usr = $script:_sessHistUser.Replace('"', '\"')
 
@@ -961,13 +1013,8 @@ union disconnects, otherev
 "@
 
             $sw3 = $null; if ($script:LogFile) { $sw3 = [System.Diagnostics.Stopwatch]::StartNew() }
-            $body3 = @{ query = $kql; timespan = $apiTs }
-            $resp3 = Invoke-ArmRestMethod -Method POST `
-                -Path "$lawId/api/query" `
-                -Token $tok `
-                -ApiVersion '2020-08-01' `
-                -Body $body3 `
-                -FullResponse
+            $resp3 = Invoke-LawQuery -Kql $kql -Timespan $apiTs `
+                -WorkspaceResourceId $lawId -QueryBaseUrl $script:LawQueryBaseUrl
             if ($sw3) { $sw3.Stop() }
 
             $rc = if ($resp3.tables -and $resp3.tables[0].rows) { $resp3.tables[0].rows.Count } else { 0 }
@@ -1024,7 +1071,14 @@ union disconnects, otherev
         & $script:_sessHistQueryFn
     })
 
-    [void]$sessHistWin.ShowDialog()
+    if ($script:DarkTheme -and $script:_sessHistGrid) {
+        $_darkBrush = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x1E,0x1E,0x1E)
+        $script:_sessHistGrid.Background            = $_darkBrush
+        $script:_sessHistGrid.RowBackground         = $_darkBrush
+        $script:_sessHistGrid.AlternatingRowBackground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x25,0x25,0x26)
+    }
+    if ($script:DarkTheme) { $script:_sessHistStatus.Text = ' ' }
+    $sessHistWin.Show()
 }
 
 # -----------------------------------------------------------------------------
@@ -1047,14 +1101,19 @@ function script:_AdvShowCombinedHistory {
         Title="User Timeline - $User"
         Height="500" Width="750" MinHeight="300" MinWidth="500"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
-        Background="#F5F6FA" FontFamily="Segoe UI">
+        Background="{DynamicResource Avd.Window.Bg}"
+        Foreground="{DynamicResource Avd.Window.Fg}"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
     <DockPanel Margin="16">
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
             <TextBlock FontSize="14" FontWeight="Bold"
                        Foreground="#0078D4" VerticalAlignment="Center"
                        Text="User Timeline"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                <TextBlock FontSize="11" Foreground="#666" VerticalAlignment="Center"
+                <TextBlock FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" VerticalAlignment="Center"
                            Margin="0,0,6,0" Text="Time range:"/>
                 <ComboBox x:Name="CombHistTimeRange" FontSize="11" SelectedIndex="0"
                           VerticalAlignment="Center" Width="80">
@@ -1068,30 +1127,31 @@ function script:_AdvShowCombinedHistory {
                 </ComboBox>
             </StackPanel>
         </DockPanel>
-        <TextBlock DockPanel.Dock="Top" FontSize="11" Foreground="#666"
+        <TextBlock DockPanel.Dock="Top" FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}"
                    Margin="0,0,0,10"
                    Text="User: $User  (all hosts - Lock/Unlock + Session events)"/>
         <TextBlock x:Name="CombHistStatus" DockPanel.Dock="Top" FontSize="11"
-                   Foreground="#666" Margin="0,0,0,10"
+                   Foreground="{DynamicResource Avd.Fg.Muted}" Margin="0,0,0,10"
                    Text="Querying Log Analytics..."/>
         <DataGrid x:Name="CombHistGrid" AutoGenerateColumns="True" IsReadOnly="True"
                   CanUserSortColumns="True" CanUserReorderColumns="False"
                   HeadersVisibility="Column" GridLinesVisibility="None"
-                  AlternatingRowBackground="#F0F4FA" RowBackground="White"
-                  BorderBrush="#D0D5DD" BorderThickness="1"
+                  Background="{DynamicResource Avd.Grid.Bg}"
+                  AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}" RowBackground="{DynamicResource Avd.Grid.Bg}"
+                  BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
                   ColumnHeaderHeight="32" RowHeight="28" FontSize="12"
                   SelectionMode="Single" SelectionUnit="FullRow"
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto">
             <DataGrid.ColumnHeaderStyle>
                 <Style TargetType="DataGridColumnHeader">
-                    <Setter Property="Background"                 Value="#0078D4"/>
+                    <Setter Property="Background"                 Value="{DynamicResource Avd.ColHeader.Bg}"/>
                     <Setter Property="Foreground"                 Value="White"/>
                     <Setter Property="FontWeight"                 Value="SemiBold"/>
                     <Setter Property="FontSize"                   Value="12"/>
                     <Setter Property="Padding"                    Value="8,0"/>
                     <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                    <Setter Property="BorderBrush"                Value="#005A9E"/>
+                    <Setter Property="BorderBrush"                Value="{DynamicResource Avd.ColHeader.Border}"/>
                     <Setter Property="BorderThickness"            Value="0,0,1,0"/>
                 </Style>
             </DataGrid.ColumnHeaderStyle>
@@ -1116,7 +1176,32 @@ function script:_AdvShowCombinedHistory {
 </Window>
 "@
 
-    $combHistWin = [System.Windows.Markup.XamlReader]::Parse($combHistXaml)
+    $combHistXaml = $combHistXaml -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\..\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    if ($script:DarkTheme) { $combHistXaml = $combHistXaml -replace 'Background="\{DynamicResource Avd\.Window\.Bg\}"', 'Background="#1E1E1E"' }
+    if ($script:DarkTheme) { $combHistXaml = $combHistXaml -replace 'WindowStartupLocation="CenterOwner"', 'WindowStartupLocation="Manual" Left="-32000" Top="-32000"' }
+    [xml]$_combHistXml = $combHistXaml
+    $combHistWin = [System.Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $_combHistXml))
+    try { Set-WindowIcon -Window $combHistWin -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+    if ($script:DarkTheme) {
+        $combHistWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($combHistWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+        $combHistWin.Add_ContentRendered(({
+            $w = $combHistWin
+            $o = $combHistWin.Owner
+            [void]$w.Dispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::ContextIdle,
+                [System.Action]({
+                    if ($null -ne $o) {
+                        $w.Left = $o.Left + ($o.Width  - $w.ActualWidth)  / 2
+                        $w.Top  = $o.Top  + ($o.Height - $w.ActualHeight) / 2
+                    }
+                }.GetNewClosure())
+            )
+        }).GetNewClosure())
+    }
     $script:_combHistGrid      = $combHistWin.FindName("CombHistGrid")
     $script:_combHistStatus    = $combHistWin.FindName("CombHistStatus")
     $script:_combHistTimeRange = $combHistWin.FindName("CombHistTimeRange")
@@ -1156,7 +1241,6 @@ function script:_AdvShowCombinedHistory {
                 default { '12 hours' }
             }
 
-            $tok   = Get-ArmToken
             $lawId = $script:LawWorkspaceResourceId
             $usr = $script:_combHistUser.Replace('"', '\"')
 
@@ -1227,13 +1311,8 @@ union lockEvents, disconnects, otherev
 "@
 
             $sw = $null; if ($script:LogFile) { $sw = [System.Diagnostics.Stopwatch]::StartNew() }
-            $body = @{ query = $kql; timespan = $apiTs }
-            $resp = Invoke-ArmRestMethod -Method POST `
-                -Path "$lawId/api/query" `
-                -Token $tok `
-                -ApiVersion '2020-08-01' `
-                -Body $body `
-                -FullResponse
+            $resp = Invoke-LawQuery -Kql $kql -Timespan $apiTs `
+                -WorkspaceResourceId $lawId -QueryBaseUrl $script:LawQueryBaseUrl
             if ($sw) { $sw.Stop() }
 
             $rc = if ($resp.tables -and $resp.tables[0].rows) { $resp.tables[0].rows.Count } else { 0 }
@@ -1290,7 +1369,14 @@ union lockEvents, disconnects, otherev
         & $script:_combHistQueryFn
     })
 
-    [void]$combHistWin.ShowDialog()
+    if ($script:DarkTheme -and $script:_combHistGrid) {
+        $_darkBrush = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x1E,0x1E,0x1E)
+        $script:_combHistGrid.Background            = $_darkBrush
+        $script:_combHistGrid.RowBackground         = $_darkBrush
+        $script:_combHistGrid.AlternatingRowBackground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x25,0x25,0x26)
+    }
+    if ($script:DarkTheme) { $script:_combHistStatus.Text = ' ' }
+    $combHistWin.Show()
 }
 
 # -----------------------------------------------------------------------------
@@ -1330,20 +1416,46 @@ function script:Show-SessionHistory {
     #   - Status text showing query progress and result counts
     #   - DataGrid with combined lock/unlock and session lifecycle summary
     #   - Right-click context menu for viewing event history
-    $advXaml = @'
+    $_advXamlRaw = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Session History"
         Height="500" Width="1144" MinHeight="350" MinWidth="900"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
-        Background="#F5F6FA" FontFamily="Segoe UI">
+        Background="{DynamicResource Avd.Window.Bg}"
+        Foreground="{DynamicResource Avd.Window.Fg}"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+        <Style TargetType="DataGrid">
+            <Setter Property="Foreground"               Value="{DynamicResource Avd.Window.Fg}"/>
+            <Setter Property="Background"               Value="{DynamicResource Avd.Grid.Bg}"/>
+            <Setter Property="RowBackground"            Value="{DynamicResource Avd.Grid.Bg}"/>
+            <Setter Property="AlternatingRowBackground" Value="{DynamicResource Avd.AltRow.Bg}"/>
+            <Setter Property="BorderBrush"              Value="{DynamicResource Avd.Border.Std}"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource Avd.Border.Grid}"/>
+            <Setter Property="RowHeaderWidth"           Value="0"/>
+        </Style>
+        <Style TargetType="DataGridRow">
+            <Setter Property="Foreground" Value="{DynamicResource Avd.Window.Fg}"/>
+        </Style>
+        <Style TargetType="DataGridCell">
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background"  Value="{DynamicResource Avd.Selected.Bg}"/>
+                    <Setter Property="BorderBrush" Value="Transparent"/>
+                    <Setter Property="Foreground"  Value="{DynamicResource Avd.Fg.Selected}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
     <DockPanel Margin="16">
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
             <TextBlock FontSize="16" FontWeight="Bold"
                        Foreground="#0078D4" VerticalAlignment="Center"
                        Text="Session History"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                <TextBlock FontSize="12" Foreground="#555" VerticalAlignment="Center"
+                <TextBlock FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" VerticalAlignment="Center"
                            Margin="0,0,6,0" Text="Date:"/>
                 <DatePicker x:Name="AdvDatePicker" Width="120" FontSize="12"
                             VerticalAlignment="Center"
@@ -1374,32 +1486,32 @@ function script:Show-SessionHistory {
              ================================================================ -->
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
             <!-- 24-hour unique user count tile -->
-            <Border Background="White" CornerRadius="6" Padding="16,8"
-                    BorderBrush="#DDE1E7" BorderThickness="1" Margin="0,0,8,0" MinWidth="130">
+            <Border Background="{DynamicResource Avd.Card.Bg}" CornerRadius="6" Padding="16,8"
+                    BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" Margin="0,0,8,0" MinWidth="130">
                 <StackPanel HorizontalAlignment="Center">
                     <TextBlock x:Name="ShStatUsers24h" Text="-"
                                FontSize="22" FontWeight="Bold" Foreground="#0078D4"
                                HorizontalAlignment="Center"/>
                     <TextBlock Text="Unique Users (24h)"
-                               FontSize="11" Foreground="#888"
+                               FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                HorizontalAlignment="Center" Margin="0,3,0,0"/>
                 </StackPanel>
             </Border>
             <!-- 7-day unique user count tile -->
-            <Border Background="White" CornerRadius="6" Padding="16,8"
-                    BorderBrush="#DDE1E7" BorderThickness="1" MinWidth="130">
+            <Border Background="{DynamicResource Avd.Card.Bg}" CornerRadius="6" Padding="16,8"
+                    BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" MinWidth="130">
                 <StackPanel HorizontalAlignment="Center">
                     <TextBlock x:Name="ShStatUsers7d" Text="-"
                                FontSize="22" FontWeight="Bold" Foreground="#0078D4"
                                HorizontalAlignment="Center"/>
                     <TextBlock Text="Unique Users (7d)"
-                               FontSize="11" Foreground="#888"
+                               FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                HorizontalAlignment="Center" Margin="0,3,0,0"/>
                 </StackPanel>
             </Border>
         </StackPanel>
         <TextBlock x:Name="AdvStatus" DockPanel.Dock="Top" FontSize="11"
-                   Foreground="#666" Margin="0,0,0,6"
+                   Foreground="{DynamicResource Avd.Fg.Muted}" Margin="0,0,0,6"
                    Text="Querying Log Analytics..."/>
         <Border DockPanel.Dock="Top" Margin="0,0,0,6">
             <Grid>
@@ -1413,11 +1525,11 @@ function script:Show-SessionHistory {
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="Filter:" VerticalAlignment="Center"
-                           FontSize="12" Foreground="#555" Margin="0,0,8,0"/>
+                           FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,0,8,0"/>
                 <TextBox x:Name="AdvFilterBox" Grid.Column="1"
                          FontSize="12" Padding="8,4" VerticalContentAlignment="Center"
-                         BorderBrush="#C8CDD3" BorderThickness="1" Background="White"/>
-                <TextBlock x:Name="AdvCountdown" Grid.Column="3" FontSize="11" Foreground="#666"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1" Background="{DynamicResource Avd.Input.Bg}"/>
+                <TextBlock x:Name="AdvCountdown" Grid.Column="3" FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}"
                            VerticalAlignment="Center" Margin="0,0,10,0"/>
                 <Button x:Name="SHExportCsvButton" Grid.Column="4"
                         Content="Export CSV" IsEnabled="False"
@@ -1484,21 +1596,21 @@ function script:Show-SessionHistory {
         <DataGrid x:Name="AdvGrid" AutoGenerateColumns="True" IsReadOnly="True"
                   CanUserSortColumns="True" CanUserReorderColumns="False"
                   HeadersVisibility="Column" GridLinesVisibility="None"
-                  AlternatingRowBackground="#F0F4FA" RowBackground="White"
-                  BorderBrush="#D0D5DD" BorderThickness="1"
+                  AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}" RowBackground="{DynamicResource Avd.Grid.Bg}"
+                  BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
                   ColumnHeaderHeight="32" RowHeight="28" FontSize="12"
                   SelectionMode="Single" SelectionUnit="FullRow"
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto">
             <DataGrid.ColumnHeaderStyle>
                 <Style TargetType="DataGridColumnHeader">
-                    <Setter Property="Background"                 Value="#0078D4"/>
+                    <Setter Property="Background"                 Value="{DynamicResource Avd.ColHeader.Bg}"/>
                     <Setter Property="Foreground"                 Value="White"/>
                     <Setter Property="FontWeight"                 Value="SemiBold"/>
                     <Setter Property="FontSize"                   Value="12"/>
                     <Setter Property="Padding"                    Value="8,0"/>
                     <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                    <Setter Property="BorderBrush"                Value="#005A9E"/>
+                    <Setter Property="BorderBrush"                Value="{DynamicResource Avd.ColHeader.Border}"/>
                     <Setter Property="BorderThickness"            Value="0,0,1,0"/>
                 </Style>
             </DataGrid.ColumnHeaderStyle>
@@ -1523,8 +1635,41 @@ function script:Show-SessionHistory {
 </Window>
 '@
 
-    $advWin = [System.Windows.Markup.XamlReader]::Parse($advXaml)
+    $_advXamlRaw = $_advXamlRaw -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\..\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    if ($script:DarkTheme) {
+        $_advXamlRaw = $_advXamlRaw -replace 'Background="\{DynamicResource Avd\.Window\.Bg\}"', 'Background="#1E1E1E"'
+        $_advXamlRaw = $_advXamlRaw -replace 'WindowStartupLocation="CenterOwner"', 'WindowStartupLocation="Manual" Left="-32000" Top="-32000"'
+    }
+    [xml]$_advXml = $_advXamlRaw
+    $advWin = [System.Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $_advXml))
+    try { Set-WindowIcon -Window $advWin -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+    if ($script:DarkTheme) {
+        $advWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($advWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+        $advWin.Add_ContentRendered(({
+            $w = $advWin
+            $o = $advWin.Owner
+            [void]$w.Dispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::ContextIdle,
+                [System.Action]({
+                    if ($null -ne $o) {
+                        $w.Left = $o.Left + ($o.Width  - $w.ActualWidth)  / 2
+                        $w.Top  = $o.Top  + ($o.Height - $w.ActualHeight) / 2
+                    }
+                }.GetNewClosure())
+            )
+        }).GetNewClosure())
+    }
     $script:_advGrid         = $advWin.FindName("AdvGrid")
+    if ($script:DarkTheme -and $script:_advGrid) {
+        $_darkBrush = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x1E,0x1E,0x1E)
+        $script:_advGrid.Background            = $_darkBrush
+        $script:_advGrid.RowBackground         = $_darkBrush
+        $script:_advGrid.AlternatingRowBackground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0x25,0x25,0x26)
+    }
     $script:_advStatus       = $advWin.FindName("AdvStatus")
     $script:_advCountdown    = $advWin.FindName("AdvCountdown")
     # Unique user stat tile TextBlocks - updated by the stats KQL query in
@@ -1683,6 +1828,6 @@ function script:Show-SessionHistory {
         if ($script:LogFile) { try { [IO.File]::AppendAllText($script:LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [SessionHistory] Window closed`r`n") } catch {} }
     })
 
-    # Show as modal dialog - blocks the parent session detail window until closed
-    [void]$advWin.ShowDialog()
+    if ($script:DarkTheme) { $script:_advStatus.Text = ' ' }
+    $advWin.Show()
 }

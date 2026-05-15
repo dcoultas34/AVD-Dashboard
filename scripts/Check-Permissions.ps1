@@ -65,6 +65,34 @@ public static extern int SetCurrentProcessExplicitAppUserModelID([MarshalAs(Unma
 } catch { <# non-critical - continue without custom taskbar grouping #> }
 
 # =============================================================================
+# Window icon helper (defined locally so script works standalone)
+# =============================================================================
+if (-not (Get-Command Set-WindowIcon -ErrorAction SilentlyContinue)) {
+    function Set-WindowIcon {
+        param([System.Windows.Window]$Window, [string]$IconPath)
+        if (-not (Test-Path $IconPath)) { return }
+        try {
+            $stream = [System.IO.File]::OpenRead((Resolve-Path $IconPath).ProviderPath)
+            $Window.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create(
+                $stream,
+                [System.Windows.Media.Imaging.BitmapCreateOptions]::None,
+                [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+            $stream.Close()
+        } catch {}
+    }
+}
+
+# =============================================================================
+# Theme setup (reads registry; applies at window load)
+# =============================================================================
+$script:CpRegPath = 'HKCU:\Software\AVDDashboard'
+$_cpDark = $false
+try {
+    $_kv = Get-ItemProperty -Path $script:CpRegPath -Name 'DarkTheme' -ErrorAction Stop
+    $_cpDark = [bool][int]$_kv.DarkTheme
+} catch {}
+
+# =============================================================================
 # Configuration  (script lives in scripts\, config.psd1 is in ..\config\)
 # =============================================================================
 
@@ -167,7 +195,7 @@ $RequiredRoles = @(
         RoleName   = 'Cost Management Reader'
         Feature    = 'Load Costs - actual 30-day disk transaction charges (Session Hosts and Infrastructure tabs)'
         ScopeGroup = 'Subscription'
-        ScopeRGs   = @()   # subscription-wide scope — Cost Management query runs at subscription level
+        ScopeRGs   = @()   # subscription-wide scope - Cost Management query runs at subscription level
     }
 )
 
@@ -229,6 +257,12 @@ if (-not $UseExistingContext -and -not $UseDeviceAuthentication -and -not $UseSe
 $splashReader = New-Object System.Xml.XmlNodeReader $splashXaml
 $splashWin    = [Windows.Markup.XamlReader]::Load($splashReader)
 $splashStatus = $splashWin.FindName("SplashStatus")
+
+if ($_cpDark) {
+    $splashWin.Content.Background  = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(0x2D, 0x2D, 0x30))
+    $splashWin.Content.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(0x3F, 0x3F, 0x46))
+    $splashStatus.Foreground       = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(0xCC, 0xCC, 0xCC))
+}
 
 $script:_iconPath = Join-Path $PSScriptRoot '..\data\avd-dashboard.ico'
 Set-WindowIcon -Window $splashWin -IconPath $script:_iconPath
@@ -417,7 +451,7 @@ if ($UseExistingContext) {
 
 $script:azAccountId = $azContext.Account.Id
 
-# Use the configured subscription ID when set — this is the authoritative value for RBAC
+# Use the configured subscription ID when set - this is the authoritative value for RBAC
 # scope paths. Script-scoped so Show-SwitchSubscription can update it.
 $script:subscriptionId = if (-not [string]::IsNullOrWhiteSpace($DefaultSubscriptionId)) {
     $DefaultSubscriptionId
@@ -447,7 +481,7 @@ function Get-PlainArmToken {
     return [string]$raw
 }
 
-# Best-effort display name lookup via REST — not critical if it fails.
+# Best-effort display name lookup via REST - not critical if it fails.
 # Script-scoped so Show-SwitchSubscription can update it.
 $script:subscriptionName = $azContext.Subscription.Name
 if ([string]::IsNullOrWhiteSpace($script:subscriptionName) -or $script:subscriptionName -eq $script:subscriptionId) {
@@ -786,7 +820,7 @@ $rbacScript = {
 
         foreach ($rg in $scopeRGs) {
             $rgScope = "$subScope/resourceGroups/$rg"
-            # Filter from the cached assignment set — covers direct and group-inherited roles
+            # Filter from the cached assignment set - covers direct and group-inherited roles
             # at this specific RG scope (subscription-level grants are already caught in step 1).
             $rgRoles = @($allAssignments |
                 Where-Object { $_.Scope -eq $rgScope } |
@@ -862,7 +896,7 @@ $script:rbacHandle = $script:rbacPS.BeginInvoke()
 # Main WPF window
 # =============================================================================
 
-[xml]$mainXaml = @'
+$_mainXamlRaw = @'
 <Window
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -870,22 +904,47 @@ $script:rbacHandle = $script:rbacPS.BeginInvoke()
     Height="760" Width="1280"
     MinHeight="560" MinWidth="960"
     WindowStartupLocation="CenterScreen"
-    Background="#F4F6F9"
+    Background="{DynamicResource Avd.Window.Bg}"
+    Foreground="{DynamicResource Avd.Window.Fg}"
     FontFamily="Segoe UI"
     UseLayoutRounding="True"
     TextOptions.TextFormattingMode="Display"
     TextOptions.TextRenderingMode="ClearType">
 
     <Window.Resources>
+        <!-- THEME_SLOT -->
+
+        <!-- Dark mode toggle switch -->
+        <Style x:Key="ToggleSwitch" TargetType="ToggleButton">
+            <Setter Property="Width"  Value="40"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Track" CornerRadius="11" Background="#AAAAAA">
+                            <Ellipse x:Name="Thumb" Width="16" Height="16" Fill="White"
+                                     HorizontalAlignment="Left" Margin="3,0"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="#0078D4"/>
+                                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <Style TargetType="DataGrid">
-            <Setter Property="Background"                    Value="White"/>
-            <Setter Property="BorderBrush"                   Value="#DDE1E7"/>
+            <Setter Property="Background"                    Value="{DynamicResource Avd.Grid.Bg}"/>
+            <Setter Property="BorderBrush"                   Value="{DynamicResource Avd.Border.Std}"/>
             <Setter Property="BorderThickness"               Value="1"/>
-            <Setter Property="RowBackground"                 Value="White"/>
-            <Setter Property="AlternatingRowBackground"      Value="#F7F9FC"/>
+            <Setter Property="RowBackground"                 Value="{DynamicResource Avd.Grid.Bg}"/>
+            <Setter Property="AlternatingRowBackground"      Value="{DynamicResource Avd.AltRow.Bg}"/>
             <Setter Property="GridLinesVisibility"           Value="Horizontal"/>
-            <Setter Property="HorizontalGridLinesBrush"      Value="#E8EAED"/>
+            <Setter Property="HorizontalGridLinesBrush"      Value="{DynamicResource Avd.Border.Grid}"/>
             <Setter Property="ColumnHeaderHeight"            Value="38"/>
             <Setter Property="FontSize"                      Value="13"/>
             <Setter Property="IsReadOnly"                    Value="True"/>
@@ -898,17 +957,18 @@ $script:rbacHandle = $script:rbacPS.BeginInvoke()
         </Style>
 
         <Style TargetType="DataGridColumnHeader">
-            <Setter Property="Background"                 Value="#0078D4"/>
-            <Setter Property="Foreground"                 Value="White"/>
+            <Setter Property="Background"                 Value="{DynamicResource Avd.ColHeader.Bg}"/>
+            <Setter Property="Foreground"                 Value="{DynamicResource Avd.ColHeader.Fg}"/>
             <Setter Property="FontWeight"                 Value="SemiBold"/>
             <Setter Property="FontSize"                   Value="12"/>
             <Setter Property="Padding"                    Value="12,0"/>
             <Setter Property="HorizontalContentAlignment" Value="Center"/>
-            <Setter Property="BorderBrush"                Value="#005A9E"/>
+            <Setter Property="BorderBrush"                Value="{DynamicResource Avd.ColHeader.Border}"/>
             <Setter Property="BorderThickness"            Value="0,0,1,0"/>
         </Style>
 
         <Style TargetType="DataGridCell">
+            <Setter Property="Foreground" Value="{DynamicResource Avd.Window.Fg}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="DataGridCell">
@@ -924,7 +984,7 @@ $script:rbacHandle = $script:rbacPS.BeginInvoke()
                 <Trigger Property="IsSelected" Value="True">
                     <Setter Property="Background" Value="Transparent"/>
                     <Setter Property="BorderBrush" Value="Transparent"/>
-                    <Setter Property="Foreground" Value="#1F2937"/>
+                    <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Selected}"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -935,44 +995,43 @@ $script:rbacHandle = $script:rbacPS.BeginInvoke()
             IsMouseOver and IsSelected (defined last) win when active.
         -->
         <Style TargetType="DataGridRow">
-            <!-- MinHeight keeps single-line rows at a consistent height now that RowHeight is removed -->
             <Setter Property="MinHeight" Value="34"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding [StatusKey]}" Value="Granted">
-                    <Setter Property="Background" Value="#F1F8E9"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Status.Granted.Bg}"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding [StatusKey]}" Value="Missing">
-                    <Setter Property="Background" Value="#FFEBEE"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Status.Missing.Bg}"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding [StatusKey]}" Value="Partial">
-                    <Setter Property="Background" Value="#FFF8E1"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Status.Partial.Bg}"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding [StatusKey]}" Value="NotConfigured">
-                    <Setter Property="Background" Value="#F5F5F5"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Status.NotConfig.Bg}"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding [StatusKey]}" Value="Error">
-                    <Setter Property="Background" Value="#FFEBEE"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Status.Missing.Bg}"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding [StatusKey]}" Value="Info">
-                    <Setter Property="Background" Value="#E3F2FD"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Status.Info.Bg}"/>
                 </DataTrigger>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#EEF4FC"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Hover.Bg}"/>
                 </Trigger>
                 <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="#D0E7FA"/>
-                    <Setter Property="Foreground" Value="#1F2937"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Selected.Bg}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Selected}"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
 
         <Style x:Key="CardBorder" TargetType="Border">
-            <Setter Property="Background"      Value="White"/>
+            <Setter Property="Background"      Value="{DynamicResource Avd.Card.Bg}"/>
             <Setter Property="CornerRadius"    Value="8"/>
             <Setter Property="Padding"         Value="20,14"/>
             <Setter Property="Margin"          Value="6,0,6,0"/>
             <Setter Property="MinWidth"        Value="120"/>
-            <Setter Property="BorderBrush"     Value="#DDE1E7"/>
+            <Setter Property="BorderBrush"     Value="{DynamicResource Avd.Border.Std}"/>
             <Setter Property="BorderThickness" Value="1"/>
         </Style>
 
@@ -1013,7 +1072,7 @@ $script:rbacHandle = $script:rbacPS.BeginInvoke()
     <DockPanel>
 
         <!-- Status Bar -->
-        <Border DockPanel.Dock="Bottom" Background="#0078D4" Height="32">
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.StatusBar.Bg}" Height="32">
             <Grid Margin="12,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -1039,16 +1098,27 @@ $script:rbacHandle = $script:rbacPS.BeginInvoke()
         </Border>
 
         <!-- Header -->
-        <Border DockPanel.Dock="Top" Background="White" Padding="20,14,20,14">
+        <Border DockPanel.Dock="Top" Background="{DynamicResource Avd.Header.Bg}" Padding="20,14,20,14">
             <Border.Effect>
                 <DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.10" Color="#000000"/>
             </Border.Effect>
-            <StackPanel>
-                <TextBlock Text="AVD Live Dashboard Permissions Checker"
-                           FontSize="20" FontWeight="Bold" Foreground="#0078D4"/>
-                <TextBlock x:Name="SubtitleText"
-                           FontSize="12" Foreground="#666" Margin="0,2,0,0"/>
-            </StackPanel>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                    <TextBlock Text="AVD Live Dashboard Permissions Checker"
+                               FontSize="20" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"/>
+                    <TextBlock x:Name="SubtitleText"
+                               FontSize="12" Foreground="{DynamicResource Avd.Fg.Muted}" Margin="0,2,0,0"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Dark" FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}"
+                               VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <ToggleButton x:Name="DarkToggle" Style="{StaticResource ToggleSwitch}"/>
+                </StackPanel>
+            </Grid>
         </Border>
 
         <!-- Main content -->
@@ -1064,18 +1134,18 @@ $script:rbacHandle = $script:rbacPS.BeginInvoke()
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel HorizontalAlignment="Center">
                         <TextBlock x:Name="CardRequired" Text="-"
-                                   FontSize="30" FontWeight="Bold" Foreground="#0078D4"
+                                   FontSize="30" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"
                                    HorizontalAlignment="Center"/>
-                        <TextBlock Text="Required" FontSize="11" Foreground="#888"
+                        <TextBlock Text="Required" FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    HorizontalAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel HorizontalAlignment="Center">
                         <TextBlock x:Name="CardGranted" Text="-"
-                                   FontSize="30" FontWeight="Bold" Foreground="#107C10"
+                                   FontSize="30" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Available}"
                                    HorizontalAlignment="Center"/>
-                        <TextBlock Text="Granted" FontSize="11" Foreground="#888"
+                        <TextBlock Text="Granted" FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    HorizontalAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
@@ -1084,7 +1154,7 @@ $script:rbacHandle = $script:rbacPS.BeginInvoke()
                         <TextBlock x:Name="CardMissing" Text="-"
                                    FontSize="30" FontWeight="Bold" Foreground="#C42B1C"
                                    HorizontalAlignment="Center"/>
-                        <TextBlock Text="Missing / Partial" FontSize="11" Foreground="#888"
+                        <TextBlock Text="Missing / Partial" FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    HorizontalAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
@@ -1112,8 +1182,22 @@ $script:rbacHandle = $script:rbacPS.BeginInvoke()
 </Window>
 '@
 
+$_mainXamlRaw = $_mainXamlRaw -replace '<!-- THEME_SLOT -->', ''
+[xml]$mainXaml = $_mainXamlRaw
 $mainReader    = New-Object System.Xml.XmlNodeReader $mainXaml
 $mainWin       = [Windows.Markup.XamlReader]::Load($mainReader)
+
+function Switch-PermsTheme {
+    param([bool]$Dark)
+    $_tf = if ($Dark) { 'dark' } else { 'light' }
+    $_tc = Get-Content -Raw -Path (Join-Path $PSScriptRoot "..\data\$_tf-theme.xaml") -ErrorAction Stop
+    $_rdXaml = "<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_tc</ResourceDictionary>"
+    $_rd = [Windows.Markup.XamlReader]::Parse($_rdXaml)
+    $mainWin.Resources.MergedDictionaries.Clear()
+    $mainWin.Resources.MergedDictionaries.Add($_rd)
+}
+
+Switch-PermsTheme $_cpDark
 
 $subtitleText  = $mainWin.FindName("SubtitleText")
 $cardRequired  = $mainWin.FindName("CardRequired")
@@ -1123,6 +1207,7 @@ $resultsGrid   = $mainWin.FindName("ResultsGrid")
 $statusText    = $mainWin.FindName("StatusText")
 $switchSubButton = $mainWin.FindName("SwitchSubButton")
 $recheckButton   = $mainWin.FindName("RecheckButton")
+$darkToggle      = $mainWin.FindName("DarkToggle")
 $closeButton     = $mainWin.FindName("CloseButton")
 
 $subtitleText.Text = "Checking as: $($script:azAccountId)  |  Subscription: $($script:subscriptionName)"
@@ -1304,16 +1389,20 @@ function Show-SwitchSubscription {
     }
 
     # ── Build subscription picker dialog ──────────────────────────────────────
-    [xml]$subXaml = @'
+    $_subXamlRaw = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Switch Subscription" Height="420" Width="520"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
         MinHeight="300" MinWidth="400" ShowInTaskbar="False"
-        FontFamily="Segoe UI" Background="#F4F6F9">
+        FontFamily="Segoe UI"
+        Background="{DynamicResource Avd.Window.Bg}"
+        Foreground="{DynamicResource Avd.Window.Fg}">
+    <Window.Resources><!-- THEME_SLOT --></Window.Resources>
     <DockPanel Margin="16">
         <TextBlock DockPanel.Dock="Top" Text="Select a subscription:"
-                   FontSize="13" FontWeight="SemiBold" Foreground="#333" Margin="0,0,0,10"/>
+                   FontSize="13" FontWeight="SemiBold"
+                   Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,10"/>
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
                     HorizontalAlignment="Right" Margin="0,12,0,0">
             <Button x:Name="SubCancelBtn" Content="Cancel" Width="80" Height="30"
@@ -1321,16 +1410,37 @@ function Show-SwitchSubscription {
             <Button x:Name="SubConfirmBtn" Content="Switch" Width="80" Height="30"
                     IsEnabled="False" IsDefault="True"/>
         </StackPanel>
-        <ListBox x:Name="SubList" Margin="0,0,0,0" FontSize="13"/>
+        <ListBox x:Name="SubList" Margin="0,0,0,0" FontSize="13"
+                 Background="{DynamicResource Avd.Input.Bg}"
+                 Foreground="{DynamicResource Avd.Window.Fg}"
+                 BorderBrush="{DynamicResource Avd.Border.Input}"/>
     </DockPanel>
 </Window>
 '@
 
+    $_subXamlRaw = $_subXamlRaw -replace '<!-- THEME_SLOT -->', ''
+    [xml]$subXaml  = $_subXamlRaw
     $subReader = New-Object System.Xml.XmlNodeReader $subXaml
     $subWin    = [Windows.Markup.XamlReader]::Load($subReader)
     $subWin.Owner = $mainWin
 
+    # Apply current theme to sub-window
+    $_tf = if ($_cpDark) { 'dark' } else { 'light' }
+    try {
+        $_tc = Get-Content -Raw -Path (Join-Path $PSScriptRoot "..\data\$_tf-theme.xaml") -ErrorAction Stop
+        $_rd = [Windows.Markup.XamlReader]::Parse("<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_tc</ResourceDictionary>")
+        $subWin.Resources.MergedDictionaries.Add($_rd)
+    } catch {}
+
     Set-WindowIcon -Window $subWin -IconPath $script:_iconPath
+    if ($_cpDark) {
+        $subWin.Add_SourceInitialized({
+            try {
+                $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($subWin)).Handle
+                $v = 1; [void][Win32.DwmApiCP]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+            } catch {}
+        })
+    }
 
     $subList       = $subWin.FindName("SubList")
     $subConfirmBtn = $subWin.FindName("SubConfirmBtn")
@@ -1415,6 +1525,29 @@ $recheckButton.Add_Click({ Start-RbacCheck })
 
 $closeButton.Add_Click({ $mainWin.Close() })
 
+$darkToggle.IsChecked = $_cpDark
+$darkToggle.Add_Checked({
+    try {
+        if (-not (Test-Path $script:CpRegPath)) { New-Item $script:CpRegPath -Force | Out-Null }
+        Set-ItemProperty -Path $script:CpRegPath -Name 'DarkTheme' -Value 1
+    } catch {}
+    Switch-PermsTheme $true
+    try {
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($mainWin)).Handle
+        $v = 1; [void][Win32.DwmApiCP]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+    } catch {}
+})
+$darkToggle.Add_Unchecked({
+    try {
+        Set-ItemProperty -Path $script:CpRegPath -Name 'DarkTheme' -Value 0
+    } catch {}
+    Switch-PermsTheme $false
+    try {
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($mainWin)).Handle
+        $v = 0; [void][Win32.DwmApiCP]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+    } catch {}
+})
+
 # =============================================================================
 # Cleanup on close + shut down the dispatcher so the script exits
 # =============================================================================
@@ -1432,6 +1565,19 @@ $mainWin.Add_Closed({
 # =============================================================================
 
 Set-WindowIcon -Window $mainWin -IconPath $script:_iconPath
+
+try {
+    Add-Type -MemberDefinition '[DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);' -Name 'DwmApiCP' -Namespace 'Win32' -ErrorAction Stop
+} catch {}
+if ($_cpDark) {
+    $mainWin.Add_SourceInitialized({
+        try {
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($mainWin)).Handle
+            $v = 1
+            [void][Win32.DwmApiCP]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        } catch {}
+    })
+}
 
 $mainWin.Show()
 $splashWin.Close()

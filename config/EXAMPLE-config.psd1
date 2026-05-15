@@ -31,10 +31,10 @@
     Dashboard = @{
 
         # Tabs to hide from the dashboard tab strip.
-        # Hidden tabs are fully collapsed - their header and content are not visible.
-        # Valid names: 'Per Host Pool', 'By Region', 'Session Hosts', 'Azure Files', 'Monitoring', 'Infrastructure', 'Azure DevOps'
+        # These are enforced at the deployment level — hidden tabs cannot be re-enabled via the Settings UI.
+        # Valid names: 'Per Host Pool', 'By Region', 'Session Hosts', 'Azure Files', 'Monitoring', 'Images', 'Infrastructure', 'Azure DevOps'
         # Example: @('Monitoring', 'Azure Files')
-        HiddenTabs = @()
+        HiddenTabs = @('Images')
 
         # Hide the Settings button from the dashboard toolbar.
         # When $true, settings can only be changed by editing config.psd1 directly.
@@ -48,12 +48,6 @@
         # Default: $false
         HideSessionHistory = $false
 
-        # Audit logging - records destructive actions (logoff, drain, power actions,
-        # run commands, profile delete/unlock, shadow/RDP, send message) to daily
-        # CSV files in the logs/ subfolder next to the dashboard script.
-        # File format: logs/audit-YYYY-MM-DD.csv
-        # Default: $true (enabled)
-        EnableAuditLog = $true
     }
 
     # =========================================================================
@@ -153,8 +147,11 @@
     ShadowRDP = @{
 
         # Shadow tool to use for right-click session connections.
-        # 'MSTSC' = mstsc.exe (Remote Desktop) - recommended
-        # 'MSRA'  = msra.exe  (Remote Assistance)
+        # 'MSTSC' = mstsc.exe (Remote Desktop)
+        #           Requires port 445 open from the dashboard machine to session hosts
+        #           (the "Remote Desktop - Shadow (TCP-In)" firewall rule on session hosts).
+        #           If port 445 is blocked in your environment, use MSRA instead.
+        # 'MSRA'  = msra.exe  (Remote Assistance) - uses port 3389 only, no port 445 needed.
         ShadowMethod = 'MSTSC'
 
         # Connection target for Shadow and RDP.
@@ -254,6 +251,13 @@
         # Example: '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/RG-LOGS/providers/Microsoft.OperationalInsights/workspaces/my-law-workspace'
         WorkspaceResourceId = ''
 
+        # Optional: route KQL queries through the direct Log Analytics API instead of
+        # the ARM management plane. Set to https://api.loganalytics.azure.com to enable
+        # AMPLS private endpoint support (api.loganalytics.azure.com CNAMEs to
+        # api.monitor.azure.com, which privatelink.monitor.azure.com resolves privately).
+        # Leave as '' (default) to use the ARM path - no change to existing behaviour.
+        QueryBaseUrl = 'https://api.loganalytics.azure.com'
+
         # Processes to exclude from Input Delay calculations.
         # Background/system processes that report input delay but do not represent
         # real user interaction. These are filtered out of both the grid Median/P95
@@ -292,6 +296,60 @@
         # Leave as @() to include all VMs in the configured resource groups.
         # Example: @('-TEMP', '-OLD')
         ExcludePatterns = @()
+    }
+
+    # =========================================================================
+    # Images - used by scripts\tab-images.ps1 and scripts\Create-Image.ps1
+    # =========================================================================
+
+    Images = @{
+
+        # Resource groups containing image VMs to display in the Images tab.
+        # Leave as @() to show an empty tab.
+        # Example: @('rg-weu-avdimages-prod')
+        ResourceGroups = @()
+
+        # VM name substrings to include in the Images tab (case-insensitive).
+        # Only VMs whose names contain at least one of these strings will appear.
+        # Leave as @() to include all VMs in the configured resource groups.
+        # Example: @('AVDGI', 'GOLD')
+        IncludePatterns = @()
+
+        # How often the Images tab auto-refreshes (seconds). Default: 60
+        RefreshIntervalSeconds = 60
+
+        # Resource groups to search for Shared Image Galleries in the Create Image dialog.
+        # Leave as @() to search the entire subscription (slower but finds all galleries).
+        # Wildcards are NOT supported here — use exact RG names.
+        # Example: @('rg-weu-avdimages-prod', 'rg-uks-avdimages-prod')
+        GalleryRGs = @()
+
+        # VM sizes offered in the Preparation VM Size dropdown in the Create Image dialog.
+        # The first entry is pre-selected by default unless PrepVMSizeDefault is set.
+        # Example: @('Standard_D2s_v5', 'Standard_D4s_v5', 'Standard_D8s_v5')
+        PrepVMSizes = @('Standard_D2s_v5', 'Standard_D4s_v5', 'Standard_D8s_v5', 'Standard_D2s_v4', 'Standard_D4s_v4')
+
+        # Size pre-selected in the Create Image dialog. Must be one of the entries in PrepVMSizes.
+        # Default: 'Standard_D4s_v5'
+        PrepVMSizeDefault = 'Standard_D4s_v5'
+
+        # Number of image versions to retain per image definition when using Clean Image Versions.
+        # The newest N versions are kept; all older versions are deleted.
+        # Default: 5
+        ImageVersionsToKeep = 5
+
+        # Full path to the BIS-F (Base Image Script Framework) installation on the preparation VM.
+        # Used by the Create Image process to run BIS-F sealing before generalising the VM.
+        # Default: 'C:\_source\Bis-F'
+        BisFPath = 'C:\_source\Bis-F'
+
+        # Gallery image replication regions. Region1 is required; Region2 is optional (leave blank to skip).
+        # ReplicationRegionReplicas = number of replicas to create in that region.
+        ReplicationRegion1         = 'westeurope'
+        ReplicationRegion1Replicas = 1
+        ReplicationRegion2         = ''
+        ReplicationRegion2Replicas = 1
+
     }
 
     # =========================================================================

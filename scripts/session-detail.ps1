@@ -51,8 +51,6 @@
 #
 # CONFIGURATION (near top of this file)
 # --------------------------------------
-#   $script:SessionDetailLogging  - set $true to log LAW query timing to the
-#                                   main -EnableLogging log file
 #   $script:Show*                 - column visibility toggles (set $false to hide)
 #   $script:LawRttAmberMs/RedMs  - RTT heat map thresholds (green/amber/red)
 #
@@ -101,11 +99,7 @@
 # This prevents $script:sd* variable collisions when switching between detail views.
 $script:sdOpenWindow = $null
 
-# =============================================================================
-# Session Detail - LAW query logging (uses the main -EnableLogging log file)
-# Set to $true to log LAW query timing and result details.
-# =============================================================================
-$script:SessionDetailLogging = $false
+# (Session detail LAW logging uses the main -EnableLogging log file when enabled)
 
 # =============================================================================
 # Session Detail - Column visibility toggles
@@ -278,12 +272,16 @@ $sessionXaml = @'
     Height="520" Width="1140"
     MinHeight="340" MinWidth="800"
     WindowStartupLocation="CenterScreen"
-    Background="#F4F6F9"
+    Background="{DynamicResource Avd.Window.Bg}"
+    Foreground="{DynamicResource Avd.Window.Fg}"
     FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
     <DockPanel>
 
         <!-- Status bar -->
-        <Border DockPanel.Dock="Bottom" Background="#0078D4" Height="32">
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.StatusBar.Bg}" Height="32">
             <Grid Margin="12,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -405,10 +403,10 @@ $sessionXaml = @'
 
         <!-- Header -->
         <StackPanel DockPanel.Dock="Top" Margin="20,14,20,10">
-            <TextBlock x:Name="SessionTitle" FontSize="18" FontWeight="Bold" Foreground="#0078D4"/>
-            <TextBlock x:Name="SessionSubtitle" FontSize="12" Foreground="#666" Margin="0,3,0,0"/>
+            <TextBlock x:Name="SessionTitle" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"/>
+            <TextBlock x:Name="SessionSubtitle" FontSize="12" Foreground="{DynamicResource Avd.Fg.Muted}" Margin="0,3,0,0"/>
             <TextBlock Text="Tip: Hold Ctrl or Shift to select multiple sessions, then click Log Off Selected."
-                       FontSize="11" Foreground="#999" Margin="0,4,0,0"/>
+                       FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,0"/>
         </StackPanel>
 
         <!-- Filter bar -->
@@ -423,11 +421,12 @@ $sessionXaml = @'
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="Filter user:" VerticalAlignment="Center"
-                           FontSize="12" Foreground="#555" Margin="0,0,8,0"/>
+                           FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,0,8,0"/>
                 <TextBox x:Name="SessionFilterBox" Grid.Column="1"
                          FontSize="12" Padding="8,4" VerticalContentAlignment="Center"
-                         BorderBrush="#C8CDD3" BorderThickness="1" Background="White"
-                         Foreground="#333"/>
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}"
+                         Foreground="{DynamicResource Avd.Fg.Label}"/>
                 <Button x:Name="SessionClearFiltersButton" Grid.Column="2"
                         Content="Clear Filters" Background="#888" Foreground="White"
                         BorderThickness="0" Padding="10,4" FontSize="11" Cursor="Hand"
@@ -495,13 +494,15 @@ $sessionXaml = @'
 
         <!-- Session grid - extended selection mode -->
         <DataGrid x:Name="SessionGrid" Margin="20,0,20,12"
-                  Background="White" BorderBrush="#DDE1E7" BorderThickness="1"
-                  RowBackground="White" AlternatingRowBackground="#F7F9FC"
-                  GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#E8EAED"
+                  Background="{DynamicResource Avd.Grid.Bg}" BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
+                  RowBackground="{DynamicResource Avd.Grid.Bg}" AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}"
+                  GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="{DynamicResource Avd.Border.Grid}"
                   ColumnHeaderHeight="36" RowHeight="32" FontSize="13"
                   IsReadOnly="True" AutoGenerateColumns="True"
                   SelectionMode="Extended" SelectionUnit="FullRow"
-                  CanUserResizeRows="False" CanUserAddRows="False">
+                  CanUserResizeRows="False" CanUserAddRows="False"
+                  RowHeaderWidth="0"
+                  HorizontalScrollBarVisibility="Auto">
             <!-- Ctrl+MouseWheel zoom: LayoutTransform with ScaleTransform scales the
                  entire grid (headers, rows, text) uniformly. Wired to PreviewMouseWheel
                  in both Show-GlobalSessionDetail and Show-SessionDetail code-behind.
@@ -511,13 +512,13 @@ $sessionXaml = @'
             </DataGrid.LayoutTransform>
             <DataGrid.Resources>
                 <Style TargetType="DataGridColumnHeader">
-                    <Setter Property="Background"                 Value="#0078D4"/>
+                    <Setter Property="Background"                 Value="{DynamicResource Avd.ColHeader.Bg}"/>
                     <Setter Property="Foreground"                 Value="White"/>
                     <Setter Property="FontWeight"                 Value="SemiBold"/>
                     <Setter Property="FontSize"                   Value="12"/>
                     <Setter Property="Padding"                    Value="12,0"/>
                     <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                    <Setter Property="BorderBrush"                Value="#005A9E"/>
+                    <Setter Property="BorderBrush"                Value="{DynamicResource Avd.ColHeader.Border}"/>
                     <Setter Property="BorderThickness"            Value="0,0,1,0"/>
                 </Style>
                 <Style TargetType="DataGridCell">
@@ -535,13 +536,14 @@ $sessionXaml = @'
                     </Setter>
                 </Style>
                 <Style TargetType="DataGridRow">
+                    <Setter Property="Foreground" Value="{DynamicResource Avd.Window.Fg}"/>
                     <Style.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter Property="Background" Value="#EEF4FC"/>
+                            <Setter Property="Background" Value="{DynamicResource Avd.Hover.Bg}"/>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter Property="Background" Value="#D0E7FA"/>
-                            <Setter Property="Foreground" Value="#003A70"/>
+                            <Setter Property="Background" Value="{DynamicResource Avd.Selected.Bg}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Selected}"/>
                         </Trigger>
                     </Style.Triggers>
                 </Style>
@@ -646,7 +648,7 @@ $script:gsLogoffScript = {
 }
 
 $script:gsFetchScript = {
-    param($tok, $subId, $restDef, $hpList, $stateFilter, $maxPool, $lawId, $rttAmber, $rttRed, $connLookback, $connTimespan, $LogFile)
+    param($tok, $subId, $restDef, $hpList, $stateFilter, $maxPool, $lawId, $rttAmber, $rttRed, $connLookback, $connTimespan, $LogFile, $lawQueryBaseUrl, $lawTok)
     if (-not $maxPool) { $maxPool = 10 }
     # Define Invoke-Arm in this runspace from the injected string definition
     . ([scriptblock]::Create($restDef))
@@ -706,7 +708,7 @@ $script:gsFetchScript = {
         [PSCustomObject]@{
             "Host Pool"         = $_.HpName
             "User"              = $_.UserName
-            "ID"        = $_.SessionId
+            "ID"                = $_.SessionId
             "Session Host"      = $_.ShortHost
             "Session Host FQDN" = $_.FullHost
             "State"             = $_.State
@@ -718,22 +720,22 @@ $script:gsFetchScript = {
             "P95 RTT"           = "-"
             "Avg BW"            = "-"
             "P95 BW"            = "-"
-            "Transport"            = "-"   # From WVDCheckpoints ShortpathEstablished (e.g. Multipath_Direct_UDP)
+            "Transport"         = "-"
             "Gateway Region"    = "-"
             "Client Type"       = "-"
             "Client OS"         = "-"
             "Client Version"    = "-"
-            "RDP Shortpath"        = "-"
-            "Transport Type"       = "-"
-            "UDP Type"             = "-"
-            "Client IP"            = "-"
+            "RDP Shortpath"     = "-"
+            "Transport Type"    = "-"
+            "UDP Type"          = "-"
+            "Client IP"         = "-"
             "Client Private Link"  = "-"
             "Host Private Link"    = "-"
-            "_AvgRTTSort"       = [double]-1    # Hidden: numeric sort value for Avg RTT
-            "_P95RTTSort"       = [double]-1    # Hidden: numeric sort value for P95 RTT
-            "_AvgRTTColor"      = ""            # Hidden: heat map band (Green/Amber/Red)
-            "_P95RTTColor"      = ""            # Hidden: heat map band (Green/Amber/Red)
-            "_LawEnriched"     = $false         # Hidden: true if LAW data matched this row
+            "_AvgRTTSort"       = [double]-1
+            "_P95RTTSort"       = [double]-1
+            "_AvgRTTColor"      = ""
+            "_P95RTTColor"      = ""
+            "_LawEnriched"      = $false
         }
     })
 
@@ -828,7 +830,13 @@ clientInfo
 "@
             $lawBody = @{ query = $lawKql; timespan = $connTimespan }
             $lawSw = $null; if ($LogFile) { $lawSw = [System.Diagnostics.Stopwatch]::StartNew() }
-            $lawResp = Invoke-Arm -Method POST -Path "$lawId/api/query" -Token $tok -ApiVersion '2020-08-01' -Body $lawBody -FullResponse
+            $lawResp = if ($lawQueryBaseUrl -and $lawTok) {
+                Invoke-RestMethod -Method POST -Uri "$lawQueryBaseUrl/v1$lawId/query" `
+                    -Body (ConvertTo-Json $lawBody -Compress) `
+                    -Headers @{ Authorization = "Bearer $lawTok"; 'Content-Type' = 'application/json' }
+            } else {
+                Invoke-Arm -Method POST -Path "$lawId/api/query" -Token $tok -ApiVersion '2020-08-01' -Body $lawBody -FullResponse
+            }
             if ($LogFile -and $lawSw) {
                 $lawSw.Stop()
                 $rowCount = if ($lawResp.tables -and $lawResp.tables[0].rows) { $lawResp.tables[0].rows.Count } else { 0 }
@@ -1080,8 +1088,12 @@ function script:Show-MessageComposeDialog {
     Height="280" Width="480"
     WindowStartupLocation="CenterOwner"
     ResizeMode="NoResize"
-    Background="#F4F6F9"
+    Background="{DynamicResource Avd.Window.Bg}"
+    Foreground="{DynamicResource Avd.Window.Fg}"
     FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
     <DockPanel Margin="20">
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
                     HorizontalAlignment="Right" Margin="0,14,0,0">
@@ -1103,7 +1115,7 @@ function script:Show-MessageComposeDialog {
                 </Button.Template>
             </Button>
             <Button x:Name="CancelButton" Content="Cancel" Width="90" Height="32"
-                    Background="#E1E4E8" Foreground="#333" BorderThickness="0"
+                    Background="{DynamicResource Avd.Btn.Cancel.Bg}" Foreground="{DynamicResource Avd.Fg.Label}" BorderThickness="0"
                     FontSize="13" Cursor="Hand">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
@@ -1113,7 +1125,7 @@ function script:Show-MessageComposeDialog {
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="BdrC" Property="Background" Value="#CDD0D4"/>
+                                <Setter TargetName="BdrC" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Hover}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1121,23 +1133,34 @@ function script:Show-MessageComposeDialog {
             </Button>
         </StackPanel>
         <StackPanel>
-            <TextBlock x:Name="RecipientLabel" FontSize="12" Foreground="#555" Margin="0,0,0,12"/>
-            <TextBlock Text="Title" FontSize="12" Foreground="#555" Margin="0,0,0,4"/>
+            <TextBlock x:Name="RecipientLabel" FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,0,0,12"/>
+            <TextBlock Text="Title" FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,0,0,4"/>
             <TextBox x:Name="TitleBox" FontSize="13" Padding="8,6"
-                     BorderBrush="#C8CDD3" BorderThickness="1" Background="White"
-                     Foreground="#333" Margin="0,0,0,12"/>
-            <TextBlock Text="Message" FontSize="12" Foreground="#555" Margin="0,0,0,4"/>
+                     BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                     Background="{DynamicResource Avd.Input.Bg}"
+                     Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,12"/>
+            <TextBlock Text="Message" FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,0,0,4"/>
             <TextBox x:Name="BodyBox" FontSize="13" Padding="8,6"
-                     BorderBrush="#C8CDD3" BorderThickness="1" Background="White"
-                     Foreground="#333" Height="80" TextWrapping="Wrap"
+                     BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                     Background="{DynamicResource Avd.Input.Bg}"
+                     Foreground="{DynamicResource Avd.Fg.Label}" Height="80" TextWrapping="Wrap"
                      AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
         </StackPanel>
     </DockPanel>
 </Window>
 '@
 
+    $msgXaml = $msgXaml -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\..\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
     $reader     = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($msgXaml))
     $msgWin     = [Windows.Markup.XamlReader]::Load($reader)
+    try { Set-WindowIcon -Window $msgWin -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+    if ($script:DarkTheme) {
+        $msgWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($msgWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
     $sendBtn    = $msgWin.FindName("SendButton")
     $cancelBtn  = $msgWin.FindName("CancelButton")
     $titleBox   = $msgWin.FindName("TitleBox")
@@ -1181,9 +1204,6 @@ function script:Invoke-SendMessageToUser {
     $msg = Show-MessageComposeDialog -Recipient $User -Owner $Owner
     if ($null -eq $msg) { return }
 
-    # Audit log - record the message send
-    Write-AuditLog -Action 'SendMessage' -Target $SessionHostName -Details "$User - $($msg.Title)"
-
     try {
         $_subId = if ($script:currentSubscriptionId) { $script:currentSubscriptionId } else { $subscriptionId }
         Send-ArmUserSessionMessage `
@@ -1196,6 +1216,7 @@ function script:Invoke-SendMessageToUser {
             -MessageBody    $msg.Body `
             -Token          (Get-ArmToken)
 
+        Write-AuditLog -Action 'SendMessage' -Target $SessionHostName -Details "$User - $($msg.Title)"
         [System.Windows.MessageBox]::Show(
             "Message sent to $User successfully.",
             "Send Message", "OK", "Information") | Out-Null
@@ -1261,6 +1282,7 @@ function script:Invoke-ShadowFromRow {
             $shadowArgs = "/v:$target /shadow:$SessionId"
             if ($script:ShadowNoConsent) { $shadowArgs += " /noConsentPrompt" }
             if ($AllowControl) { $shadowArgs += " /control" }
+            Write-AuditLog -Action 'ShadowCmd' -Target $target -Details "mstsc.exe $shadowArgs"
             Start-Process -FilePath "$env:SystemRoot\System32\mstsc.exe" -ArgumentList $shadowArgs
         }
     }
@@ -1287,6 +1309,7 @@ function script:Invoke-RDPToSessionHost {
         }
 
         $target = $SessionHost   # fallback to FQDN if IP resolution fails or disabled
+        $vmName = $SessionHost.Split(".")[0].ToLower()
 
         if (-not [string]::IsNullOrWhiteSpace($IPAddress)) {
             # Caller already resolved the IP (e.g. Session Hosts tab Query Details cache)
@@ -1294,7 +1317,6 @@ function script:Invoke-RDPToSessionHost {
         } elseif ($script:ShadowUseIP) {
             # Resolve private IP only if ShadowUseIP is enabled (shared setting for both
             # shadow and RDP connections - controlled via Settings UI -> Connection Mode).
-            $vmName = $SessionHost.Split(".")[0].ToLower()
             $vmRG   = $script:vmRgMap[$vmName]
             if (-not [string]::IsNullOrWhiteSpace($vmRG)) {
                 try {
@@ -1317,9 +1339,6 @@ function script:Invoke-RDPToSessionHost {
             }
         }
 
-        # Audit log - record the RDP connection
-        Write-AuditLog -Action 'RDP' -Target $vmName -Details $target
-
         Start-Process -FilePath "$env:SystemRoot\System32\mstsc.exe" -ArgumentList "/v:$target"
     }
     catch {
@@ -1327,6 +1346,9 @@ function script:Invoke-RDPToSessionHost {
             "Failed to launch RDP: $_",
             "RDP Error", "OK", "Error") | Out-Null
     }
+
+    # Audit log outside the try/catch so it never blocks or masks the RDP launch
+    try { Write-AuditLog -Action 'RDP' -Target $vmName -Details $target } catch {}
 }
 
 
@@ -1404,7 +1426,7 @@ function Start-DetailJob {
 # =============================================================================
 
 $script:sdFetchScript = {
-    param($tok, $subId, $restDef, $rg, $hp, $lawId, $rttAmber, $rttRed, $connLookback, $connTimespan, $LogFile)
+    param($tok, $subId, $restDef, $rg, $hp, $lawId, $rttAmber, $rttRed, $connLookback, $connTimespan, $LogFile, $lawQueryBaseUrl, $lawTok)
     # Define Invoke-Arm in this runspace from the injected string definition
     . ([scriptblock]::Create($restDef))
     $sessions = @(Invoke-Arm -Path "/subscriptions/$subId/resourceGroups/$rg/providers/Microsoft.DesktopVirtualization/hostPools/$hp/userSessions" -Token $tok -ApiVersion '2024-04-03')
@@ -1425,7 +1447,7 @@ $script:sdFetchScript = {
         $logonTime = if ($ct) { ([DateTime]$ct).ToLocalTime().ToString("MM/dd/yyyy h:mm tt") } else { "" }
         [PSCustomObject]@{
             "User"              = $upn
-            "ID"        = $parts[-1]
+            "ID"                = $parts[-1]
             "Session Host"      = ($parts[-2] -split '\.')[0]
             "Session Host FQDN" = $parts[-2]
             "State"             = [string]$s.properties.sessionState
@@ -1437,22 +1459,22 @@ $script:sdFetchScript = {
             "P95 RTT"           = "-"
             "Avg BW"            = "-"
             "P95 BW"            = "-"
-            "Transport"            = "-"   # From WVDCheckpoints ShortpathEstablished (e.g. Multipath_Direct_UDP)
+            "Transport"         = "-"
             "Gateway Region"    = "-"
             "Client Type"       = "-"
             "Client OS"         = "-"
             "Client Version"    = "-"
-            "RDP Shortpath"        = "-"
-            "Transport Type"       = "-"
-            "UDP Type"             = "-"
-            "Client IP"            = "-"
+            "RDP Shortpath"     = "-"
+            "Transport Type"    = "-"
+            "UDP Type"          = "-"
+            "Client IP"         = "-"
             "Client Private Link"  = "-"
             "Host Private Link"    = "-"
-            "_AvgRTTSort"       = [double]-1    # Hidden: numeric sort value for Avg RTT
-            "_P95RTTSort"       = [double]-1    # Hidden: numeric sort value for P95 RTT
-            "_AvgRTTColor"      = ""            # Hidden: heat map band (Green/Amber/Red)
-            "_P95RTTColor"      = ""            # Hidden: heat map band (Green/Amber/Red)
-            "_LawEnriched"     = $false         # Hidden: true if LAW data matched this row
+            "_AvgRTTSort"       = [double]-1
+            "_P95RTTSort"       = [double]-1
+            "_AvgRTTColor"      = ""
+            "_P95RTTColor"      = ""
+            "_LawEnriched"      = $false
         }
     })
 
@@ -1549,7 +1571,13 @@ clientInfo
 "@
             $lawBody = @{ query = $lawKql; timespan = $connTimespan }
             $lawSw = $null; if ($LogFile) { $lawSw = [System.Diagnostics.Stopwatch]::StartNew() }
-            $lawResp = Invoke-Arm -Method POST -Path "$lawId/api/query" -Token $tok -ApiVersion '2020-08-01' -Body $lawBody -FullResponse
+            $lawResp = if ($lawQueryBaseUrl -and $lawTok) {
+                Invoke-RestMethod -Method POST -Uri "$lawQueryBaseUrl/v1$lawId/query" `
+                    -Body (ConvertTo-Json $lawBody -Compress) `
+                    -Headers @{ Authorization = "Bearer $lawTok"; 'Content-Type' = 'application/json' }
+            } else {
+                Invoke-Arm -Method POST -Path "$lawId/api/query" -Token $tok -ApiVersion '2020-08-01' -Body $lawBody -FullResponse
+            }
             if ($LogFile -and $lawSw) {
                 $lawSw.Stop()
                 $rowCount = if ($lawResp.tables -and $lawResp.tables[0].rows) { $lawResp.tables[0].rows.Count } else { 0 }
@@ -1766,7 +1794,7 @@ function script:Update-GlobalSessionView {
 
     $_subId = if ($script:currentSubscriptionId) { $script:currentSubscriptionId } else { $subscriptionId }
     Start-DetailJob -JobScript $script:gsFetchScript `
-                    -JobArgs @((Get-ArmToken), $_subId, $script:restHelperDef, $script:sdHpList, $script:sdStateFilter, $RunspaceMaxSessionPool, $script:LawWorkspaceResourceId, $script:LawRttAmberMs, $script:LawRttRedMs, $script:LawConnectionLookbackWindow, $script:LawConnectionLookbackTimespan, $(if ($script:SessionDetailLogging) { $script:LogFile } else { $null })) `
+                    -JobArgs @((Get-ArmToken), $_subId, $script:restHelperDef, $script:sdHpList, $script:sdStateFilter, $RunspaceMaxSessionPool, $script:LawWorkspaceResourceId, $script:LawRttAmberMs, $script:LawRttRedMs, $script:LawConnectionLookbackWindow, $script:LawConnectionLookbackTimespan, $script:LogFile, $script:LawQueryBaseUrl, ($(if ($script:LawQueryBaseUrl) { Get-LawToken } else { '' }))) `
                     -OnComplete {
         param($rows)
         # Save sort state before rebinding so user-chosen sort survives refresh
@@ -1862,11 +1890,10 @@ function script:Update-GlobalSessionView {
                         $colorCol = switch ($colName) { 'Avg RTT' { '_AvgRTTColor' } 'P95 RTT' { '_P95RTTColor' } }
                         $cellStyle = New-Object System.Windows.Style
                         $cellStyle.TargetType = [System.Windows.Controls.DataGridCell]
-                        $brushConv = New-Object System.Windows.Media.BrushConverter
                         foreach ($band in @(
-                            @{ Value = 'Green'; Hex = '#81C784' }
-                            @{ Value = 'Amber'; Hex = '#FFB74D' }
-                            @{ Value = 'Red';   Hex = '#E57373' }
+                            @{ Value = 'Green'; Brush = $window.Resources['Avd.Metric.Green'] }
+                            @{ Value = 'Amber'; Brush = $window.Resources['Avd.Metric.Amber'] }
+                            @{ Value = 'Red';   Brush = $window.Resources['Avd.Metric.Red']   }
                         )) {
                             $trigger = New-Object System.Windows.DataTrigger
                             $binding = New-Object System.Windows.Data.Binding
@@ -1875,7 +1902,7 @@ function script:Update-GlobalSessionView {
                             $trigger.Value = $band.Value
                             $setter = New-Object System.Windows.Setter
                             $setter.Property = [System.Windows.Controls.Control]::BackgroundProperty
-                            $setter.Value = $brushConv.ConvertFromString($band.Hex)
+                            $setter.Value = $band.Brush
                             [void]$trigger.Setters.Add($setter)
                             [void]$cellStyle.Triggers.Add($trigger)
                         }
@@ -1965,10 +1992,19 @@ function Show-GlobalSessionDetail {
         $script:sdOpenWindow = $null
     }
 
-    $reader    = New-Object System.Xml.XmlNodeReader ([xml]$sessionXaml)
+    $_sessionXamlRaw = $sessionXaml -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\..\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    [xml]$_sessionXmlDoc = $_sessionXamlRaw
+    $reader    = New-Object System.Xml.XmlNodeReader $_sessionXmlDoc
     $detailWin = [System.Windows.Markup.XamlReader]::Load($reader)
     $script:sdOpenWindow = $detailWin
-    Set-WindowIcon -Window $detailWin -IconPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'data\avd-dashboard.ico')
+    try { Set-WindowIcon -Window $detailWin -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+    if ($script:DarkTheme) {
+        $detailWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($detailWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
 
     $script:sdTitle     = $detailWin.FindName("SessionTitle")
     $script:sdSubtitle  = $detailWin.FindName("SessionSubtitle")
@@ -2207,7 +2243,7 @@ function Show-GlobalSessionDetail {
             # Audit log - record each session being logged off
             foreach ($sid in $sessionIds) {
                 $logoffUser = ($selected | Where-Object { $_["Session Host FQDN"] -eq $sid.SessionHost -and $_["ID"] -eq $sid.SessionId } | ForEach-Object { $_["User"] }) -join ''
-                Write-AuditLog -Action 'Logoff' -Target $sid.SessionHost -Details "$logoffUser (session $($sid.SessionId))"
+                Write-AuditLog -Action 'Logoff' -Target $sid.SessionHost.Split('.')[0].ToLower() -Details "$logoffUser (session $($sid.SessionId))"
             }
 
             # Get a fresh ARM token from the main thread and pass it directly into
@@ -2338,7 +2374,7 @@ function script:Update-SessionView {
 
     $_subId = if ($script:currentSubscriptionId) { $script:currentSubscriptionId } else { $subscriptionId }
     Start-DetailJob -JobScript $script:sdFetchScript `
-                    -JobArgs @((Get-ArmToken), $_subId, $script:restHelperDef, $script:sdRG, $script:sdHP, $script:LawWorkspaceResourceId, $script:LawRttAmberMs, $script:LawRttRedMs, $script:LawConnectionLookbackWindow, $script:LawConnectionLookbackTimespan, $(if ($script:SessionDetailLogging) { $script:LogFile } else { $null })) `
+                    -JobArgs @((Get-ArmToken), $_subId, $script:restHelperDef, $script:sdRG, $script:sdHP, $script:LawWorkspaceResourceId, $script:LawRttAmberMs, $script:LawRttRedMs, $script:LawConnectionLookbackWindow, $script:LawConnectionLookbackTimespan, $script:LogFile, $script:LawQueryBaseUrl, ($(if ($script:LawQueryBaseUrl) { Get-LawToken } else { '' }))) `
                     -OnComplete {
         param($rows)
         # Save sort state before rebinding so user-chosen sort survives refresh
@@ -2433,11 +2469,10 @@ function script:Update-SessionView {
                         $colorCol = switch ($colName) { 'Avg RTT' { '_AvgRTTColor' } 'P95 RTT' { '_P95RTTColor' } }
                         $cellStyle = New-Object System.Windows.Style
                         $cellStyle.TargetType = [System.Windows.Controls.DataGridCell]
-                        $brushConv = New-Object System.Windows.Media.BrushConverter
                         foreach ($band in @(
-                            @{ Value = 'Green'; Hex = '#81C784' }
-                            @{ Value = 'Amber'; Hex = '#FFB74D' }
-                            @{ Value = 'Red';   Hex = '#E57373' }
+                            @{ Value = 'Green'; Brush = $window.Resources['Avd.Metric.Green'] }
+                            @{ Value = 'Amber'; Brush = $window.Resources['Avd.Metric.Amber'] }
+                            @{ Value = 'Red';   Brush = $window.Resources['Avd.Metric.Red']   }
                         )) {
                             $trigger = New-Object System.Windows.DataTrigger
                             $binding = New-Object System.Windows.Data.Binding
@@ -2446,7 +2481,7 @@ function script:Update-SessionView {
                             $trigger.Value = $band.Value
                             $setter = New-Object System.Windows.Setter
                             $setter.Property = [System.Windows.Controls.Control]::BackgroundProperty
-                            $setter.Value = $brushConv.ConvertFromString($band.Hex)
+                            $setter.Value = $band.Brush
                             [void]$trigger.Setters.Add($setter)
                             [void]$cellStyle.Triggers.Add($trigger)
                         }
@@ -2524,10 +2559,19 @@ function Show-SessionDetail {
         $script:sdOpenWindow = $null
     }
 
-    $reader    = New-Object System.Xml.XmlNodeReader ([xml]$sessionXaml)
+    $_sessionXamlRaw = $sessionXaml -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\..\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    [xml]$_sessionXmlDoc = $_sessionXamlRaw
+    $reader    = New-Object System.Xml.XmlNodeReader $_sessionXmlDoc
     $detailWin = [System.Windows.Markup.XamlReader]::Load($reader)
     $script:sdOpenWindow = $detailWin
-    Set-WindowIcon -Window $detailWin -IconPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'data\avd-dashboard.ico')
+    try { Set-WindowIcon -Window $detailWin -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+    if ($script:DarkTheme) {
+        $detailWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($detailWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
 
     $script:sdTitle     = $detailWin.FindName("SessionTitle")
     $script:sdSubtitle  = $detailWin.FindName("SessionSubtitle")
@@ -2760,7 +2804,7 @@ function Show-SessionDetail {
             # Audit log - record each session being logged off
             foreach ($sid in $sessionIds) {
                 $logoffUser = ($selected | Where-Object { $_["Session Host FQDN"] -eq $sid.SessionHost -and $_["ID"] -eq $sid.SessionId } | ForEach-Object { $_["User"] }) -join ''
-                Write-AuditLog -Action 'Logoff' -Target $sid.SessionHost -Details "$logoffUser (session $($sid.SessionId))"
+                Write-AuditLog -Action 'Logoff' -Target $sid.SessionHost.Split('.')[0].ToLower() -Details "$logoffUser (session $($sid.SessionId))"
             }
 
             try {

@@ -55,6 +55,15 @@ public static extern int SetCurrentProcessExplicitAppUserModelID([MarshalAs(Unma
 } catch { <# non-critical - continue without custom taskbar grouping #> }
 
 # =============================================================================
+# Theme setup (standalone - reads registry directly)
+# =============================================================================
+$script:EditRegPath = 'HKCU:\Software\AVDDashboard'
+$_editDark = $false
+try {
+    $_kv = Get-ItemProperty -Path $script:EditRegPath -Name 'DarkTheme' -ErrorAction Stop
+    $_editDark = [bool][int]$_kv.DarkTheme
+} catch {}
+# =============================================================================
 # Config file resolution
 # =============================================================================
 
@@ -92,6 +101,10 @@ function Import-ConfigFile {
 $script:cfg = Import-ConfigFile $script:currentConfigFile
 # Do NOT exit on parse error - the window opens and shows an error panel instead.
 $script:isNewConfig = $false
+# Back-fill any keys added in newer versions so the UI always has valid values.
+# Merge-ConfigDefaults is defined later in this file; it is called after the window
+# loads in Initialize-Controls, at which point all functions are defined.
+
 
 # =============================================================================
 # PSD1 serialisation helpers
@@ -154,7 +167,7 @@ function ConvertTo-KvText {
 # WPF window XAML
 # =============================================================================
 
-[xml]$xaml = @'
+$_rawXaml = @'
 <Window
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -162,26 +175,51 @@ function ConvertTo-KvText {
     Height="780" Width="1000"
     MinHeight="600" MinWidth="800"
     WindowStartupLocation="CenterScreen"
-    Background="#F4F6F9"
+    Background="{DynamicResource Avd.Window.Bg}"
+    Foreground="{DynamicResource Avd.Window.Fg}"
     FontFamily="Segoe UI"
     UseLayoutRounding="True"
     TextOptions.TextFormattingMode="Display"
     TextOptions.TextRenderingMode="ClearType">
 
   <Window.Resources>
+    <!-- THEME_SLOT -->
+
+    <!-- Dark mode toggle switch -->
+    <Style x:Key="ToggleSwitch" TargetType="ToggleButton">
+      <Setter Property="Width"  Value="40"/>
+      <Setter Property="Height" Value="22"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Border x:Name="Track" CornerRadius="11" Background="#AAAAAA">
+              <Ellipse x:Name="Thumb" Width="16" Height="16" Fill="White"
+                       HorizontalAlignment="Left" Margin="3,0"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Track" Property="Background" Value="#0078D4"/>
+                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
 
     <!-- Label above each field -->
     <Style x:Key="FieldLabel" TargetType="TextBlock">
       <Setter Property="FontSize"     Value="12"/>
       <Setter Property="FontWeight"   Value="SemiBold"/>
-      <Setter Property="Foreground"   Value="#333"/>
+      <Setter Property="Foreground"   Value="{DynamicResource Avd.Fg.Label}"/>
       <Setter Property="Margin"       Value="0,12,0,4"/>
     </Style>
 
     <!-- Helper text below a field -->
     <Style x:Key="HintText" TargetType="TextBlock">
       <Setter Property="FontSize"   Value="11"/>
-      <Setter Property="Foreground" Value="#888"/>
+      <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Hint}"/>
       <Setter Property="Margin"     Value="0,2,0,0"/>
     </Style>
 
@@ -189,22 +227,23 @@ function ConvertTo-KvText {
     <Style TargetType="TextBox">
       <Setter Property="Padding"          Value="6,5"/>
       <Setter Property="FontSize"         Value="13"/>
-      <Setter Property="BorderBrush"      Value="#CCC"/>
+      <Setter Property="BorderBrush"      Value="{DynamicResource Avd.Border.Input}"/>
       <Setter Property="BorderThickness"  Value="1"/>
-      <Setter Property="Background"       Value="White"/>
+      <Setter Property="Background"       Value="{DynamicResource Avd.Input.Bg}"/>
+      <Setter Property="Foreground"       Value="{DynamicResource Avd.Window.Fg}"/>
     </Style>
 
     <!-- Section divider label inside a tab -->
     <Style x:Key="SectionHeader" TargetType="TextBlock">
       <Setter Property="FontSize"     Value="13"/>
       <Setter Property="FontWeight"   Value="Bold"/>
-      <Setter Property="Foreground"   Value="#0078D4"/>
+      <Setter Property="Foreground"   Value="{DynamicResource Avd.Fg.Accent}"/>
       <Setter Property="Margin"       Value="0,20,0,6"/>
     </Style>
 
     <!-- Thin rule below section headers -->
     <Style x:Key="Rule" TargetType="Border">
-      <Setter Property="BorderBrush"     Value="#DDE1E7"/>
+      <Setter Property="BorderBrush"     Value="{DynamicResource Avd.Border.Std}"/>
       <Setter Property="BorderThickness" Value="0,0,0,1"/>
       <Setter Property="Margin"          Value="0,0,0,10"/>
     </Style>
@@ -239,7 +278,7 @@ function ConvertTo-KvText {
 
     <!-- Header action button (dark blue, rounded) -->
     <Style x:Key="ActionBtn" TargetType="Button">
-      <Setter Property="Background"      Value="#005A9E"/>
+      <Setter Property="Background"      Value="{DynamicResource Avd.Btn.Save.Hover}"/>
       <Setter Property="Foreground"      Value="White"/>
       <Setter Property="BorderThickness" Value="0"/>
       <Setter Property="Padding"         Value="14,6"/>
@@ -255,7 +294,7 @@ function ConvertTo-KvText {
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="#004F8C"/>
+                <Setter Property="Background" Value="{DynamicResource Avd.Btn.Save.Press}"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -268,7 +307,7 @@ function ConvertTo-KvText {
       <Setter Property="FontSize"   Value="12"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
       <Setter Property="Padding"    Value="14,7"/>
-      <Setter Property="Foreground" Value="#555"/>
+      <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Secondary}"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="TabItem">
@@ -280,11 +319,11 @@ function ConvertTo-KvText {
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsSelected" Value="True">
-                <Setter TargetName="TabBorder" Property="BorderBrush" Value="#0078D4"/>
-                <Setter Property="Foreground" Value="#0078D4"/>
+                <Setter TargetName="TabBorder" Property="BorderBrush" Value="{DynamicResource Avd.Fg.Accent}"/>
+                <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Accent}"/>
               </Trigger>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="TabBorder" Property="Background" Value="#F0F4F8"/>
+                <Setter TargetName="TabBorder" Property="Background" Value="{DynamicResource Avd.Hover.Bg}"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -299,10 +338,45 @@ function ConvertTo-KvText {
       <Setter Property="FontWeight" Value="Normal"/>
     </Style>
 
+    <!-- Default CheckBox foreground (WPF Fluent overrides inherited foreground without this) -->
+    <Style TargetType="CheckBox">
+      <Setter Property="Foreground" Value="{DynamicResource Avd.Window.Fg}"/>
+    </Style>
+
+    <!-- ListBox and items (Run Commands panel) -->
+    <Style TargetType="ListBox">
+      <Setter Property="Background"  Value="{DynamicResource Avd.Card.Bg}"/>
+      <Setter Property="Foreground"  Value="{DynamicResource Avd.Window.Fg}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Avd.Border.Input}"/>
+    </Style>
+    <Style TargetType="ListBoxItem">
+      <Setter Property="Padding"    Value="8,5"/>
+      <Setter Property="FontSize"   Value="12"/>
+      <Setter Property="Foreground" Value="{DynamicResource Avd.Window.Fg}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ListBoxItem">
+            <Border x:Name="Bd" Background="Transparent" Padding="{TemplateBinding Padding}">
+              <ContentPresenter/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Hover.Bg}"/>
+              </Trigger>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Selected.Bg}"/>
+                <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Selected}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <!-- Small neutral button (gray) - used in Run Commands tab -->
     <Style x:Key="SmallNeutralBtn" TargetType="Button">
-      <Setter Property="Background"      Value="#E0E6ED"/>
-      <Setter Property="Foreground"      Value="#444"/>
+      <Setter Property="Background"      Value="{DynamicResource Avd.Btn.Cancel.Bg}"/>
+      <Setter Property="Foreground"      Value="{DynamicResource Avd.Fg.Label}"/>
       <Setter Property="BorderThickness" Value="0"/>
       <Setter Property="Padding"         Value="10,4"/>
       <Setter Property="FontSize"        Value="11"/>
@@ -316,11 +390,11 @@ function ConvertTo-KvText {
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="#C8D3DE"/>
+                <Setter Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Hover}"/>
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
-                <Setter Property="Background" Value="#EEF0F3"/>
-                <Setter Property="Foreground" Value="#AAA"/>
+                <Setter Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Bg}"/>
+                <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Hint}"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -333,7 +407,7 @@ function ConvertTo-KvText {
   <DockPanel>
 
     <!-- ===== Status bar ===== -->
-    <Border x:Name="StatusBar" DockPanel.Dock="Bottom" Background="#0078D4" Height="36">
+    <Border x:Name="StatusBar" DockPanel.Dock="Bottom" Background="{DynamicResource Avd.StatusBar.Bg}" Height="36">
       <Grid Margin="12,0">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
@@ -349,7 +423,7 @@ function ConvertTo-KvText {
     </Border>
 
     <!-- ===== Header ===== -->
-    <Border DockPanel.Dock="Top" Background="White" Padding="20,12,20,12">
+    <Border DockPanel.Dock="Top" Background="{DynamicResource Avd.Header.Bg}" Padding="20,12,20,12">
       <Border.Effect>
         <DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.10" Color="#000000"/>
       </Border.Effect>
@@ -360,11 +434,16 @@ function ConvertTo-KvText {
         </Grid.ColumnDefinitions>
         <StackPanel Grid.Column="0" VerticalAlignment="Center">
           <TextBlock Text="AVD Live Dashboard Config Editor"
-                     FontSize="18" FontWeight="Bold" Foreground="#0078D4"/>
+                     FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"/>
           <TextBlock x:Name="FilePathText"
-                     FontSize="11" Foreground="#666" Margin="0,2,0,0"/>
+                     FontSize="11" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,2,0,0"/>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+            <TextBlock Text="Dark" FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}"
+                       VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <ToggleButton x:Name="DarkToggle" Style="{StaticResource ToggleSwitch}"/>
+          </StackPanel>
           <Button x:Name="NewButton" Content="New" Style="{StaticResource ActionBtn}" Margin="0,0,8,0"/>
           <Button x:Name="BrowseButton" Content="Browse / Open..." Style="{StaticResource ActionBtn}"/>
         </StackPanel>
@@ -385,19 +464,19 @@ function ConvertTo-KvText {
                     VerticalAlignment="Top" Margin="16,0,0,0">
           <Button x:Name="OpenNotepadBtn" Content="Open in Notepad"
                   Padding="12,6" Margin="0,0,8,0" FontSize="12" Cursor="Hand"
-                  Foreground="#333" BorderThickness="0">
+                  Foreground="{DynamicResource Avd.Fg.Label}" BorderThickness="0">
             <Button.Template>
               <ControlTemplate TargetType="Button">
-                <Border x:Name="Bd" Background="#E1E4EA" CornerRadius="4"
+                <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Cancel.Bg}" CornerRadius="4"
                         Padding="{TemplateBinding Padding}">
                   <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
                 <ControlTemplate.Triggers>
                   <Trigger Property="IsMouseOver" Value="True">
-                    <Setter TargetName="Bd" Property="Background" Value="#CDD0D6"/>
+                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Hover}"/>
                   </Trigger>
                   <Trigger Property="IsPressed" Value="True">
-                    <Setter TargetName="Bd" Property="Background" Value="#B8BCC4"/>
+                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Press}"/>
                   </Trigger>
                 </ControlTemplate.Triggers>
               </ControlTemplate>
@@ -408,16 +487,16 @@ function ConvertTo-KvText {
                   Foreground="White" BorderThickness="0">
             <Button.Template>
               <ControlTemplate TargetType="Button">
-                <Border x:Name="Bd" Background="#0078D4" CornerRadius="4"
+                <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Save.Bg}" CornerRadius="4"
                         Padding="{TemplateBinding Padding}">
                   <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
                 <ControlTemplate.Triggers>
                   <Trigger Property="IsMouseOver" Value="True">
-                    <Setter TargetName="Bd" Property="Background" Value="#005A9E"/>
+                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Hover}"/>
                   </Trigger>
                   <Trigger Property="IsPressed" Value="True">
-                    <Setter TargetName="Bd" Property="Background" Value="#003D6B"/>
+                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Press}"/>
                   </Trigger>
                 </ControlTemplate.Triggers>
               </ControlTemplate>
@@ -428,7 +507,7 @@ function ConvertTo-KvText {
           <TextBlock Text="&#x26A0;&#xFE0F;  Config file has syntax errors and could not be loaded"
                      FontSize="13" FontWeight="SemiBold" Foreground="#C42B1C"/>
           <TextBlock Text="Fix the errors shown below (line and character numbers are included), then click Validate and Reload. You can also open the file directly in Notepad."
-                     FontSize="11" Foreground="#555" Margin="0,4,0,8" TextWrapping="Wrap"/>
+                     FontSize="11" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,4,0,8" TextWrapping="Wrap"/>
           <TextBlock x:Name="ErrorDetailText"
                      FontFamily="Consolas" FontSize="11" Foreground="#A01010"
                      TextWrapping="Wrap"/>
@@ -437,7 +516,7 @@ function ConvertTo-KvText {
     </Border>
 
     <!-- ===== Tab control ===== -->
-    <TabControl x:Name="MainTabControl" Margin="0" Background="#F4F6F9" BorderThickness="0">
+    <TabControl x:Name="MainTabControl" Margin="0" Background="{DynamicResource Avd.Window.Bg}" BorderThickness="0">
 
       <!-- ── Azure / General ── -->
       <TabItem Header="Azure">
@@ -468,12 +547,13 @@ function ConvertTo-KvText {
 
             <TextBlock Style="{StaticResource FieldLabel}" Text="Hidden Tabs"/>
             <TextBlock Style="{StaticResource HintText}" Margin="0,0,0,8"
-                       Text="Checked tabs are hidden from the tab strip at runtime."/>
+                       Text="Checked tabs are hidden from the tab strip. These are enforced at the deployment level - hidden tabs cannot be re-enabled via the Settings UI."/>
             <CheckBox x:Name="HideTabPerHostPool"  Content="Per Host Pool"  Margin="0,3"/>
             <CheckBox x:Name="HideTabByRegion"     Content="By Region"      Margin="0,3"/>
             <CheckBox x:Name="HideTabSessionHosts" Content="Session Hosts"  Margin="0,3"/>
             <CheckBox x:Name="HideTabAzureFiles"   Content="Azure Files"    Margin="0,3"/>
             <CheckBox x:Name="HideTabMonitoring"   Content="Monitoring"     Margin="0,3"/>
+            <CheckBox x:Name="HideTabImages"       Content="Images"         Margin="0,3"/>
             <CheckBox x:Name="HideTabInfra"        Content="Infrastructure" Margin="0,3"/>
             <CheckBox x:Name="HideTabAzureDevOps"  Content="Azure DevOps"   Margin="0,3"/>
 
@@ -647,7 +727,7 @@ function ConvertTo-KvText {
             <TextBlock Style="{StaticResource HintText}"
                        Text="One entry per line: Label = CIDR,CIDR,...  (e.g. VPN = 10.100.0.0/16, 10.200.0.0/16)"/>
 
-            <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Foreground="#BBBBBB" FontSize="12"
+            <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Foreground="{DynamicResource Avd.Fg.Hint}" FontSize="12"
                        Text="Checked top-to-bottom, first match wins. Any private IP (RFC 1918) not matched is labelled Office. Everything else is Public. Leave empty to just use Office / Public defaults."/>
           </StackPanel>
         </ScrollViewer>
@@ -671,6 +751,104 @@ function ConvertTo-KvText {
                      VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap"/>
             <TextBlock Style="{StaticResource HintText}"
                        Text="VM name substrings to exclude (case-insensitive). One per line."/>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <!-- ── Images ── -->
+      <TabItem Header="Images">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="24,16,24,24">
+
+            <!-- General -->
+            <TextBlock Style="{StaticResource SectionHeader}" Text="General"/>
+            <Border Style="{StaticResource Rule}"/>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Resource Groups"/>
+            <TextBox x:Name="ImgRGsBox" Height="80" AcceptsReturn="True"
+                     VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap"/>
+            <TextBlock Style="{StaticResource HintText}"
+                       Text="One resource group per line. Leave blank for an empty Images tab. Example: rg-weu-avdimages-prod"/>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Include Patterns"/>
+            <TextBox x:Name="ImgIncludePatternsBox" Height="60" AcceptsReturn="True"
+                     VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap"/>
+            <TextBlock Style="{StaticResource HintText}"
+                       Text="VM name substrings to include (case-insensitive). One per line. Leave blank to show all VMs in the configured resource groups. Example: AVDGI"/>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Refresh Interval (seconds)"/>
+            <TextBox x:Name="ImgRefreshIntervalBox" Width="100" HorizontalAlignment="Left"/>
+            <TextBlock Style="{StaticResource HintText}"
+                       Text="How often the Images tab auto-refreshes. Default: 60"/>
+
+            <!-- Create Image -->
+            <TextBlock Style="{StaticResource SectionHeader}" Text="Create Image" Margin="0,16,0,0"/>
+            <Border Style="{StaticResource Rule}"/>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Gallery Resource Groups"/>
+            <TextBox x:Name="ImgGalleryRGsBox" Height="60" AcceptsReturn="True"
+                     VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap"/>
+            <TextBlock Style="{StaticResource HintText}"
+                       Text="Resource groups to search for Shared Image Galleries in the Create Image dialog. One per line. Leave blank to search the entire subscription."/>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Preparation VM Sizes"/>
+            <TextBox x:Name="ImgPrepVMSizesBox" Height="80" AcceptsReturn="True"
+                     VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap"/>
+            <TextBlock Style="{StaticResource HintText}"
+                       Text="VM sizes offered in the Preparation VM Size dropdown (Create Image dialog). One per line. Example: Standard_D4s_v5"/>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Preparation VM Size Default"/>
+            <ComboBox x:Name="ImgPrepVMSizeDefaultBox"/>
+            <TextBlock Style="{StaticResource HintText}"
+                       Text="Size pre-selected by default. Populated from the sizes list above."/>
+
+            <!-- Maintenance -->
+            <TextBlock Style="{StaticResource SectionHeader}" Text="Maintenance" Margin="0,16,0,0"/>
+            <Border Style="{StaticResource Rule}"/>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Image Versions to Keep"/>
+            <TextBox x:Name="ImgVersionsToKeepBox" Width="80" HorizontalAlignment="Left"/>
+            <TextBlock Style="{StaticResource HintText}"
+                       Text="Number of image versions to retain per definition when using Clean Image Versions. Newest N are kept; older ones are deleted. Default: 5"/>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="BIS-F Path" Margin="0,12,0,4"/>
+            <TextBox x:Name="ImgBisFPathBox"/>
+            <TextBlock Style="{StaticResource HintText}"
+                       Text="Path to BIS-F on the preparation VM (e.g. C:\_source\Bis-F). Used by Create Image to run sealing. Default: C:\_source\Bis-F"/>
+
+            <TextBlock Style="{StaticResource SectionHeader}" Text="Replication" Margin="0,16,0,0"/>
+            <Border Style="{StaticResource Rule}"/>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Replication Region 1"/>
+            <TextBlock Style="{StaticResource HintText}" Text="Primary gallery replication region (e.g. westeurope). Required."/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="70"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="ImgRegion1Box" Grid.Column="0"/>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Style="{StaticResource HintText}" Text="Replicas" Margin="0,0,0,2"/>
+                    <TextBox x:Name="ImgRegion1ReplicasBox"/>
+                </StackPanel>
+            </Grid>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Replication Region 2" Margin="0,10,0,4"/>
+            <TextBlock Style="{StaticResource HintText}" Text="Optional second replication region. Leave blank to use one region only."/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="70"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="ImgRegion2Box" Grid.Column="0"/>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Style="{StaticResource HintText}" Text="Replicas" Margin="0,0,0,2"/>
+                    <TextBox x:Name="ImgRegion2ReplicasBox"/>
+                </StackPanel>
+            </Grid>
+
           </StackPanel>
         </ScrollViewer>
       </TabItem>
@@ -769,7 +947,7 @@ function ConvertTo-KvText {
             <TextBox x:Name="LogAnalyticsRGsBox" Height="80" AcceptsReturn="True"
                      VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap"/>
             <TextBlock Style="{StaticResource HintText}"
-                       Text="Resource groups containing the Log Analytics workspaces used by AVD Insights. Wildcards supported (e.g. RG-LOG-*).&#x0a;Used by Check-Permissions.ps1 to scope the Log Analytics Reader role check.&#x0a;Leave blank to check all resource groups in the subscription."/>
+                       Text="Resource groups containing the Log Analytics workspaces used by AVD Insights. Wildcards supported (e.g. RG-LOG-*).&#x0a;Used by check-permissions.ps1 to scope the Log Analytics Reader role check.&#x0a;Leave blank to check all resource groups in the subscription."/>
           </StackPanel>
         </ScrollViewer>
       </TabItem>
@@ -783,10 +961,10 @@ function ConvertTo-KvText {
           </Grid.ColumnDefinitions>
 
           <!-- Left: command list + action buttons -->
-          <Border Grid.Column="0" BorderBrush="#DDE1E7" BorderThickness="0,0,1,0" Background="White">
+          <Border Grid.Column="0" BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,1,0" Background="{DynamicResource Avd.Card.Bg}">
             <DockPanel Margin="12,16,12,12">
               <TextBlock DockPanel.Dock="Top" Text="Commands"
-                         FontSize="13" FontWeight="Bold" Foreground="#0078D4" Margin="0,0,0,8"/>
+                         FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}" Margin="0,0,0,8"/>
               <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
                 <UniformGrid Columns="2" Margin="0,0,0,4">
                   <Button x:Name="RcAddBtn"    Content="Add"
@@ -801,7 +979,7 @@ function ConvertTo-KvText {
                           Style="{StaticResource SmallNeutralBtn}"/>
                 </UniformGrid>
               </StackPanel>
-              <ListBox x:Name="RcList" BorderThickness="1" BorderBrush="#CCC"
+              <ListBox x:Name="RcList" BorderThickness="1" BorderBrush="{DynamicResource Avd.Border.Input}"
                        ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                        Padding="2"/>
             </DockPanel>
@@ -839,9 +1017,22 @@ function ConvertTo-KvText {
   </DockPanel>
 </Window>
 '@
-
+$_rawXaml = $_rawXaml -replace '<!-- THEME_SLOT -->', ''
+[xml]$xaml = $_rawXaml
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $win    = [Windows.Markup.XamlReader]::Load($reader)
+
+function Switch-EditorTheme {
+    param([bool]$Dark)
+    $_tf = if ($Dark) { 'dark' } else { 'light' }
+    $_tc = Get-Content -Raw -Path (Join-Path $PSScriptRoot "..\data\$_tf-theme.xaml") -ErrorAction Stop
+    $_rdXaml = "<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_tc</ResourceDictionary>"
+    $_rd = [Windows.Markup.XamlReader]::Parse($_rdXaml)
+    $win.Resources.MergedDictionaries.Clear()
+    $win.Resources.MergedDictionaries.Add($_rd)
+}
+
+Switch-EditorTheme $_editDark
 
 # Named control references
 $filePathText         = $win.FindName('FilePathText')
@@ -851,6 +1042,7 @@ $closeButton          = $win.FindName('CloseButton')
 $browseButton         = $win.FindName('BrowseButton')
 $newButton            = $win.FindName('NewButton')
 $statusBar            = $win.FindName('StatusBar')
+$darkToggle           = $win.FindName('DarkToggle')
 
 # Azure
 $tenantIdBox          = $win.FindName('TenantIdBox')
@@ -909,6 +1101,31 @@ $networkRangesBox     = $win.FindName('NetworkRangesBox')
 # Infrastructure
 $infraRGsBox          = $win.FindName('InfraRGsBox')
 $infraExcludeBox      = $win.FindName('InfraExcludeBox')
+
+# Images
+$imgRGsBox              = $win.FindName('ImgRGsBox')
+$imgIncludePatternsBox  = $win.FindName('ImgIncludePatternsBox')
+$imgRefreshIntervalBox  = $win.FindName('ImgRefreshIntervalBox')
+$imgGalleryRGsBox       = $win.FindName('ImgGalleryRGsBox')
+$imgPrepVMSizesBox           = $win.FindName('ImgPrepVMSizesBox')
+$imgPrepVMSizeDefaultBox     = $win.FindName('ImgPrepVMSizeDefaultBox')
+
+# Refresh the default ComboBox whenever the sizes list is edited
+$imgPrepVMSizesBox.Add_TextChanged({
+    $sizes = @($imgPrepVMSizesBox.Text -split "`r`n|`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($sizes.Count -eq 0) { $sizes = @('Standard_D2s_v5','Standard_D4s_v5','Standard_D8s_v5') }
+    $prev = [string]$imgPrepVMSizeDefaultBox.SelectedItem
+    $imgPrepVMSizeDefaultBox.ItemsSource  = $sizes
+    $imgPrepVMSizeDefaultBox.SelectedItem = if ($prev -in $sizes) { $prev } else { $sizes | Select-Object -First 1 }
+})
+$imgVersionsToKeepBox        = $win.FindName('ImgVersionsToKeepBox')
+$imgBisFPathBox              = $win.FindName('ImgBisFPathBox')
+$imgRegion1Box               = $win.FindName('ImgRegion1Box')
+$imgRegion1ReplicasBox       = $win.FindName('ImgRegion1ReplicasBox')
+$imgRegion2Box               = $win.FindName('ImgRegion2Box')
+$imgRegion2ReplicasBox       = $win.FindName('ImgRegion2ReplicasBox')
+
+$hideTabImages        = $win.FindName('HideTabImages')
 
 # Azure DevOps
 $adoOrgUrlBox         = $win.FindName('AdoOrgUrlBox')
@@ -998,9 +1215,36 @@ function New-DefaultConfig {
             ResourceGroups  = @()
             ExcludePatterns = @()
         }
+        Images = @{
+            ResourceGroups         = @()
+            IncludePatterns        = @()
+            RefreshIntervalSeconds = 60
+            GalleryRGs             = @()
+            PrepVMSizes            = @('Standard_D2s_v5', 'Standard_D4s_v5', 'Standard_D8s_v5')
+            PrepVMSizeDefault      = 'Standard_D4s_v5'
+            ImageVersionsToKeep    = 5
+            BisFPath               = 'C:\_source\Bis-F'
+            ReplicationRegion1         = 'westeurope'
+            ReplicationRegion1Replicas = 1
+            ReplicationRegion2         = ''
+            ReplicationRegion2Replicas = 1
+        }
         AzureDevOps = @{
             OrganisationUrl        = ''
             RefreshIntervalSeconds = 30
+        }
+    }
+}
+
+# Recursively merges $defaults into $config, adding any keys that are missing.
+# Existing values in $config are never overwritten — only absent keys are filled in.
+function Merge-ConfigDefaults {
+    param([hashtable]$Config, [hashtable]$Defaults)
+    foreach ($key in $Defaults.Keys) {
+        if (-not $Config.Contains($key)) {
+            $Config[$key] = $Defaults[$key]
+        } elseif ($Config[$key] -is [hashtable] -and $Defaults[$key] -is [hashtable]) {
+            Merge-ConfigDefaults -Config $Config[$key] -Defaults $Defaults[$key]
         }
     }
 }
@@ -1024,17 +1268,18 @@ function Initialize-Controls {
     $tenantIdBox.Text       = [string]$c.Azure.TenantId
     $subscriptionIdBox.Text = [string]$c.Azure.SubscriptionId
 
-    # Dashboard — HiddenTabs
+    # Dashboard - HiddenTabs
     $hiddenTabs = @($c.Dashboard.HiddenTabs | Where-Object { $_ })
     Set-CheckedState $hideTabPerHostPool   ($hiddenTabs -contains 'Per Host Pool')
     Set-CheckedState $hideTabByRegion      ($hiddenTabs -contains 'By Region')
     Set-CheckedState $hideTabSessionHosts  ($hiddenTabs -contains 'Session Hosts')
     Set-CheckedState $hideTabAzureFiles    ($hiddenTabs -contains 'Azure Files')
     Set-CheckedState $hideTabMonitoring    ($hiddenTabs -contains 'Monitoring')
+    Set-CheckedState $hideTabImages        ($hiddenTabs -contains 'Images')
     Set-CheckedState $hideTabInfra         ($hiddenTabs -contains 'Infrastructure')
     Set-CheckedState $hideTabAzureDevOps   ($hiddenTabs -contains 'Azure DevOps')
 
-    # Dashboard — Feature Visibility
+    # Dashboard - Feature Visibility
     Set-CheckedState $hideSessionHistory ([bool]$c.Dashboard.HideSessionHistory)
 
     # AVD Host Pools
@@ -1093,6 +1338,25 @@ function Initialize-Controls {
     $infraRGsBox.Text     = (@($c.InfrastructureServers.ResourceGroups  | Where-Object { $_ }) -join "`r`n")
     $infraExcludeBox.Text = (@($c.InfrastructureServers.ExcludePatterns | Where-Object { $_ }) -join "`r`n")
 
+    # Images
+    $imgRGsBox.Text             = (@($c.Images.ResourceGroups  | Where-Object { $_ }) -join "`r`n")
+    $imgIncludePatternsBox.Text = (@($c.Images.IncludePatterns | Where-Object { $_ }) -join "`r`n")
+    $imgRefreshIntervalBox.Text = if ([int]$c.Images.RefreshIntervalSeconds -gt 0) { [string][int]$c.Images.RefreshIntervalSeconds } else { '60' }
+    $imgGalleryRGsBox.Text         = (@($c.Images.GalleryRGs      | Where-Object { $_ }) -join "`r`n")
+    $imgPrepVMSizesBox.Text        = (@($c.Images.PrepVMSizes     | Where-Object { $_ }) -join "`r`n")
+    $sizes = @($imgPrepVMSizesBox.Text -split "`r`n|`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($sizes.Count -eq 0) { $sizes = @('Standard_D2s_v5','Standard_D4s_v5','Standard_D8s_v5') }
+    $imgPrepVMSizeDefaultBox.ItemsSource  = $sizes
+    $default = if ($c.Images.PrepVMSizeDefault) { [string]$c.Images.PrepVMSizeDefault } else { 'Standard_D4s_v5' }
+    $imgPrepVMSizeDefaultBox.SelectedItem = if ($default -in $sizes) { $default } else { $sizes | Select-Object -First 1 }
+    $imgVersionsToKeepBox.Text     = if ([int]$c.Images.ImageVersionsToKeep -gt 0) { [string][int]$c.Images.ImageVersionsToKeep } else { '5' }
+    $imgBisFPathBox.Text           = if ($c.Images.BisFPath) { [string]$c.Images.BisFPath } else { 'C:\_source\Bis-F' }
+    $imgRegion1Box.Text            = if ($c.Images.ReplicationRegion1) { [string]$c.Images.ReplicationRegion1 } else { '' }
+    $imgRegion1ReplicasBox.Text    = if ([int]$c.Images.ReplicationRegion1Replicas -gt 0) { [string][int]$c.Images.ReplicationRegion1Replicas } else { '1' }
+    $imgRegion2Box.Text            = if ($c.Images.ReplicationRegion2) { [string]$c.Images.ReplicationRegion2 } else { '' }
+    $imgRegion2ReplicasBox.Text    = if ([int]$c.Images.ReplicationRegion2Replicas -gt 0) { [string][int]$c.Images.ReplicationRegion2Replicas } else { '1' }
+
+
     # Azure DevOps
     $adoOrgUrlBox.Text  = [string]$c.AzureDevOps.OrganisationUrl
     $adoRefreshBox.Text = if ([int]$c.AzureDevOps.RefreshIntervalSeconds -gt 0) {
@@ -1117,7 +1381,10 @@ function Initialize-Controls {
     $logAnalyticsRGsBox.Text  = (@($c.PermissionsChecker.LogAnalyticsRGs | Where-Object { $_ }) -join "`r`n")
 }
 
-if ($script:cfg) { Initialize-Controls $script:cfg }
+if ($script:cfg) {
+    Merge-ConfigDefaults -Config $script:cfg -Defaults (New-DefaultConfig)
+    Initialize-Controls $script:cfg
+}
 
 # Error panel controls
 $errorPanel      = $win.FindName('ErrorPanel')
@@ -1141,6 +1408,7 @@ $revalidateBtn.Add_Click({
     if ($newCfg) {
         $script:cfg = $newCfg
         $script:isNewConfig = $false
+        Merge-ConfigDefaults -Config $script:cfg -Defaults (New-DefaultConfig)
         Initialize-Controls $script:cfg
         $errorPanel.Visibility    = [System.Windows.Visibility]::Collapsed
         $mainTabControl.IsEnabled = $true
@@ -1158,7 +1426,7 @@ $openNotepadBtn.Add_Click({
 })
 
 # =============================================================================
-# Run Commands tab  —  edit data\run-commands.psd1
+# Run Commands tab  -  edit data\run-commands.psd1
 # =============================================================================
 
 $script:rcFile     = Join-Path $PSScriptRoot '..\data\run-commands.psd1'
@@ -1218,9 +1486,9 @@ function Set-RcEntry {
         $rcDescBox.Text   = ''
         $rcScriptBox.Text = ''
         $rcScriptBox.IsReadOnly = $false
-        $rcScriptBox.Background = [System.Windows.Media.Brushes]::White
-        $rcScriptLabel.Text     = 'Script'
-        $rcScriptHint.Text      = 'PowerShell executed on the target VM via Invoke-AzVMRunCommand.'
+        $rcScriptBox.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'Avd.Input.Bg')
+        $rcScriptLabel.Text = 'Script'
+        $rcScriptHint.Text  = 'PowerShell executed on the target VM via Invoke-AzVMRunCommand.'
         return
     }
     $rcEditPanel.IsEnabled = $true
@@ -1230,15 +1498,15 @@ function Set-RcEntry {
     if ($cmd.ScriptFile) {
         $rcScriptBox.Text       = $cmd.ScriptFile
         $rcScriptBox.IsReadOnly = $true
-        $rcScriptBox.Background = [System.Windows.Media.Brushes]::WhiteSmoke
-        $rcScriptLabel.Text     = 'Script File'
-        $rcScriptHint.Text      = "Loaded from: data\runcommands\$($cmd.ScriptFile)"
+        $rcScriptBox.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'Avd.AltRow.Bg')
+        $rcScriptLabel.Text = 'Script File'
+        $rcScriptHint.Text  = "Loaded from: data\runcommands\$($cmd.ScriptFile)"
     } else {
         $rcScriptBox.Text       = $cmd.Script
         $rcScriptBox.IsReadOnly = $false
-        $rcScriptBox.Background = [System.Windows.Media.Brushes]::White
-        $rcScriptLabel.Text     = 'Script'
-        $rcScriptHint.Text      = 'PowerShell executed on the target VM via Invoke-AzVMRunCommand.'
+        $rcScriptBox.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'Avd.Input.Bg')
+        $rcScriptLabel.Text = 'Script'
+        $rcScriptHint.Text  = 'PowerShell executed on the target VM via Invoke-AzVMRunCommand.'
     }
 }
 
@@ -1355,7 +1623,7 @@ if ($script:rcCommands.Count -gt 0) {
 }
 
 # =============================================================================
-# Save-Config  — read all controls, validate, write PSD1
+# Save-Config  - read all controls, validate, write PSD1
 # =============================================================================
 
 function Save-Config {
@@ -1384,6 +1652,7 @@ function Save-Config {
         if ($hideTabSessionHosts.IsChecked) { 'Session Hosts' }
         if ($hideTabAzureFiles.IsChecked)   { 'Azure Files' }
         if ($hideTabMonitoring.IsChecked)      { 'Monitoring' }
+        if ($hideTabImages.IsChecked)          { 'Images' }
         if ($hideTabInfra.IsChecked)           { 'Infrastructure' }
         if ($hideTabAzureDevOps.IsChecked)     { 'Azure DevOps' }
     )
@@ -1468,7 +1737,8 @@ function Save-Config {
     Dashboard = @{
 
         # Tabs to hide from the dashboard tab strip.
-        # Valid names: 'Per Host Pool', 'By Region', 'Session Hosts', 'Azure Files', 'Monitoring', 'Infrastructure', 'Azure DevOps'
+        # These are enforced at the deployment level - hidden tabs cannot be re-enabled via the Settings UI.
+        # Valid names: 'Per Host Pool', 'By Region', 'Session Hosts', 'Azure Files', 'Monitoring', 'Images', 'Infrastructure', 'Azure DevOps'
         HiddenTabs = $(Format-PsdArray $hiddenTabs)
 
         # Hide the Session History button in Session Detail windows.
@@ -1628,13 +1898,13 @@ function Save-Config {
     }
 
     # =========================================================================
-    # Permissions Checker - used by scripts\Check-Permissions.ps1 only
+    # Permissions Checker - used by scripts\check-permissions.ps1 only
     # =========================================================================
 
     PermissionsChecker = @{
 
         # Resource groups containing the Log Analytics workspaces used by AVD Insights.
-        # Used only by Check-Permissions.ps1 to scope the Log Analytics Reader role check.
+        # Used only by check-permissions.ps1 to scope the Log Analytics Reader role check.
         # Leave as @() to check all resource groups in the subscription.
         LogAnalyticsRGs = $(Format-PsdArray (ConvertFrom-Lines $logAnalyticsRGsBox.Text))
     }
@@ -1652,6 +1922,56 @@ function Save-Config {
         # VM name substrings to exclude from the Infrastructure tab (case-insensitive).
         # Leave as @() to include all VMs in the configured resource groups.
         ExcludePatterns = $(Format-PsdArray (ConvertFrom-Lines $infraExcludeBox.Text))
+    }
+
+    # =========================================================================
+    # Images - used by scripts\tab-images.ps1 and scripts\create-image.ps1
+    # =========================================================================
+
+    Images = @{
+
+        # Resource groups containing image VMs to display in the Images tab.
+        ResourceGroups = $(Format-PsdArray (ConvertFrom-Lines $imgRGsBox.Text))
+
+        # VM name substrings to include (case-insensitive). Leave as @() to show all VMs in the RGs.
+        IncludePatterns = $(Format-PsdArray (ConvertFrom-Lines $imgIncludePatternsBox.Text))
+
+        # How often the Images tab auto-refreshes (seconds). Default: 60
+        RefreshIntervalSeconds = $(
+            $imgRi = 0
+            if ([int]::TryParse($imgRefreshIntervalBox.Text.Trim(), [ref]$imgRi) -and $imgRi -gt 0) { $imgRi } else { 60 }
+        )
+
+        # Resource groups to search for Shared Image Galleries in the Create Image dialog.
+        GalleryRGs = $(Format-PsdArray (ConvertFrom-Lines $imgGalleryRGsBox.Text))
+
+        # VM sizes offered in the Preparation VM Size dropdown in the Create Image dialog.
+        PrepVMSizes = $(Format-PsdArray (ConvertFrom-Lines $imgPrepVMSizesBox.Text))
+
+        # Size pre-selected by default. Default: 'Standard_D4s_v5'
+        PrepVMSizeDefault = '$(([string]$imgPrepVMSizeDefaultBox.SelectedItem -replace "'","''"))'
+
+        # Number of image versions to retain per definition when using Clean Image Versions.
+        ImageVersionsToKeep = $(
+            $imgVtk = 0
+            if ([int]::TryParse($imgVersionsToKeepBox.Text.Trim(), [ref]$imgVtk) -and $imgVtk -gt 0) { $imgVtk } else { 5 }
+        )
+
+        # Full path to BIS-F on the preparation VM.
+        BisFPath = '$(($imgBisFPathBox.Text.Trim() -replace "'","''"))'
+
+        # Gallery image replication regions. Region2 is optional - leave blank to use one region only.
+        ReplicationRegion1         = '$(($imgRegion1Box.Text.Trim() -replace "'","''"))'
+        ReplicationRegion1Replicas = $(
+            $r1c = 0
+            if ([int]::TryParse($imgRegion1ReplicasBox.Text.Trim(), [ref]$r1c) -and $r1c -gt 0) { $r1c } else { 1 }
+        )
+        ReplicationRegion2         = '$(($imgRegion2Box.Text.Trim() -replace "'","''"))'
+        ReplicationRegion2Replicas = $(
+            $r2c = 0
+            if ([int]::TryParse($imgRegion2ReplicasBox.Text.Trim(), [ref]$r2c) -and $r2c -gt 0) { $r2c } else { 1 }
+        )
+
     }
 
     # =========================================================================
@@ -1723,6 +2043,29 @@ $saveButton.Add_Click({ Save-Config })
 
 $closeButton.Add_Click({ $win.Close() })
 
+$darkToggle.IsChecked = $_editDark
+$darkToggle.Add_Checked({
+    try {
+        if (-not (Test-Path $script:EditRegPath)) { New-Item $script:EditRegPath -Force | Out-Null }
+        Set-ItemProperty -Path $script:EditRegPath -Name 'DarkTheme' -Value 1
+    } catch {}
+    Switch-EditorTheme $true
+    try {
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($win)).Handle
+        $v = 1; [void][Win32.DwmApiEC]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+    } catch {}
+})
+$darkToggle.Add_Unchecked({
+    try {
+        Set-ItemProperty -Path $script:EditRegPath -Name 'DarkTheme' -Value 0
+    } catch {}
+    Switch-EditorTheme $false
+    try {
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($win)).Handle
+        $v = 0; [void][Win32.DwmApiEC]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+    } catch {}
+})
+
 $browseButton.Add_Click({
     $dlg = New-Object Microsoft.Win32.OpenFileDialog
     $dlg.Title            = "Open Config File"
@@ -1745,6 +2088,7 @@ $browseButton.Add_Click({
 
     $script:isNewConfig = $false
     $script:cfg = $newCfg
+    Merge-ConfigDefaults -Config $script:cfg -Defaults (New-DefaultConfig)
     Initialize-Controls $script:cfg
     $errorPanel.Visibility    = [System.Windows.Visibility]::Collapsed
     $mainTabControl.IsEnabled = $true
@@ -1773,10 +2117,33 @@ $newButton.Add_Click({
 })
 
 # =============================================================================
-# Window icon
+# Window icon and dark title bar
 # =============================================================================
 
-Set-WindowIcon -Window $win -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico')
+try {
+    $_iconPath = Join-Path $PSScriptRoot '..\data\avd-dashboard.ico'
+    if (Test-Path $_iconPath) {
+        $stream = [System.IO.File]::OpenRead((Resolve-Path $_iconPath).ProviderPath)
+        $win.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create(
+            $stream,
+            [System.Windows.Media.Imaging.BitmapCreateOptions]::None,
+            [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+        $stream.Close()
+    }
+} catch {}
+
+try {
+    Add-Type -MemberDefinition '[DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);' -Name 'DwmApiEC' -Namespace 'Win32' -ErrorAction Stop
+} catch {}
+if ($_editDark) {
+    $win.Add_SourceInitialized({
+        try {
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($win)).Handle
+            $v = 1
+            [void][Win32.DwmApiEC]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        } catch {}
+    })
+}
 
 # =============================================================================
 # Show window

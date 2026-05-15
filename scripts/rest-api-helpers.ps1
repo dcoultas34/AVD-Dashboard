@@ -62,7 +62,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-03-02
+    Version       : 2026-04-29
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -82,6 +82,8 @@
 $script:ApiVersions = @{
     DesktopVirtualization = '2024-04-03'
     Compute               = '2024-07-01'
+    Snapshots             = '2025-01-02'  # Snapshots use a different version range to VMs; 2024-07-01 returns InvalidResourceType
+    Gallery               = '2022-03-03'
     Network               = '2024-01-01'
     Resources             = '2024-03-01'
     Storage               = '2023-05-01'
@@ -123,6 +125,26 @@ function Get-ArmToken {
         Token     = $plainToken
         ExpiresOn = $_tok.ExpiresOn
     }
+    return $plainToken
+}
+
+function Get-LawToken {
+    # SharedTokenCacheCredential fails for raw resource URLs like api.loganalytics.azure.com.
+    # Try the Az.Accounts built-in named type first; fall back to the explicit URL.
+    $cacheKey = 'https://api.loganalytics.azure.com/'
+    $cached = $script:_armTokenCache[$cacheKey]
+    if ($cached -and $cached.ExpiresOn -gt [DateTimeOffset]::UtcNow.AddMinutes(5)) {
+        return $cached.Token
+    }
+    $_tok = $null
+    try { $_tok = Get-AzAccessToken -ResourceTypeName 'OperationalInsights' -AsSecureString -ErrorAction Stop } catch {}
+    if (-not $_tok) {
+        $_tok = Get-AzAccessToken -ResourceUrl $cacheKey -AsSecureString -ErrorAction Stop
+    }
+    $plainToken = if ($_tok.Token -is [securestring]) {
+        [System.Net.NetworkCredential]::new('', $_tok.Token).Password
+    } else { [string]$_tok.Token }
+    $script:_armTokenCache[$cacheKey] = @{ Token = $plainToken; ExpiresOn = $_tok.ExpiresOn }
     return $plainToken
 }
 
@@ -282,6 +304,37 @@ function Invoke-ArmRestMethod {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Log Analytics query wrapper
+#
+# When QueryBaseUrl is set (e.g. https://api.loganalytics.azure.com), queries go
+# directly to the Log Analytics API using an api.loganalytics.azure.com-scoped token.
+# api.loganalytics.azure.com CNAMEs to api.monitor.azure.com, which the AMPLS
+# privatelink.monitor.azure.com private DNS zone overrides to a private endpoint IP.
+# When QueryBaseUrl is empty the existing ARM management plane path is used (public).
+# ─────────────────────────────────────────────────────────────────────────────
+function Invoke-LawQuery {
+    param(
+        [string]$Kql,
+        [string]$Timespan            = 'P1D',
+        [string]$WorkspaceResourceId,
+        [string]$QueryBaseUrl        = ''
+    )
+    if ($QueryBaseUrl) {
+        $tok  = Get-LawToken
+        $uri  = "$QueryBaseUrl/v1$WorkspaceResourceId/query"
+        $body = @{ query = $Kql; timespan = $Timespan } | ConvertTo-Json -Compress
+        return Invoke-RestMethod -Method POST -Uri $uri -Body $body `
+            -Headers @{ Authorization = "Bearer $tok"; 'Content-Type' = 'application/json' }
+    }
+    $tok = Get-ArmToken
+    return Invoke-ArmRestMethod -Method POST `
+        -Path "$WorkspaceResourceId/api/query" `
+        -Token $tok -ApiVersion '2020-08-01' `
+        -Body @{ query = $Kql; timespan = $Timespan } `
+        -FullResponse
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Compact REST helper for RunspacePool threads (string form)
 #
 # RunspacePool threads run in isolated contexts with no access to parent-scope
@@ -347,6 +400,33 @@ function Invoke-Arm {
         $cur = if ($resp.nextLink) { $resp.nextLink } elseif ($resp.'@odata.nextLink') { $resp.'@odata.nextLink' } else { $null }
     } while ($cur)
     $all.ToArray()
+}
+
+function Wait-ArmOperation {
+    param([string]$OperationUrl,[string]$Token,[int]$TimeoutSeconds=600,[string]$Label='operation')
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        Start-Sleep -Seconds 10
+        $resp  = Invoke-Arm -Path $OperationUrl -Token $Token -FullResponse
+        $state = if ($resp.status) { $resp.status } elseif ($resp.properties.provisioningState) { $resp.properties.provisioningState } else { 'Unknown' }
+        Write-Host "  [$Label] state: $state ($([math]::Round($sw.Elapsed.TotalSeconds))s)"
+        if ($state -eq 'Failed')   { throw "$Label failed: $($resp.error.message)" }
+        if ($state -eq 'Canceled') { throw "$Label was canceled" }
+    } while ($state -notin @('Succeeded','Completed') -and $sw.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    if ($state -notin @('Succeeded','Completed')) { throw "$Label timed out after ${TimeoutSeconds}s" }
+}
+
+function Wait-VMPowerState {
+    param([string]$SubscriptionId,[string]$ResourceGroup,[string]$VMName,[string]$Expected,[string]$Token,[string]$ApiVersion='2024-07-01',[int]$TimeoutSeconds=600)
+    $path = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/virtualMachines/$VMName/instanceView"
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        Start-Sleep -Seconds 15
+        $iv = Invoke-Arm -Path $path -Token $Token -ApiVersion $ApiVersion -FullResponse
+        $ps = ($iv.statuses | Where-Object { $_.code -like 'PowerState/*' }).code
+        Write-Host "  VM $VMName power state: $ps ($([math]::Round($sw.Elapsed.TotalSeconds))s)"
+        if ($sw.Elapsed.TotalSeconds -gt $TimeoutSeconds) { throw "Timed out waiting for $VMName to reach $Expected (current: $ps)" }
+    } while ($ps -ne $Expected)
 }
 
 '@
@@ -497,6 +577,44 @@ function Get-ArmDisk {
         -Token $Token -ApiVersion $script:ApiVersions.Compute -FullResponse
 }
 
+function Get-ArmSnapshots {
+    param([string]$SubscriptionId, [string]$ResourceGroup, [string]$Token)
+    Invoke-ArmRestMethod -Path "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/snapshots" `
+        -Token $Token -ApiVersion $script:ApiVersions.Snapshots
+}
+
+function Remove-ArmSnapshot {
+    param([string]$SubscriptionId, [string]$ResourceGroup, [string]$SnapshotName, [string]$Token)
+    Invoke-ArmRestMethod -Method DELETE `
+        -Path "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/snapshots/$SnapshotName" `
+        -Token $Token -ApiVersion $script:ApiVersions.Snapshots
+}
+
+function Get-ArmGalleries {
+    param([string]$SubscriptionId, [string]$ResourceGroup, [string]$Token)
+    Invoke-ArmRestMethod -Path "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/galleries" `
+        -Token $Token -ApiVersion $script:ApiVersions.Gallery
+}
+
+function Get-ArmGalleryImageDefinitions {
+    param([string]$SubscriptionId, [string]$ResourceGroup, [string]$GalleryName, [string]$Token)
+    Invoke-ArmRestMethod -Path "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/galleries/$GalleryName/images" `
+        -Token $Token -ApiVersion $script:ApiVersions.Gallery
+}
+
+function Get-ArmGalleryImageVersions {
+    param([string]$SubscriptionId, [string]$ResourceGroup, [string]$GalleryName, [string]$ImageDefinition, [string]$Token)
+    Invoke-ArmRestMethod -Path "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/galleries/$GalleryName/images/$ImageDefinition/versions" `
+        -Token $Token -ApiVersion $script:ApiVersions.Gallery
+}
+
+function Remove-ArmGalleryImageVersion {
+    param([string]$SubscriptionId, [string]$ResourceGroup, [string]$GalleryName, [string]$ImageDefinition, [string]$Version, [string]$Token)
+    Invoke-ArmRestMethod -Method DELETE `
+        -Path "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/galleries/$GalleryName/images/$ImageDefinition/versions/$Version" `
+        -Token $Token -ApiVersion $script:ApiVersions.Gallery
+}
+
 function Invoke-ArmVmRunCommand {
     param(
         [string]$SubscriptionId, [string]$ResourceGroup, [string]$VmName,
@@ -588,6 +706,50 @@ function Invoke-ArmResourceGraph {
         -Token $Token -ApiVersion $script:ApiVersions.ResourceGraph `
         -Body $body -FullResponse
     return $result.data
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Async operation polling helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+function Wait-ArmOperation {
+    param(
+        [string]$OperationUrl,
+        [string]$Token,
+        [int]   $TimeoutSeconds = 600,
+        [string]$Label          = 'operation'
+    )
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        Start-Sleep -Seconds 10
+        $resp  = Invoke-Arm -Path $OperationUrl -Token $Token -FullResponse
+        $state = if ($resp.status) { $resp.status } elseif ($resp.properties.provisioningState) { $resp.properties.provisioningState } else { 'Unknown' }
+        Write-Host "  [$Label] state: $state ($([math]::Round($sw.Elapsed.TotalSeconds))s)"
+        if ($state -eq 'Failed')   { throw "$Label failed: $($resp.error.message)" }
+        if ($state -eq 'Canceled') { throw "$Label was canceled" }
+    } while ($state -notin @('Succeeded', 'Completed') -and $sw.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    if ($state -notin @('Succeeded', 'Completed')) { throw "$Label timed out after ${TimeoutSeconds}s" }
+}
+
+function Wait-VMPowerState {
+    param(
+        [string]$SubscriptionId,
+        [string]$ResourceGroup,
+        [string]$VMName,
+        [string]$Expected,
+        [string]$Token,
+        [string]$ApiVersion     = '2024-07-01',
+        [int]   $TimeoutSeconds = 600
+    )
+    $path = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/virtualMachines/$VMName/instanceView"
+    $sw   = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        Start-Sleep -Seconds 15
+        $iv = Invoke-Arm -Path $path -Token $Token -ApiVersion $ApiVersion -FullResponse
+        $ps = ($iv.statuses | Where-Object { $_.code -like 'PowerState/*' }).code
+        Write-Host "  VM $VMName power state: $ps ($([math]::Round($sw.Elapsed.TotalSeconds))s)"
+        if ($sw.Elapsed.TotalSeconds -gt $TimeoutSeconds) { throw "Timed out waiting for $VMName to reach $Expected (current: $ps)" }
+    } while ($ps -ne $Expected)
 }
 
 # =============================================================================

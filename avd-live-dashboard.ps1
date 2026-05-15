@@ -74,6 +74,14 @@
         on the $ShadowMethod config variable.
       - $ShadowMethod and $ShadowUseIP are defined in config.psd1.
 
+      MSTSC shadow requirements:
+      - The "Remote Desktop - Shadow (TCP-In)" firewall rule must be enabled on
+        session hosts (uses port 445). If port 445 is blocked, use MSRA instead.
+      - GPO "Set rules for remote control" must be configured on session hosts:
+        HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\Shadow
+        1 = full control with user consent, 2 = full control without consent (recommended for helpdesk).
+      - MSRA (Remote Assistance) uses port 3389 only and does not require port 445.
+
     Performance:
       - All Azure API calls use direct REST API via bearer token. Only Az.Accounts is
         required (for token acquisition). RunspacePool threads use a compact Invoke-Arm
@@ -132,7 +140,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-04-27
+    Version       : 2026-05-14
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -166,7 +174,7 @@ param(
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-04-28"
+$ScriptVersion = "2026-05-14"
 
 # =============================================================================
 # Customer / Environment Configuration
@@ -217,11 +225,10 @@ $script:ShowRGVMCount         = if ($null -ne $_cfg.AVDHostPools.ShowRGVMCount) 
 
 # Dashboard (global)
 $HiddenTabs                        = @($_cfg.Dashboard.HiddenTabs               | Where-Object { $_ })
+$script:DefaultHiddenTabs          = $HiddenTabs
 $script:HideSettingsButton         = [bool]$_cfg.Dashboard.HideSettingsButton
 $script:HideSessionHistory         = [bool]$_cfg.Dashboard.HideSessionHistory           # Hide the Session History button in session detail windows
 
-# Audit logging - enabled by default unless explicitly set to $false in config
-$script:EnableAuditLog = if ($null -ne $_cfg.Dashboard.EnableAuditLog) { [bool]$_cfg.Dashboard.EnableAuditLog } else { $true }
 
 # Shadow / RDP
 $ShadowMethod                 = [string]$_cfg.ShadowRDP.ShadowMethod
@@ -232,6 +239,22 @@ $ShadowUseIP                  = [bool]$_cfg.ShadowRDP.ShadowUseIP
 $DefaultInfraRGs             = @($_cfg.InfrastructureServers.ResourceGroups  | Where-Object { $_ })
 $script:InfraExcludePatterns = @($_cfg.InfrastructureServers.ExcludePatterns | Where-Object { $_ })
 
+# Images  (consumed by scripts/tab-images.ps1)
+$script:ImgRGs             = @($_cfg.Images.ResourceGroups  | Where-Object { $_ })
+$script:ImgIncludePatterns = @($_cfg.Images.IncludePatterns | Where-Object { $_ })
+$script:ImgGalleryRGs      = @($_cfg.Images.GalleryRGs      | Where-Object { $_ })
+$script:ImgPrepVMSizes     = @($_cfg.Images.PrepVMSizes     | Where-Object { $_ })
+if ($script:ImgPrepVMSizes.Count -eq 0) { $script:ImgPrepVMSizes = @('Standard_D2s_v5','Standard_D4s_v5','Standard_D8s_v5') }
+$script:ImgPrepVMSizeDefault = if ($_cfg.Images.PrepVMSizeDefault) { [string]$_cfg.Images.PrepVMSizeDefault } else { 'Standard_D4s_v5' }
+$script:ImgRefreshIntervalSeconds = if ([int]$_cfg.Images.RefreshIntervalSeconds -gt 0) {
+    [int]$_cfg.Images.RefreshIntervalSeconds } else { 60 }
+$script:ImgVersionsToKeep = if ([int]$_cfg.Images.ImageVersionsToKeep -gt 0) { [int]$_cfg.Images.ImageVersionsToKeep } else { 5 }
+$script:ImgBisFPath       = if ($_cfg.Images.BisFPath) { [string]$_cfg.Images.BisFPath } else { 'C:\_source\Bis-F' }
+$script:ImgRegion1        = if ($_cfg.Images.ReplicationRegion1) { [string]$_cfg.Images.ReplicationRegion1 } else { '' }
+$script:ImgRegion1Replicas = if ([int]$_cfg.Images.ReplicationRegion1Replicas -gt 0) { [int]$_cfg.Images.ReplicationRegion1Replicas } else { 1 }
+$script:ImgRegion2        = if ($_cfg.Images.ReplicationRegion2) { [string]$_cfg.Images.ReplicationRegion2 } else { '' }
+$script:ImgRegion2Replicas = if ([int]$_cfg.Images.ReplicationRegion2Replicas -gt 0) { [int]$_cfg.Images.ReplicationRegion2Replicas } else { 1 }
+
 # Azure DevOps  (consumed by scripts/tab-azuredevops.ps1)
 $script:AdoOrgUrl                  = [string]$_cfg.AzureDevOps.OrganisationUrl
 $script:AdoRefreshIntervalSeconds  = if ([int]$_cfg.AzureDevOps.RefreshIntervalSeconds -gt 0) {
@@ -239,6 +262,7 @@ $script:AdoRefreshIntervalSeconds  = if ([int]$_cfg.AzureDevOps.RefreshIntervalS
 
 # Log Analytics  (consumed by scripts/tab-sessionhosts.ps1 - CPU % / Mem % columns)
 $script:LawWorkspaceResourceId = [string]$_cfg.LogAnalytics.WorkspaceResourceId
+$script:LawQueryBaseUrl        = [string]$_cfg.LogAnalytics.QueryBaseUrl
 # Input Delay process exclusions (consumed by scripts/tab-sessionhosts.ps1)
 $script:InputDelayExcludeProcesses = @($_cfg.LogAnalytics.InputDelayExcludeProcesses)
 if (-not $script:InputDelayExcludeProcesses) { $script:InputDelayExcludeProcesses = @() }
@@ -261,7 +285,7 @@ if ($StorageAccountKinds.Count -eq 0) { $StorageAccountKinds = @('FileStorage', 
 if ([string]::IsNullOrWhiteSpace($ShadowMethod)) { $ShadowMethod = 'MSTSC' }
 
 # =============================================================================
-# Performance Tuning — RunspacePool concurrency limits
+# Performance Tuning - RunspacePool concurrency limits
 # Controls the maximum number of parallel Azure API calls for each pool.
 # Increase values for large environments with many host pools or storage accounts.
 # Decrease values if you experience ARM API throttling (429 errors).
@@ -401,257 +425,20 @@ function script:Write-LogEarly {
 Write-LogEarly "AVD Live Dashboard v$ScriptVersion | Auth starting | PS $($PSVersionTable.PSVersion)"
 
 # -- Azure authentication ------------------------------------------------------
-# Browser flow is the default; pass -UseDeviceAuthentication to use device code
-# flow, or -UseExistingContext to skip auth entirely and rely on a pre-existing
-# Az context (e.g. from Connect-AzAccount run manually before launch).
+# Handled by scripts\connect-azure.ps1 (Connect-AzureDashboard).
+# Browser flow is the default; see param block above for available switches.
 
-if ($UseExistingContext) {
+. "$PSScriptRoot\scripts\connect-azure.ps1"
 
-    # --- Use existing Az context ------------------------------------------------
-    Write-LogEarly "[Auth] Mode: UseExistingContext"
-    try   { $azContext = Get-AzContext -ErrorAction Stop }
-    catch { $azContext = $null }
-
-    if (-not $azContext -or -not $azContext.Account) {
-        Write-LogEarly "[Auth] No existing context found - exiting"
-        [System.Windows.MessageBox]::Show(
-            "No active Azure context was found.`n`nPlease authenticate first by running Connect-AzAccount in a PowerShell window, then relaunch the dashboard.",
-            "No Azure Context",
-            [System.Windows.MessageBoxButton]::OK,
-            [System.Windows.MessageBoxImage]::Warning) | Out-Null
-        exit 1
-    }
-    Write-LogEarly "[Auth] Existing context: $($azContext.Account.Id) | Tenant: $($azContext.Tenant.Id)"
-
-    # If a target subscription is configured, switch to it
-    if (-not [string]::IsNullOrWhiteSpace($DefaultSubscriptionId)) {
-        Write-LogEarly "[Auth] Switching to subscription: $DefaultSubscriptionId"
-        try {
-            Set-AzContext -SubscriptionId $DefaultSubscriptionId -ErrorAction Stop | Out-Null
-            $azContext = Get-AzContext
-            Write-LogEarly "[Auth] Switched to: $($azContext.Subscription.Name) ($($azContext.Subscription.Id))"
-        } catch {
-            Write-LogEarly "[Auth] WARNING - subscription switch failed: $_"
-        }
-    }
-
-} elseif ($UseDeviceAuthentication) {
-
-    # --- Device code flow -------------------------------------------------------
-    # Connect-AzAccount must run on the main thread so output goes to the visible
-    # console. The URL and one-time code are printed directly to the console.
-    Write-LogEarly "[Auth] Mode: DeviceAuthentication | TenantId: $DefaultTenantId | SubId: $DefaultSubscriptionId"
-    try {
-        $_connectParams = @{ UseDeviceAuthentication = $true; ErrorAction = 'Stop' }
-        if (-not [string]::IsNullOrWhiteSpace($DefaultTenantId))       { $_connectParams['TenantId']      = $DefaultTenantId }
-        if (-not [string]::IsNullOrWhiteSpace($DefaultSubscriptionId)) { $_connectParams['SubscriptionId'] = $DefaultSubscriptionId }
-        Write-LogEarly "[Auth] Calling Connect-AzAccount (device code)..."
-        $azContext = (Connect-AzAccount @_connectParams).Context
-        if (-not $azContext -or -not $azContext.Account) {
-            Write-LogEarly "[Auth] Connect-AzAccount returned no context"
-            [System.Windows.MessageBox]::Show("Sign-in did not complete. Please try again.",
-                "Sign-In Failed", [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Error) | Out-Null
-            exit 1
-        }
-        Write-LogEarly "[Auth] Sign-in OK: $($azContext.Account.Id) | Sub: $($azContext.Subscription.Name)"
-    } catch {
-        Write-LogEarly "[Auth] ERROR - device sign-in failed: $_"
-        [System.Windows.MessageBox]::Show("Sign-in failed:`n`n$_", "Sign-In Failed",
-            [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
-        exit 1
-    }
-
-} elseif ($UseServicePrincipal) {
-
-    # --- Service Principal (DPAPI-encrypted credential file) --------------------
-    # App ID and Client Secret are stored as a PSCredential via Export-Clixml.
-    # PowerShell automatically DPAPI-encrypts the SecureString password, binding
-    # it to the current Windows user account and machine. Only the same user on
-    # the same machine can load the file - equivalent security to Windows
-    # Credential Manager without requiring C# or additional modules.
-
-    if ([string]::IsNullOrWhiteSpace($DefaultTenantId)) {
-        [System.Windows.MessageBox]::Show(
-            "Azure.TenantId is not set in config.psd1.`n`nService Principal authentication requires a Tenant ID. Please add it and relaunch.",
-            "Service Principal - Missing Tenant ID",
-            [System.Windows.MessageBoxButton]::OK,
-            [System.Windows.MessageBoxImage]::Error) | Out-Null
-        exit 1
-    }
-
-    # Derive credential filename from the config file name so each config gets
-    # its own SP credential. Default config.psd1 maps to sp-credential.xml
-    # (backward compatible); prod.psd1 maps to sp-credential-prod.xml, etc.
-    $_cfgBase = [System.IO.Path]::GetFileNameWithoutExtension($_configFile)
-    $_spCredFile = if ($_cfgBase -eq 'config') { 'sp-credential.xml' } else { "sp-credential-$_cfgBase.xml" }
-    $_spCredPath = Join-Path $env:APPDATA "AVDDashboard\$_spCredFile"
-
-    # WPF prompt for App ID + Secret (shown on first launch or after credential clear)
-    function Show-SPCredentialPrompt {
-        $xaml = @'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Service Principal Credentials" Width="430" Height="260"
-        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
-        ShowInTaskbar="False">
-    <Grid Margin="16">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,10"
-                   Text="Enter the App (Client) ID and Client Secret for the service principal. The credential is encrypted with your Windows account (DPAPI) and saved to AppData."/>
-        <Label Grid.Row="1" Content="App (Client) ID:" FontWeight="SemiBold" Padding="0,0,0,2"/>
-        <TextBox Grid.Row="2" Name="AppIdBox" Margin="0,0,0,8" Padding="4,3" FontFamily="Consolas"/>
-        <Label Grid.Row="3" Content="Client Secret:" FontWeight="SemiBold" Padding="0,0,0,2"/>
-        <PasswordBox Grid.Row="4" Name="SecretBox" Margin="0,0,0,4" Padding="4,3"/>
-        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Name="OkBtn" Content="Save and Connect" Width="120" Height="28" Margin="0,0,8,0" IsDefault="True"/>
-            <Button Name="CancelBtn" Content="Cancel" Width="70" Height="28" IsCancel="True"/>
-        </StackPanel>
-    </Grid>
-</Window>
-'@
-        $reader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($xaml))
-        $script:_spDialogWin = [System.Windows.Markup.XamlReader]::Load($reader)
-
-        $script:_spDialogWin.FindName('OkBtn').Add_Click({
-            $appId  = $script:_spDialogWin.FindName('AppIdBox').Text.Trim()
-            $secret = $script:_spDialogWin.FindName('SecretBox').Password
-            if ([string]::IsNullOrWhiteSpace($appId) -or [string]::IsNullOrWhiteSpace($secret)) {
-                [System.Windows.MessageBox]::Show(
-                    "Both App ID and Client Secret are required.",
-                    "Missing Fields",
-                    [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Warning) | Out-Null
-                return
-            }
-            $script:_spDialogAppId  = $appId
-            $script:_spDialogSecret = $secret
-            $script:_spDialogWin.DialogResult = $true
-            $script:_spDialogWin.Close()
-        })
-
-        if ($script:_spDialogWin.ShowDialog()) {
-            return [pscustomobject]@{ AppId = $script:_spDialogAppId; Secret = $script:_spDialogSecret }
-        }
-        return $null
-    }
-
-    # Load existing credential, or prompt and save a new one
-    $_spCred = $null
-    if (Test-Path $_spCredPath) {
-        try {
-            $_spCred = Import-Clixml $_spCredPath -ErrorAction Stop
-        } catch {
-            Write-Log "WARN [Auth] SP credential load failed from '$_spCredPath': $_"
-            [System.Windows.MessageBox]::Show(
-                "The saved service principal credential could not be loaded:`n`n$_`n`nYou will be prompted to re-enter it.",
-                "Credential Load Failed",
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Warning) | Out-Null
-            $_spCred = $null
-        }
-    }
-
-    if (-not $_spCred) {
-        $_spInput = Show-SPCredentialPrompt
-        if (-not $_spInput) { exit 0 }
-
-        # PSCredential with Export-Clixml: DPAPI encrypts the SecureString automatically
-        $_spCred = [System.Management.Automation.PSCredential]::new(
-            $_spInput.AppId,
-            (ConvertTo-SecureString $_spInput.Secret -AsPlainText -Force)
-        )
-
-        $_spCredDir = Split-Path $_spCredPath -Parent
-        if (-not (Test-Path $_spCredDir)) { New-Item -ItemType Directory -Path $_spCredDir -Force | Out-Null }
-
-        try {
-            $_spCred | Export-Clixml $_spCredPath -Force -ErrorAction Stop
-        } catch {
-            Write-Log "WARN [Auth] SP credential save failed to '$_spCredPath': $_"
-            [System.Windows.MessageBox]::Show(
-                "Warning: Credential could not be saved:`n`n$_`n`nYou will be prompted again on next launch.",
-                "Credential Save Warning",
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Warning) | Out-Null
-        }
-    }
-
-    # Authenticate
-    Write-LogEarly "[Auth] Mode: ServicePrincipal | TenantId: $DefaultTenantId | AppId: $(if ($_spCred) { $_spCred.UserName } else { 'none' })"
-    try {
-        $_connectParams = @{
-            ServicePrincipal = $true
-            TenantId         = $DefaultTenantId
-            Credential       = $_spCred
-            ErrorAction      = 'Stop'
-        }
-        if (-not [string]::IsNullOrWhiteSpace($DefaultSubscriptionId)) { $_connectParams['SubscriptionId'] = $DefaultSubscriptionId }
-        Write-LogEarly "[Auth] Calling Connect-AzAccount (service principal)..."
-        $azContext = (Connect-AzAccount @_connectParams).Context
-        if (-not $azContext -or -not $azContext.Account) {
-            Write-LogEarly "[Auth] Connect-AzAccount returned no context"
-            [System.Windows.MessageBox]::Show("Service principal sign-in did not complete. Please try again.",
-                "Sign-In Failed", [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Error) | Out-Null
-            exit 1
-        }
-        Write-LogEarly "[Auth] SP sign-in OK: $($azContext.Account.Id) | Sub: $($azContext.Subscription.Name)"
-    } catch {
-        # Sign-in failed - offer to clear the saved credential so the user can re-enter it
-        Write-LogEarly "[Auth] ERROR - SP sign-in failed: $_"
-        Write-Log "ERROR [Auth] SP sign-in failed: $_"
-        $_retry = [System.Windows.MessageBox]::Show(
-            "Service principal sign-in failed:`n`n$_`n`nWould you like to clear the saved credential so you can re-enter it on next launch?",
-            "Sign-In Failed",
-            [System.Windows.MessageBoxButton]::YesNo,
-            [System.Windows.MessageBoxImage]::Error)
-        if ($_retry -eq 'Yes' -and (Test-Path $_spCredPath)) {
-            Remove-Item $_spCredPath -Force
-            [System.Windows.MessageBox]::Show(
-                "Saved credential cleared. Relaunch the dashboard to enter new credentials.",
-                "Credential Cleared",
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Information) | Out-Null
-        }
-        exit 1
-    }
-
-} else {
-
-    # --- Interactive browser flow -----------------------------------------------
-    Write-LogEarly "[Auth] Mode: Interactive browser | TenantId: $DefaultTenantId | SubId: $DefaultSubscriptionId"
-    try {
-        $_connectParams = @{ ErrorAction = 'Stop' }
-        if (-not [string]::IsNullOrWhiteSpace($DefaultTenantId))       { $_connectParams['TenantId']      = $DefaultTenantId }
-        if (-not [string]::IsNullOrWhiteSpace($DefaultSubscriptionId)) { $_connectParams['SubscriptionId'] = $DefaultSubscriptionId }
-        Write-LogEarly "[Auth] Calling Connect-AzAccount (interactive)..."
-        $azContext = (Connect-AzAccount @_connectParams).Context
-        if (-not $azContext -or -not $azContext.Account) {
-            Write-LogEarly "[Auth] Connect-AzAccount returned no context"
-            [System.Windows.MessageBox]::Show("Sign-in did not complete. Please try again.",
-                "Sign-In Failed", [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Error) | Out-Null
-            exit 1
-        }
-        Write-LogEarly "[Auth] Sign-in OK: $($azContext.Account.Id) | Sub: $($azContext.Subscription.Name) ($($azContext.Subscription.Id))"
-    } catch {
-        Write-LogEarly "[Auth] ERROR - interactive sign-in failed: $_"
-        Write-Log "ERROR [Auth] Interactive sign-in failed: $_"
-        [System.Windows.MessageBox]::Show("Sign-in failed:`n`n$_", "Sign-In Failed",
-            [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
-        exit 1
-    }
-
-}
+$_cfgBase  = [System.IO.Path]::GetFileNameWithoutExtension($_configFile)
+$azContext = Connect-AzureDashboard `
+    -TenantId               $DefaultTenantId `
+    -SubscriptionId         $DefaultSubscriptionId `
+    -UseDeviceAuthentication:$UseDeviceAuthentication `
+    -UseExistingContext:$UseExistingContext `
+    -UseServicePrincipal:$UseServicePrincipal `
+    -CredentialTag          $_cfgBase `
+    -LogCallback            { param($m); Write-LogEarly $m }
 
 $subscriptionId        = $azContext.Subscription.Id
 $script:azAccountId    = $azContext.Account.Id
@@ -711,6 +498,7 @@ if ($EnableLogging) {
     # $script:LogFile already set before auth - just log the post-auth context now
     Write-Log "AVD Live Dashboard v$ScriptVersion | PS $($PSVersionTable.PSVersion) | Sub: $($azContext.Subscription.Name)"
     Write-Log "[Config] LawWorkspaceResourceId from config: '$($script:LawWorkspaceResourceId)'"
+    Write-Log "[Config] LawQueryBaseUrl from config: '$($script:LawQueryBaseUrl)'"
 }
 
 $script:armToken = Get-ArmToken
@@ -718,6 +506,12 @@ $script:armToken = Get-ArmToken
 # =============================================================================
 # Splash / Loading Window - shown immediately so the user knows something is happening
 # =============================================================================
+
+# Quick early read of dark theme — Read-Settings isn't defined yet at this point
+$_earlyDark = try {
+    $k = Get-ItemProperty -Path 'HKCU:\Software\AVDDashboard' -Name 'DarkTheme' -ErrorAction Stop
+    [bool][int]$k.DarkTheme
+} catch { $false }
 
 [xml]$splashXaml = @'
 <Window
@@ -727,7 +521,7 @@ $script:armToken = Get-ArmToken
     ResizeMode="NoResize" WindowStartupLocation="CenterScreen"
     Background="Transparent" FontFamily="Segoe UI"
     WindowStyle="None" AllowsTransparency="True" Topmost="True">
-    <Border CornerRadius="8" Background="White" BorderBrush="#DDE1E7" BorderThickness="1">
+    <Border x:Name="SplashBorder" CornerRadius="8" Background="White" BorderBrush="#DDE1E7" BorderThickness="1">
         <Border.Effect>
             <DropShadowEffect BlurRadius="20" ShadowDepth="2" Opacity="0.15" Color="#000000"/>
         </Border.Effect>
@@ -751,6 +545,14 @@ $splashReader    = New-Object System.Xml.XmlNodeReader $splashXaml
 $splashWin       = [Windows.Markup.XamlReader]::Load($splashReader)
 $splashStatus    = $splashWin.FindName("SplashStatus")
 $splashProgress  = $splashWin.FindName("SplashProgress")
+
+if ($_earlyDark) {
+    $splashWin.FindName("SplashBorder").Background  = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x25,0x25,0x26))
+    $splashWin.FindName("SplashBorder").BorderBrush = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x3F,0x3F,0x46))
+    $splashStatus.Foreground  = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x9D,0x9D,0x9D))
+    $splashProgress.Background = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x3F,0x3F,0x46))
+}
+
 $splashWin.Show()
 $splashWin.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
 
@@ -967,7 +769,7 @@ $dataScript = {
         $hpMaxSessionMap[$hp.name] = if ($null -ne $hp.properties.maxSessionLimit) { [int]$hp.properties.maxSessionLimit } else { 0 }
         $hpLBTypeMap[$hp.name]     = if ($hp.properties.loadBalancerType) { [string]$hp.properties.loadBalancerType } else { '' }
         # publicNetworkAccess: Enabled / Disabled / EnabledForSessionHostsOnly / EnabledForClientsOnly.
-        # Absent on older pools — default to Public (same as Azure's own default behaviour).
+        # Absent on older pools - default to Public (same as Azure's own default behaviour).
         $hpNetworkMap[$hp.name]    = switch ([string]$hp.properties.publicNetworkAccess) {
             'Enabled'                    { 'Public'       }
             'Disabled'                   { 'Private'      }
@@ -982,7 +784,7 @@ $dataScript = {
     #
     # Azure AVD host pools support Private Link. When a private endpoint is
     # attached, it appears under $hp.properties.privateEndpointConnections[]
-    # directly on the host pool ARM resource — no separate API call is needed.
+    # directly on the host pool ARM resource - no separate API call is needed.
     #
     # Two maps are built here:
     #   $hpPrivateEndpointMap     : hostpool name -> count (shown in the grid column)
@@ -998,7 +800,7 @@ $dataScript = {
     # a background runspace). They are passed back to the main thread via the
     # return object (PrivateEndpointDetails) and stored into $script: scope by
     # Update-UI. Script-scope assignments made inside a runspace are NOT visible
-    # on the main thread — hence the explicit pass-through via the Data object.
+    # on the main thread - hence the explicit pass-through via the Data object.
     # -------------------------------------------------------------------------
     # ── Phase 1: collect PE connection names and ARM resource IDs ────────────────
     # Each privateEndpointConnection sub-resource carries the ARM id of the actual
@@ -1029,7 +831,7 @@ $dataScript = {
     # ── Phase 2: resolve PE resource locations in parallel ───────────────────────
     # GET each PE resource by its full ARM id to retrieve the 'location' property.
     # Uses $MetaPool (already available in this scope) to fan out concurrently.
-    # Failures are non-fatal — the Region column will show blank for that PE.
+    # Failures are non-fatal - the Region column will show blank for that PE.
     if ($allPeIds.Count -gt 0) {
         $peLocationScript = [scriptblock]::Create($RestHelperDef + @'
             $tok = $args[0]; $peId = $args[1]; $LogFile = $args[2]
@@ -1180,7 +982,7 @@ $dataScript = {
                 "Network Access"    = if ($hpNetworkMap[$hpName]) { $hpNetworkMap[$hpName] } else { "Public" } # publicNetworkAccess: Public / Private / Hosts Only / Clients Only
                 "Private Endpoints" = if ($hpPrivateEndpointMap.ContainsKey($hpName)) { [string]$hpPrivateEndpointMap[$hpName] } else { '0' }
                 "Host Pool RG"   = $hpRg                                                                # Resource group of the host pool resource
-                "_VMRG"          = ""                                                                   # Session host VM resource group (empty — no VMs)
+                "_VMRG"          = ""                                                                   # Session host VM resource group (empty - no VMs)
                 "_ScalingPlanId" = if ($hpScalingPlanIdMap.ContainsKey($hpName)) { $hpScalingPlanIdMap[$hpName] } else { '' } # ARM resource ID of the attached scaling plan
                 "Scope"          = if ($hpScopeMap[$hpName]) { $hpScopeMap[$hpName] } else { "Geographical" } # Deployment scope: Geographical or Regional (preview API)
                 "HP Location"    = if ($hpLocationMap[$hpName]) { $hpLocationMap[$hpName] } else { "" } # Azure region where the host pool resource itself is deployed
@@ -1315,11 +1117,16 @@ $dataScript = {
             $vm = Invoke-Arm -Path "/subscriptions/$subId/resourceGroups/$rg/providers/Microsoft.Compute/virtualMachines/$vmn" -Token $tok -ApiVersion '2024-07-01' -FullResponse
             if ($vm) {
                 $ref = $vm.properties.storageProfile.imageReference
+                # Gallery VMs: exactVersion is set directly on the VM imageReference
                 $ver = $ref.exactVersion
+                # Fallback: some older gallery VMs may not have exactVersion on the VM object
+                # but retain it on the OS disk's creationData. Marketplace images hit this path
+                # too but return nothing (galleryImageReference is absent) — they show N/A.
+                # Note: disks use a different API version to VMs; 2024-07-01 is not valid for disks.
                 if (-not $ver -and $vm.properties.storageProfile.osDisk.managedDisk.id) {
                     $diskRg   = $vm.properties.storageProfile.osDisk.managedDisk.id.Split('/')[4]
                     $diskName = $vm.properties.storageProfile.osDisk.name
-                    $d = Invoke-Arm -Path "/subscriptions/$subId/resourceGroups/$diskRg/providers/Microsoft.Compute/disks/$diskName" -Token $tok -ApiVersion '2024-07-01' -FullResponse
+                    $d = Invoke-Arm -Path "/subscriptions/$subId/resourceGroups/$diskRg/providers/Microsoft.Compute/disks/$diskName" -Token $tok -ApiVersion '2024-03-02' -FullResponse
                     $ver = $d.properties.creationData.galleryImageReference.exactVersion
                 }
                 $ver
@@ -1334,7 +1141,7 @@ $dataScript = {
     }
 
     # -- Start RG VM count pool (BeginInvoke only, collect later) -------------
-    # Runs concurrently with imgPool above — both sets of ARM calls in flight together.
+    # Runs concurrently with imgPool above - both sets of ARM calls in flight together.
     # Wrapped in try/catch so any pool-creation failure never prevents results returning.
     # Skipped entirely when ShowRGVMCount is $false (config or Settings toggle).
     $rgVmCountMap = [System.Collections.Hashtable]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -1416,7 +1223,7 @@ $dataScript = {
             if ($imgVersionMap.ContainsKey($k)) {
                 $ver = $imgVersionMap[$k]
                 if ($ver -match '^\d{4}(\d{2}\..+)$') { $ver = $matches[1] }
-                $row."Image Version $label" = if ($ver) { $ver } else { "" }
+                $row."Image Version $label" = if ($ver) { $ver } else { "N/A" }
             } else {
                 # No query was made for this column:
                 #   - Patterns enabled: no VMs matched this group -> "N/A"
@@ -1487,7 +1294,7 @@ $dataScript = {
         NewRgLocations         = $newRgLocations
         VmRgMap                = $vmRgMap
         # Passed to Update-UI so the main thread can store it in $script: scope.
-        # Cannot write $script: directly from inside a runspace — it would target
+        # Cannot write $script: directly from inside a runspace - it would target
         # the runspace's own script scope, not the main thread's.
         PrivateEndpointDetails = $hpPrivateEndpointDetails
     }
@@ -1529,7 +1336,7 @@ function ConvertTo-DataTable {
 $script:RegPath = 'HKCU:\Software\AVDDashboard'
 
 function Read-Settings {
-    $defaults = @{ RefreshInterval = 30; FilesRefreshInterval = 900; StorageWarningPct = 90; ShadowMethod = 'MSTSC'; ShadowNoConsent = 0; ShadowUseIP = 0; ExcludedPools = @(); AvdIncludeRGs = @(); AvdExcludeRGs = @(); FilesRGs = @(); InfraRGs = @(); SecondaryRegionHighlight = 1; HiddenTabs = @(); HiddenTabsSaved = $false; HiddenColumns = @(); LowPriorityPatterns = @(); SecondaryRegions = @(); ScalingExcludeTag = ''; StorageAccountKinds = @(); InfraExcludePatterns = @(); DrainSetScalingTag = 1; AdoOrgUrl = ''; AdoRefreshInterval = 0; ShowRGVMCount = 1 }
+    $defaults = @{ RefreshInterval = 30; FilesRefreshInterval = 900; StorageWarningPct = 90; ShadowMethod = 'MSTSC'; ShadowNoConsent = 0; ShadowUseIP = 0; ExcludedPools = @(); AvdIncludeRGs = @(); AvdExcludeRGs = @(); FilesRGs = @(); InfraRGs = @(); SecondaryRegionHighlight = 1; HiddenTabs = @(); HiddenTabsSaved = $false; HiddenColumns = @(); LowPriorityPatterns = @(); SecondaryRegions = @(); ScalingExcludeTag = ''; StorageAccountKinds = @(); InfraExcludePatterns = @(); DrainSetScalingTag = 1; AdoOrgUrl = ''; AdoRefreshInterval = 0; ShowRGVMCount = 1; DarkTheme = 0 }
     try {
         if (-not (Test-Path $script:RegPath)) { return $defaults }
         $k = Get-ItemProperty -Path $script:RegPath -ErrorAction Stop
@@ -1562,6 +1369,7 @@ function Read-Settings {
             ShowRGVMCount        = if ($null -ne $k.ShowRGVMCount) { [int]$k.ShowRGVMCount } else { 1 }
             AdoOrgUrl            = if ($k.AdoOrgUrl)               { [string]$k.AdoOrgUrl } else { '' }
             AdoRefreshInterval   = if ($k.AdoRefreshInterval)     { [int]$k.AdoRefreshInterval } else { 0 }
+            DarkTheme            = if ($null -ne $k.DarkTheme)    { [int]$k.DarkTheme }          else { 0 }
         }
     } catch { $defaults }
 }
@@ -1577,7 +1385,8 @@ function Write-Settings {
         [string[]]$SecondaryRegions, [string]$ScalingExcludeTag, [string[]]$StorageAccountKinds,
         [string[]]$InfraExcludePatterns, [int]$DrainSetScalingTag = 1,
         [int]$ShowRGVMCount = 1,
-        [string]$AdoOrgUrl = ''
+        [string]$AdoOrgUrl = '',
+        [int]$DarkTheme = 0
     )
     if (-not (Test-Path $script:RegPath)) { New-Item -Path $script:RegPath -Force | Out-Null }
     Set-ItemProperty -Path $script:RegPath -Name 'RefreshInterval'           -Value $RefreshInterval
@@ -1606,6 +1415,7 @@ function Write-Settings {
     Set-ItemProperty -Path $script:RegPath -Name 'DrainSetScalingTag'       -Value $DrainSetScalingTag
     Set-ItemProperty -Path $script:RegPath -Name 'ShowRGVMCount'           -Value $ShowRGVMCount
     Set-ItemProperty -Path $script:RegPath -Name 'AdoOrgUrl'               -Value $AdoOrgUrl
+    Set-ItemProperty -Path $script:RegPath -Name 'DarkTheme'               -Value $DarkTheme
 }
 
 # =============================================================================
@@ -1647,9 +1457,14 @@ function Invoke-ConfigReload {
     # Config-only variables (no registry override) - applied directly
     $script:HostGroupPatterns       = if ($c.AVDHostPools.HostGroupPatterns) { $c.AVDHostPools.HostGroupPatterns } else { @{ A = ''; B = '' } }
     $script:LawWorkspaceResourceId  = [string]$c.LogAnalytics.WorkspaceResourceId
+    $script:LawQueryBaseUrl         = [string]$c.LogAnalytics.QueryBaseUrl
     $script:InputDelayExcludeProcesses = @($c.LogAnalytics.InputDelayExcludeProcesses)
     if (-not $script:InputDelayExcludeProcesses) { $script:InputDelayExcludeProcesses = @() }
     $script:InfraExcludePatterns    = @($c.InfrastructureServers.ExcludePatterns | Where-Object { $_ })
+    $script:ImgGalleryRGs          = @($c.Images.GalleryRGs | Where-Object { $_ })
+    $script:ImgPrepVMSizes         = @($c.Images.PrepVMSizes | Where-Object { $_ })
+    if ($script:ImgPrepVMSizes.Count -eq 0) { $script:ImgPrepVMSizes = @('Standard_D2s_v5','Standard_D4s_v5','Standard_D8s_v5') }
+    $script:ImgPrepVMSizeDefault   = if ($c.Images.PrepVMSizeDefault) { [string]$c.Images.PrepVMSizeDefault } else { 'Standard_D4s_v5' }
     $script:ScalingExcludeTag       = $script:DefaultScalingExcludeTag
     $script:NetworkRangesList       = @(
         foreach ($entry in @($c.NetworkRanges)) {
@@ -1674,7 +1489,8 @@ function Invoke-ConfigReload {
     $script:SecondaryRegions            = if ($saved.SecondaryRegions.Count -gt 0)    { $saved.SecondaryRegions }    else { $script:DefaultSecondaryRegions }
     $script:SecondaryRegionHighlight    = if ($null -ne $saved.SecondaryRegionHighlight) { [bool][int]$saved.SecondaryRegionHighlight } else { $script:DefaultSecondaryRegionHighlight }
     $script:HiddenColumns               = if ($saved.HiddenColumns.Count -gt 0)       { $saved.HiddenColumns }       else { $script:DefaultHiddenColumns }
-    $script:HiddenTabs                  = if ($saved.HiddenTabsSaved)                  { $saved.HiddenTabs }           else { $script:DefaultHiddenTabs }
+    # Effective hidden tabs = registry-saved union config defaults (config is the hard floor)
+    $script:HiddenTabs                  = @(@(if ($saved.HiddenTabsSaved) { $saved.HiddenTabs } else { $script:DefaultHiddenTabs }) + $script:DefaultHiddenTabs | Select-Object -Unique)
     $script:LowPriorityHostPoolPatterns = if ($saved.LowPriorityPatterns.Count -gt 0)  { $saved.LowPriorityPatterns }  else { $script:DefaultLowPriorityPatterns }
     $script:ScalingExcludeTag           = if ($saved.ScalingExcludeTag)                { $saved.ScalingExcludeTag }    else { $script:DefaultScalingExcludeTag }
     $script:InfraExcludePatterns        = if ($saved.InfraExcludePatterns.Count -gt 0) { $saved.InfraExcludePatterns } else { $script:InfraExcludePatterns }
@@ -1700,12 +1516,15 @@ $script:StorageAccountKinds          = if ($savedSettings.StorageAccountKinds.Co
 $script:SecondaryRegions             = if ($savedSettings.SecondaryRegions.Count -gt 0)     { $savedSettings.SecondaryRegions }     else { $SecondaryRegions }
 $script:SecondaryRegionHighlight     = if ($null -ne $savedSettings.SecondaryRegionHighlight) { [bool][int]$savedSettings.SecondaryRegionHighlight } else { $SecondaryRegionHighlightEnabled }
 $script:HiddenColumns                = if ($savedSettings.HiddenColumns.Count -gt 0)        { $savedSettings.HiddenColumns }        else { $HiddenColumns }
-$script:HiddenTabs                   = if ($savedSettings.HiddenTabsSaved)                  { $savedSettings.HiddenTabs }           else { $HiddenTabs }
+# Effective hidden tabs = registry-saved union config defaults (config is the hard floor)
+$script:HiddenTabs                   = @(@(if ($savedSettings.HiddenTabsSaved) { $savedSettings.HiddenTabs } else { $HiddenTabs }) + $HiddenTabs | Select-Object -Unique)
 $script:LowPriorityHostPoolPatterns  = if ($savedSettings.LowPriorityPatterns.Count -gt 0)  { $savedSettings.LowPriorityPatterns }  else { $LowPriorityHostPoolPatterns }
 $script:ScalingExcludeTag            = if ($savedSettings.ScalingExcludeTag)                 { $savedSettings.ScalingExcludeTag }    else { $script:ScalingExcludeTag }
 $script:InfraExcludePatterns         = if ($savedSettings.InfraExcludePatterns.Count -gt 0)  { $savedSettings.InfraExcludePatterns } else { $script:InfraExcludePatterns }
 $script:DrainSetScalingTag           = [bool]$savedSettings.DrainSetScalingTag
 $script:ShowRGVMCount                = if ($null -ne $savedSettings.ShowRGVMCount) { [bool][int]$savedSettings.ShowRGVMCount } else { $script:ShowRGVMCount }
+$script:DarkTheme                    = if ($null -ne $savedSettings.DarkTheme) { [bool][int]$savedSettings.DarkTheme } else { $false }
+
 # Registry AdoOrgUrl overrides config.psd1 when set
 if ($savedSettings.AdoOrgUrl) { $script:AdoOrgUrl = $savedSettings.AdoOrgUrl }
 # Registry AdoRefreshInterval overrides config.psd1 when set
@@ -1721,6 +1540,7 @@ if ($savedSettings.AdoRefreshInterval -gt 0) { $script:AdoRefreshIntervalSeconds
 . "$PSScriptRoot\scripts\tab-sessioninfo.ps1"
 . "$PSScriptRoot\scripts\tab-azurefiles.ps1"
 . "$PSScriptRoot\scripts\tab-monitoring.ps1"
+. "$PSScriptRoot\scripts\tab-images.ps1"
 . "$PSScriptRoot\scripts\tab-infrastructure.ps1"
 . "$PSScriptRoot\scripts\tab-azuredevops.ps1"
 . "$PSScriptRoot\scripts\session-detail.ps1"
@@ -1743,45 +1563,58 @@ $rawXaml = @'
     Height="820" Width="1276"
     MinHeight="560" MinWidth="1120"
     WindowStartupLocation="CenterScreen"
-    Background="#F4F6F9"
+    Background="{DynamicResource Avd.Window.Bg}"
+    Foreground="{DynamicResource Avd.Window.Fg}"
     FontFamily="Segoe UI"
     UseLayoutRounding="True"
     TextOptions.TextFormattingMode="Display"
     TextOptions.TextRenderingMode="ClearType">
 
     <Window.Resources>
+        <!-- THEME_SLOT -->
 
         <!-- DataGrid base style -->
         <Style TargetType="DataGrid">
-            <Setter Property="Background"              Value="White"/>
-            <Setter Property="BorderBrush"             Value="#DDE1E7"/>
-            <Setter Property="BorderThickness"         Value="1"/>
-            <Setter Property="RowBackground"           Value="White"/>
-            <Setter Property="AlternatingRowBackground" Value="#F7F9FC"/>
-            <Setter Property="GridLinesVisibility"     Value="Horizontal"/>
-            <Setter Property="HorizontalGridLinesBrush" Value="#E8EAED"/>
-            <Setter Property="ColumnHeaderHeight"      Value="38"/>
-            <Setter Property="RowHeight"               Value="34"/>
-            <Setter Property="FontSize"                Value="13"/>
-            <Setter Property="IsReadOnly"              Value="True"/>
-            <Setter Property="AutoGenerateColumns"     Value="True"/>
-            <Setter Property="SelectionMode"           Value="Single"/>
-            <Setter Property="CanUserResizeRows"       Value="False"/>
-            <Setter Property="CanUserAddRows"          Value="False"/>
-            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="Background"               Value="{DynamicResource Avd.Grid.Bg}"/>
+            <Setter Property="BorderBrush"              Value="{DynamicResource Avd.Border.Std}"/>
+            <Setter Property="BorderThickness"          Value="1"/>
+            <Setter Property="RowBackground"            Value="{DynamicResource Avd.Grid.Bg}"/>
+            <Setter Property="AlternatingRowBackground" Value="{DynamicResource Avd.AltRow.Bg}"/>
+            <Setter Property="GridLinesVisibility"      Value="Horizontal"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource Avd.Border.Grid}"/>
+            <Setter Property="ColumnHeaderHeight"       Value="38"/>
+            <Setter Property="RowHeight"                Value="34"/>
+            <Setter Property="FontSize"                 Value="13"/>
+            <Setter Property="Foreground"               Value="{DynamicResource Avd.Window.Fg}"/>
+            <Setter Property="IsReadOnly"               Value="True"/>
+            <Setter Property="AutoGenerateColumns"      Value="True"/>
+            <Setter Property="SelectionMode"            Value="Single"/>
+            <Setter Property="CanUserResizeRows"        Value="False"/>
+            <Setter Property="CanUserAddRows"           Value="False"/>
+            <Setter Property="RowHeaderWidth"           Value="0"/>
+            <Setter Property="HeadersVisibility"        Value="Column"/>
+            <Setter Property="VerticalScrollBarVisibility"   Value="Auto"/>
             <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
+        </Style>
+
+        <!-- Row header style — zero-width, background matches grid so no white strip on scroll -->
+        <Style TargetType="DataGridRowHeader">
+            <Setter Property="Background"   Value="{DynamicResource Avd.Grid.Bg}"/>
+            <Setter Property="BorderBrush"  Value="{DynamicResource Avd.Grid.Bg}"/>
+            <Setter Property="Width"        Value="0"/>
+            <Setter Property="MinWidth"     Value="0"/>
         </Style>
 
         <!-- Column header style -->
         <Style TargetType="DataGridColumnHeader">
-            <Setter Property="Background"                 Value="#0078D4"/>
-            <Setter Property="Foreground"                 Value="White"/>
+            <Setter Property="Background"                 Value="{DynamicResource Avd.ColHeader.Bg}"/>
+            <Setter Property="Foreground"                 Value="{DynamicResource Avd.ColHeader.Fg}"/>
             <Setter Property="FontWeight"                 Value="SemiBold"/>
             <Setter Property="FontSize"                   Value="12"/>
             <Setter Property="Padding"                    Value="12,0"/>
             <Setter Property="HorizontalContentAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment"   Value="Center"/>
-            <Setter Property="BorderBrush"                Value="#005A9E"/>
+            <Setter Property="BorderBrush"                Value="{DynamicResource Avd.ColHeader.Border}"/>
             <Setter Property="BorderThickness"            Value="0,0,1,0"/>
         </Style>
 
@@ -1803,20 +1636,21 @@ $rawXaml = @'
                 <Trigger Property="IsSelected" Value="True">
                     <Setter Property="Background" Value="Transparent"/>
                     <Setter Property="BorderBrush" Value="Transparent"/>
-                    <Setter Property="Foreground" Value="#1F2937"/>
+                    <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Selected}"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
 
-        <!-- Row hover -->
+        <!-- Row hover and selection -->
         <Style TargetType="DataGridRow">
+            <Setter Property="Foreground" Value="{DynamicResource Avd.Window.Fg}"/>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#EEF4FC"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Hover.Bg}"/>
                 </Trigger>
                 <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="#D0E7FA"/>
-                    <Setter Property="Foreground" Value="#1F2937"/>
+                    <Setter Property="Background" Value="{DynamicResource Avd.Selected.Bg}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Selected}"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -1826,7 +1660,7 @@ $rawXaml = @'
             <Setter Property="FontSize"   Value="13"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Padding"    Value="16,8"/>
-            <Setter Property="Foreground" Value="#555"/>
+            <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Secondary}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabItem">
@@ -1843,11 +1677,11 @@ $rawXaml = @'
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="#0078D4"/>
-                                <Setter Property="Foreground" Value="#0078D4"/>
+                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="{DynamicResource Avd.Fg.Accent}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Accent}"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="TabBorder" Property="Background" Value="#F0F4F8"/>
+                                <Setter TargetName="TabBorder" Property="Background" Value="{DynamicResource Avd.TabHover.Bg}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1857,24 +1691,24 @@ $rawXaml = @'
 
         <!-- Card border style -->
         <Style x:Key="CardBorder" TargetType="Border">
-            <Setter Property="Background"      Value="White"/>
+            <Setter Property="Background"      Value="{DynamicResource Avd.Card.Bg}"/>
             <Setter Property="CornerRadius"    Value="8"/>
             <Setter Property="Padding"         Value="20,14"/>
             <Setter Property="Margin"          Value="6,0,6,0"/>
             <Setter Property="MinWidth"        Value="120"/>
-            <Setter Property="BorderBrush"     Value="#DDE1E7"/>
+            <Setter Property="BorderBrush"     Value="{DynamicResource Avd.Border.Std}"/>
             <Setter Property="BorderThickness" Value="1"/>
         </Style>
 
-        <!-- Refresh button style -->
+        <!-- Status-bar button style -->
         <Style x:Key="RefreshBtn" TargetType="Button">
-            <Setter Property="Background"        Value="#005A9E"/>
-            <Setter Property="Foreground"        Value="White"/>
-            <Setter Property="BorderThickness"   Value="0"/>
-            <Setter Property="Padding"           Value="14,5"/>
-            <Setter Property="FontSize"          Value="12"/>
-            <Setter Property="FontWeight"        Value="SemiBold"/>
-            <Setter Property="Cursor"            Value="Hand"/>
+            <Setter Property="Background"      Value="{DynamicResource Avd.Btn.Std.Bg}"/>
+            <Setter Property="Foreground"      Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding"         Value="14,5"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="FontWeight"      Value="SemiBold"/>
+            <Setter Property="Cursor"          Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -1885,10 +1719,33 @@ $rawXaml = @'
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#004F8C"/>
+                                <Setter Property="Background" Value="{DynamicResource Avd.Btn.Std.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter Property="Background" Value="#003D6B"/>
+                                <Setter Property="Background" Value="{DynamicResource Avd.Btn.Std.Press}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Dark mode toggle switch -->
+        <Style x:Key="ToggleSwitch" TargetType="ToggleButton">
+            <Setter Property="Width"  Value="40"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Track" CornerRadius="11" Background="#AAAAAA">
+                            <Ellipse x:Name="Thumb" Width="16" Height="16" Fill="White"
+                                     HorizontalAlignment="Left" Margin="3,0"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="#0078D4"/>
+                                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1906,7 +1763,7 @@ $rawXaml = @'
              deallocate results listing many VM names) would otherwise be silently
              clipped. TextTrimming="CharacterEllipsis" shows '...' at the cutoff
              and the self-bound ToolTip lets the user hover to read the full text. -->
-        <Border DockPanel.Dock="Bottom" Background="#0078D4" Height="32">
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.StatusBar.Bg}" Height="32">
             <Grid Margin="12,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -1920,7 +1777,7 @@ $rawXaml = @'
                            ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock x:Name="CountdownText"
-                               Foreground="#B3D7F5" FontSize="12"
+                               Foreground="{DynamicResource Avd.Fg.Countdown}" FontSize="12"
                                VerticalAlignment="Center" Margin="0,0,14,0"/>
                     <Button x:Name="RefreshButton"
                             Content="Refresh Now"
@@ -1942,23 +1799,25 @@ $rawXaml = @'
         </Border>
 
         <!-- == Header == -->
-        <Border DockPanel.Dock="Top" Background="White" Padding="20,14,20,14">
-            <Border.Effect>
-                <DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.10" Color="#000000"/>
-            </Border.Effect>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <StackPanel>
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <TextBlock Text="AVD Live Dashboard"
-                                   FontSize="20" FontWeight="Bold" Foreground="#0078D4"
-                                   VerticalAlignment="Center"/>
-                        <!-- Version badge (remove or update for release builds) -->
-
-                    </StackPanel>
+        <Border DockPanel.Dock="Top" Background="{DynamicResource Avd.Header.Bg}" Padding="20,14,20,14"
+                Effect="{DynamicResource Avd.CardShadow}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                    <TextBlock Text="AVD Live Dashboard"
+                               FontSize="20" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"/>
                     <TextBlock x:Name="ConnectedAsText"
-                               FontSize="12" Foreground="#666"/>
+                               FontSize="12" Foreground="{DynamicResource Avd.Fg.Muted}"/>
                 </StackPanel>
-            </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Dark" FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}"
+                               VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <ToggleButton x:Name="DarkToggle" Style="{StaticResource ToggleSwitch}"/>
+                </StackPanel>
+            </Grid>
         </Border>
 
         <!-- == Main Content == -->
@@ -1976,10 +1835,10 @@ $rawXaml = @'
                 <Border x:Name="CardPoolsBorder" Style="{StaticResource CardBorder}" Cursor="Hand">
                     <StackPanel HorizontalAlignment="Center">
                         <TextBlock x:Name="CardPools" Text="-"
-                                   FontSize="30" FontWeight="Bold" Foreground="#0078D4"
+                                   FontSize="30" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"
                                    HorizontalAlignment="Center"/>
                         <TextBlock Text="Host Pools"
-                                   FontSize="11" Foreground="#888"
+                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    HorizontalAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
@@ -1987,10 +1846,10 @@ $rawXaml = @'
                 <Border x:Name="CardVMsBorder" Style="{StaticResource CardBorder}" Cursor="Hand">
                     <StackPanel HorizontalAlignment="Center">
                         <TextBlock x:Name="CardVMs" Text="-"
-                                   FontSize="30" FontWeight="Bold" Foreground="#0078D4"
+                                   FontSize="30" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"
                                    HorizontalAlignment="Center"/>
                         <TextBlock Text="Total VMs"
-                                   FontSize="11" Foreground="#888"
+                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    HorizontalAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
@@ -1998,10 +1857,10 @@ $rawXaml = @'
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel HorizontalAlignment="Center">
                         <TextBlock x:Name="CardOn" Text="-"
-                                   FontSize="30" FontWeight="Bold" Foreground="#107C10"
+                                   FontSize="30" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Available}"
                                    HorizontalAlignment="Center"/>
                         <TextBlock Text="VMs Available"
-                                   FontSize="11" Foreground="#888"
+                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    HorizontalAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
@@ -2012,7 +1871,7 @@ $rawXaml = @'
                                    FontSize="30" FontWeight="Bold" Foreground="#D83B01"
                                    HorizontalAlignment="Center"/>
                         <TextBlock Text="VMs Not Available"
-                                   FontSize="11" Foreground="#888"
+                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    HorizontalAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
@@ -2020,10 +1879,10 @@ $rawXaml = @'
                 <Border x:Name="CardActiveBorder" Style="{StaticResource CardBorder}" Cursor="Hand">
                     <StackPanel HorizontalAlignment="Center">
                         <TextBlock x:Name="CardActive" Text="-"
-                                   FontSize="30" FontWeight="Bold" Foreground="#0078D4"
+                                   FontSize="30" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"
                                    HorizontalAlignment="Center"/>
                         <TextBlock Text="Active Sessions"
-                                   FontSize="11" Foreground="#888"
+                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    HorizontalAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
@@ -2031,10 +1890,10 @@ $rawXaml = @'
                 <Border x:Name="CardDisconnBorder" Style="{StaticResource CardBorder}" Cursor="Hand">
                     <StackPanel HorizontalAlignment="Center">
                         <TextBlock x:Name="CardDisconn" Text="-"
-                                   FontSize="30" FontWeight="Bold" Foreground="#797775"
+                                   FontSize="30" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Disconnected}"
                                    HorizontalAlignment="Center"/>
                         <TextBlock Text="Disconnected"
-                                   FontSize="11" Foreground="#888"
+                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    HorizontalAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
@@ -2042,10 +1901,10 @@ $rawXaml = @'
                 <Border x:Name="CardTotalBorder" Style="{StaticResource CardBorder}" Cursor="Hand">
                     <StackPanel HorizontalAlignment="Center">
                         <TextBlock x:Name="CardTotal" Text="-"
-                                   FontSize="30" FontWeight="Bold" Foreground="#0078D4"
+                                   FontSize="30" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"
                                    HorizontalAlignment="Center"/>
                         <TextBlock Text="Total Sessions"
-                                   FontSize="11" Foreground="#888"
+                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    HorizontalAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
@@ -2057,10 +1916,10 @@ $rawXaml = @'
                     <StackPanel HorizontalAlignment="Center">
                         <TextBlock x:Name="CardStorageIcon" Text="-"
                                    FontSize="30" FontWeight="Bold"
-                                   Foreground="#888" HorizontalAlignment="Center"/>
+                                   Foreground="{DynamicResource Avd.Fg.Hint}" HorizontalAlignment="Center"/>
                         <TextBlock x:Name="CardStorageText"
                                    Text="Storage"
-                                   FontSize="11" Foreground="#888"
+                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    HorizontalAlignment="Center" Margin="0,4,0,0"
                                    TextWrapping="Wrap" MaxWidth="100"
                                    TextAlignment="Center"/>
@@ -2088,6 +1947,8 @@ $rawXaml = @'
 
                 <!-- TAB:AZURE_FILES -->
 
+                <!-- TAB:IMAGES -->
+
                 <!-- TAB:INFRASTRUCTURE -->
 
                 <!-- TAB:MONITORING -->
@@ -2102,14 +1963,21 @@ $rawXaml = @'
 '@
 
 # Inject tab XAML fragments by replacing placeholder comments, then parse.
-$mergedXaml = ((((((
+$mergedXaml = (((((((
     $rawXaml `
     -replace '<!-- TAB:SESSION_HOSTS -->',  $SessionHostsTab_Xaml) `
     -replace '<!-- TAB:SESSION_INFO -->',   $SessionInfoTab_Xaml) `
     -replace '<!-- TAB:AZURE_FILES -->',    $AzureFilesTab_Xaml) `
     -replace '<!-- TAB:MONITORING -->',     $MonitoringTab_Xaml) `
+    -replace '<!-- TAB:IMAGES -->',         $ImagesTab_Xaml) `
     -replace '<!-- TAB:INFRASTRUCTURE -->', $InfrastructureTab_Xaml) `
     -replace '<!-- TAB:AZURE_DEVOPS -->',   $AzureDevOpsTab_Xaml)
+
+# Inject theme resource dictionary into THEME_SLOT placeholder
+$script:_themeFile = if ($script:DarkTheme) { 'dark' } else { 'light' }
+$_themeFile        = $script:_themeFile
+$_themeContent     = Get-Content -Raw -Path "$PSScriptRoot\data\$_themeFile-theme.xaml" -ErrorAction Stop
+$mergedXaml        = $mergedXaml -replace '<!-- THEME_SLOT -->', $_themeContent
 
 try {
     [xml]$xaml = $mergedXaml
@@ -2125,10 +1993,104 @@ try {
 try {
     $reader = New-Object System.Xml.XmlNodeReader $xaml
     $window = [System.Windows.Markup.XamlReader]::Load($reader)
+    $script:MainWindow = $window
 } catch {
     Write-Log "ERROR [XAML Load] $_"
     throw
 }
+
+function Switch-DashboardTheme {
+    param([bool]$Dark)
+    $script:DarkTheme  = $Dark
+    $script:_themeFile = if ($Dark) { 'dark' } else { 'light' }
+    $_tc = Get-Content -Raw -Path "$PSScriptRoot\data\$script:_themeFile-theme.xaml" -ErrorAction Stop
+    # Parse new theme into a temporary ResourceDictionary, then overwrite each key in
+    # $window.Resources in-place. WPF fires DynamicResource change notifications for each
+    # overwritten key, updating all {DynamicResource Avd.*} consumers immediately.
+    $_rd = [System.Windows.Markup.XamlReader]::Parse("<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_tc</ResourceDictionary>")
+    foreach ($_key in @($_rd.Keys)) {
+        $window.Resources[$_key] = $_rd[$_key]
+    }
+
+    # Rebuild pool row style with updated colors
+    $_rowSecBg   = if ($Dark) { [System.Windows.Media.Color]::FromRgb(0x4A,0x1A,0x1A) } else { [System.Windows.Media.Color]::FromRgb(0xFF,0xD7,0xD7) }
+    $_rowHoverBg = if ($Dark) { [System.Windows.Media.Color]::FromRgb(0x2A,0x2D,0x2E) } else { [System.Windows.Media.Color]::FromRgb(0xEE,0xF4,0xFC) }
+    $_rowSelBg   = if ($Dark) { [System.Windows.Media.Color]::FromRgb(0x09,0x47,0x71) } else { [System.Windows.Media.Color]::FromRgb(0xD0,0xE7,0xFA) }
+    $_rowSelFg   = if ($Dark) { [System.Windows.Media.Color]::FromRgb(0xCC,0xCC,0xCC) } else { [System.Windows.Media.Color]::FromRgb(0x1F,0x29,0x37) }
+    $_newStyle = New-Object System.Windows.Style([System.Windows.Controls.DataGridRow])
+    $_secTrig = New-Object System.Windows.DataTrigger
+    $_secTrig.Binding = New-Object System.Windows.Data.Binding('[_IsSecondary]')
+    $_secTrig.Value   = 'True'
+    [void]$_secTrig.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::BackgroundProperty, [System.Windows.Media.SolidColorBrush]($_rowSecBg))))
+    $_hovTrig = New-Object System.Windows.Trigger
+    $_hovTrig.Property = [System.Windows.Controls.DataGridRow]::IsMouseOverProperty
+    $_hovTrig.Value    = $true
+    [void]$_hovTrig.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::BackgroundProperty, [System.Windows.Media.SolidColorBrush]($_rowHoverBg))))
+    $_selTrig = New-Object System.Windows.Trigger
+    $_selTrig.Property = [System.Windows.Controls.DataGridRow]::IsSelectedProperty
+    $_selTrig.Value    = $true
+    [void]$_selTrig.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::BackgroundProperty, [System.Windows.Media.SolidColorBrush]($_rowSelBg))))
+    [void]$_selTrig.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::ForegroundProperty, [System.Windows.Media.SolidColorBrush]($_rowSelFg))))
+    [void]$_newStyle.Triggers.Add($_secTrig)
+    [void]$_newStyle.Triggers.Add($_hovTrig)
+    [void]$_newStyle.Triggers.Add($_selTrig)
+    if ($script:PoolGrid) { $script:PoolGrid.RowStyle = $_newStyle }
+
+    # Rebuild SHGrid row style with updated theme colours
+    if ($script:SHGrid) {
+        $_shFg    = if ($Dark) { [System.Windows.Media.Color]::FromRgb(0xD4,0xD4,0xD4) } else { [System.Windows.Media.Color]::FromRgb(0x1F,0x29,0x37) }
+        $_shStyle = New-Object System.Windows.Style([System.Windows.Controls.DataGridRow])
+        [void]$_shStyle.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::ForegroundProperty, [System.Windows.Media.SolidColorBrush]($_shFg))))
+        $_shHov = New-Object System.Windows.Trigger
+        $_shHov.Property = [System.Windows.Controls.DataGridRow]::IsMouseOverProperty
+        $_shHov.Value    = $true
+        [void]$_shHov.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::BackgroundProperty, [System.Windows.Media.SolidColorBrush]($_rowHoverBg))))
+        $_shSel = New-Object System.Windows.Trigger
+        $_shSel.Property = [System.Windows.Controls.DataGridRow]::IsSelectedProperty
+        $_shSel.Value    = $true
+        [void]$_shSel.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::BackgroundProperty, [System.Windows.Media.SolidColorBrush]($_rowSelBg))))
+        [void]$_shSel.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::ForegroundProperty, [System.Windows.Media.SolidColorBrush]($_rowSelFg))))
+        [void]$_shStyle.Triggers.Add($_shHov)
+        [void]$_shStyle.Triggers.Add($_shSel)
+        $script:SHGrid.RowStyle = $_shStyle
+    }
+
+    # Force SHGrid column regeneration so metric cell colours reflect the new theme.
+    # CellStyle trigger setters are frozen once applied; the only way to update them is
+    # to make the DataGrid re-run AutoGeneratingColumn by briefly clearing ItemsSource.
+    if ($script:SHGrid -and $script:SHGrid.ItemsSource) {
+        $_shView = $script:SHGrid.ItemsSource
+        $script:SHGrid.ItemsSource = $null
+        $script:SHGrid.ItemsSource = $_shView
+    }
+
+    # Reset storage tile to current card background (next Azure Files refresh will re-apply state colours)
+    if ($script:CardStorageBorder) {
+        $script:CardStorageBorder.Background  = $window.Resources['Avd.Card.Bg']
+        $script:CardStorageBorder.BorderBrush = $window.Resources['Avd.Border.Std']
+    }
+
+    # Update title bar
+    try {
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+        $v = [int]$Dark
+        [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+    } catch {}
+
+    # Redraw monitoring canvas charts — they use hardcoded colours evaluated at draw time,
+    # not DynamicResource, so must be explicitly redrawn when the theme changes.
+    if ($script:_monSessionHistoryData) {
+        Update-SessionHistoryChart -Canvas $script:monSessionHistoryCanvas `
+            -SessionsData     $script:_monSessionHistoryData.Sessions `
+            -DisconnectedData $script:_monSessionHistoryData.Disconnected `
+            -TotalData        $script:_monSessionHistoryData.Total `
+            -BinMinutes       $script:_monSessionHistoryBinMins
+    }
+    if ($script:_monWinlogonData -and $script:_monWinlogonData.Count -gt 0) {
+        Update-WinlogonChart -Canvas $script:monWinlogonCanvas -StageData $script:_monWinlogonData
+    }
+}
+
 Set-SplashStatus "Binding UI controls..." -Progress 95
 $script:firstLoadComplete = $false
 
@@ -2146,6 +2108,16 @@ $script:AboutButton    = $window.FindName("AboutButton")
 $script:PoolGrid          = $window.FindName("PoolGrid")
 $script:RegionGrid        = $window.FindName("RegionGrid")
 $script:MainTabControl     = $window.FindName("MainTabControl")
+$script:DarkToggle         = $window.FindName("DarkToggle")
+$script:DarkToggle.IsChecked = $script:DarkTheme
+$script:DarkToggle.Add_Checked({
+    try { Set-ItemProperty -Path $script:RegPath -Name 'DarkTheme' -Value 1 } catch {}
+    Switch-DashboardTheme $true
+})
+$script:DarkToggle.Add_Unchecked({
+    try { Set-ItemProperty -Path $script:RegPath -Name 'DarkTheme' -Value 0 } catch {}
+    Switch-DashboardTheme $false
+})
 
 # Collapse any tabs listed in HiddenTabs config. Collapsed tabs are fully
 # removed from the tab strip - the user cannot see or navigate to them.
@@ -2187,7 +2159,7 @@ Set-SplashStatus "Configuring grid styles and layout..." -Progress 96
 $script:PoolGrid.Add_AutoGeneratingColumn({
     param($s, $e)
     if ($e.Column.Header -in @('_IsSecondary', '_VMRG', '_RGVMDiff', '_ScalingPlanId')) { $e.Cancel = $true; return }
-    # Hide RG VMs column when the feature is disabled — no data is collected so the column would be empty
+    # Hide RG VMs column when the feature is disabled - no data is collected so the column would be empty
     if (-not $script:ShowRGVMCount -and $e.Column.Header -eq 'RG VMs') { $e.Cancel = $true; return }
     if ($script:HiddenColumns.Count -gt 0 -and $e.Column.Header -in $script:HiddenColumns) { $e.Cancel = $true; return }
     $colName = [string]$e.Column.Header
@@ -2209,7 +2181,7 @@ $script:PoolGrid.Add_AutoGeneratingColumn({
         $cellStyle = New-Object System.Windows.Style([System.Windows.Controls.DataGridCell])
         if ($baseStyle) { $cellStyle.BasedOn = $baseStyle }
 
-        # Use DataTriggers exclusively — no default Background setter.
+        # Use DataTriggers exclusively - no default Background setter.
         # DataTriggers have higher WPF precedence than the inherited IsSelected property
         # Trigger from the base style, so red is preserved when the row is selected.
         # Add transparent triggers first (diff==0, empty), then red triggers for each
@@ -2250,7 +2222,12 @@ $script:PoolGrid.Add_AutoGeneratingColumn({
     }
 })
 
-# Build row style: light red for secondary-region rows with sessions, standard hover/select otherwise
+# Build row style: secondary-region tint for rows with sessions, standard hover/select otherwise
+$_rowSecBg   = if ($script:DarkTheme) { [System.Windows.Media.Color]::FromRgb(0x4A,0x1A,0x1A) } else { [System.Windows.Media.Color]::FromRgb(0xFF,0xD7,0xD7) }
+$_rowHoverBg = if ($script:DarkTheme) { [System.Windows.Media.Color]::FromRgb(0x2A,0x2D,0x2E) } else { [System.Windows.Media.Color]::FromRgb(0xEE,0xF4,0xFC) }
+$_rowSelBg   = if ($script:DarkTheme) { [System.Windows.Media.Color]::FromRgb(0x09,0x47,0x71) } else { [System.Windows.Media.Color]::FromRgb(0xD0,0xE7,0xFA) }
+$_rowSelFg   = if ($script:DarkTheme) { [System.Windows.Media.Color]::FromRgb(0xCC,0xCC,0xCC) } else { [System.Windows.Media.Color]::FromRgb(0x1F,0x29,0x37) }
+
 $poolRowStyle = New-Object System.Windows.Style([System.Windows.Controls.DataGridRow])
 
 $secondaryTrigger = New-Object System.Windows.DataTrigger
@@ -2259,7 +2236,7 @@ $secondaryTrigger.Value   = 'True'
 [void]$secondaryTrigger.Setters.Add(
     (New-Object System.Windows.Setter(
         [System.Windows.Controls.DataGridRow]::BackgroundProperty,
-        [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xFF, 0xD7, 0xD7))
+        [System.Windows.Media.SolidColorBrush]($_rowSecBg)
     ))
 )
 
@@ -2269,7 +2246,7 @@ $hoverTrigger.Value    = $true
 [void]$hoverTrigger.Setters.Add(
     (New-Object System.Windows.Setter(
         [System.Windows.Controls.DataGridRow]::BackgroundProperty,
-        [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xEE, 0xF4, 0xFC))
+        [System.Windows.Media.SolidColorBrush]($_rowHoverBg)
     ))
 )
 
@@ -2279,13 +2256,13 @@ $selectedTrigger.Value    = $true
 [void]$selectedTrigger.Setters.Add(
     (New-Object System.Windows.Setter(
         [System.Windows.Controls.DataGridRow]::BackgroundProperty,
-        [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xD0, 0xE7, 0xFA))
+        [System.Windows.Media.SolidColorBrush]($_rowSelBg)
     ))
 )
 [void]$selectedTrigger.Setters.Add(
     (New-Object System.Windows.Setter(
         [System.Windows.Controls.DataGridRow]::ForegroundProperty,
-        [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x1F, 0x29, 0x37))
+        [System.Windows.Media.SolidColorBrush]($_rowSelFg)
     ))
 )
 
@@ -2355,12 +2332,12 @@ function Invoke-PoolScalingPlanToggle {
 #
 # PE data is sourced from $script:hpPrivateEndpointDetails, populated during the
 # refresh cycle in two phases:
-#   Phase 1 — PE connection names read from $hp.properties.privateEndpointConnections
-#   Phase 2 — PE resource locations resolved via parallel GET calls against each
+#   Phase 1 - PE connection names read from $hp.properties.privateEndpointConnections
+#   Phase 2 - PE resource locations resolved via parallel GET calls against each
 #              PE's ARM resource id (properties.privateEndpoint.id), using the
 #              Microsoft.Network API version 2024-01-01
 #
-# No additional API calls are made at popup time — all data is pre-fetched.
+# No additional API calls are made at popup time - all data is pre-fetched.
 #
 # The PE connection name is the Azure sub-resource name (e.g. "mypool-pe1.abc123")
 # matching what is shown in the Azure Portal under:
@@ -2512,13 +2489,9 @@ function Show-ScalingPlanHistory {
 
     # ── Run LAW query (window is now painted, blocking is fine) ───────────────
     try {
-        $tok  = Get-ArmToken
-        $resp = Invoke-ArmRestMethod -Method POST `
-                    -Path "$lawId/api/query" `
-                    -Token $tok `
-                    -ApiVersion '2020-08-01' `
-                    -Body @{ query = $kql; timespan = 'P1D' } `
-                    -FullResponse
+        $resp = Invoke-LawQuery -Kql $kql -Timespan 'P1D' `
+                    -WorkspaceResourceId $lawId `
+                    -QueryBaseUrl $script:LawQueryBaseUrl
 
         $table = $resp.tables[0]
         if (-not $table -or $table.rows.Count -eq 0) {
@@ -2526,7 +2499,7 @@ function Show-ScalingPlanHistory {
             return
         }
 
-        # Build column index lookup — tolerates PS5.1 (.name) and PS7 (.ColumnName)
+        # Build column index lookup - tolerates PS5.1 (.name) and PS7 (.ColumnName)
         $cols      = @($table.columns | ForEach-Object { $n = [string]$_.name; if (-not $n) { $n = [string]$_.ColumnName }; $n })
         $colsLower = @($cols | ForEach-Object { $_.ToLower() })
         $idxTime     = [array]::IndexOf($colsLower, 'evaluationtime')
@@ -2544,7 +2517,7 @@ function Show-ScalingPlanHistory {
 
         foreach ($r in $table.rows) {
             $dr = $dt.NewRow()
-            # EvaluationTime comes from LAW as UTC — convert to local so BST users
+            # EvaluationTime comes from LAW as UTC - convert to local so BST users
             # see the correct time rather than UTC (1h behind in BST).
             if ($idxTime -ge 0 -and $r[$idxTime]) {
                 try {
@@ -2682,7 +2655,7 @@ function Show-StartVmHistory {
         }
         $ps.Dispose(); $rs.Dispose()
 
-        # Keep only AVD-initiated final-state rows — filters out manual starts and intermediate Accepted/Started duplicates
+        # Keep only AVD-initiated final-state rows - filters out manual starts and intermediate Accepted/Started duplicates
         $startEvents = @($events | Where-Object {
             ([string]$_.operationName.localizedValue -like '*Start Virtual Machine*' -or
              [string]$_.operationName.value          -like '*virtualMachines/start*') -and
@@ -2732,7 +2705,7 @@ $menuPoolScale.Header = "Scaling Plan History (24h)"
 $menuPoolStartVm = New-Object System.Windows.Controls.MenuItem
 $menuPoolStartVm.Header = "Start VM History (24h)"
 [void]$poolCtxMenu.Items.Add($menuPoolStartVm)
-# "Private Endpoints" menu item — opens a popup listing all PE connection names
+# "Private Endpoints" menu item - opens a popup listing all PE connection names
 # for the selected host pool. The PE data is pre-fetched during the refresh cycle
 # from $hp.properties.privateEndpointConnections and stored in
 # $script:hpPrivateEndpointDetails (keyed by host pool name).
@@ -2801,13 +2774,14 @@ Initialize-SessionHostsTab  -Window $window -ContextFile $contextFile -Subscript
 Initialize-SessionInfoTab   -Window $window
 Initialize-AzureFilesTab    -Window $window -ContextFile $contextFile -SubscriptionId $subscriptionId
 Initialize-MonitoringTab    -Window $window
+Initialize-ImagesTab         -Window $window -ContextFile $contextFile -SubscriptionId $subscriptionId
 Initialize-InfrastructureTab -Window $window -ContextFile $contextFile -SubscriptionId $subscriptionId
 Initialize-AzureDevOpsTab   -Window $window
 Initialize-SessionDetail
 
 # Wire up the Session Hosts tab visit flag.
 # The Session Hosts data load is intentionally deferred until the user first
-# clicks the tab — loading it at startup wastes API calls when the user may
+# clicks the tab - loading it at startup wastes API calls when the user may
 # never need it in the current session. $script:vmTabVisited is checked by
 # Invoke-SessionHostsTabTimer's first-run gate in tab-sessionhosts.ps1.
 $script:MainTabControl.Add_SelectionChanged({
@@ -2830,6 +2804,10 @@ function Update-UI {
     if (-not $script:firstLoadComplete) {
         $script:firstLoadComplete = $true
         if ($splashWin.IsVisible) { $splashWin.Close() }
+        try {
+            $conHwnd = [ConsoleHelper]::GetConsoleWindow()
+            if ($conHwnd -ne [IntPtr]::Zero) { [void][ConsoleHelper]::ShowWindow($conHwnd, 0) }
+        } catch {}
         $window.Activate()
         $window.Topmost = $true
         $window.Topmost = $false
@@ -2852,7 +2830,7 @@ function Update-UI {
     }
     # Store PE details on the main thread so Show-PrivateEndpoints can read them.
     # The map originates in the background runspace ($dataScript) and is carried
-    # here via the Data return object — direct $script: writes from the runspace
+    # here via the Data return object - direct $script: writes from the runspace
     # are invisible to the main thread.
     if ($Data.PrivateEndpointDetails) {
         $script:hpPrivateEndpointDetails = $Data.PrivateEndpointDetails
@@ -3058,6 +3036,7 @@ $script:masterTimer.Add_Tick({
     Invoke-SessionHostsTabTimer
     Invoke-SessionInfoTabTimer
     Invoke-AzureFilesTabTimer
+    Invoke-ImagesTabTimer
     Invoke-InfrastructureTabTimer
     Invoke-AzureDevOpsTabTimer
     Invoke-RunCommandTimer
@@ -3099,7 +3078,7 @@ $script:CardTotalBorder.Add_MouseLeftButtonUp({
 # Settings Window
 # =============================================================================
 
-[xml]$settingsXaml = @'
+$_settingsXamlRaw = @'
 <Window
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -3108,22 +3087,26 @@ $script:CardTotalBorder.Add_MouseLeftButtonUp({
     MinHeight="600" MinWidth="900"
     WindowStartupLocation="CenterOwner"
     ResizeMode="CanResizeWithGrip"
-    Background="#F4F6F9"
+    Background="{DynamicResource Avd.Window.Bg}"
+    Foreground="{DynamicResource Avd.Window.Fg}"
     FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
     <DockPanel Margin="24,20,24,20">
 
         <!-- Registry path info -->
-        <Border DockPanel.Dock="Top" Background="White" CornerRadius="6"
-                BorderBrush="#DDE1E7" BorderThickness="1"
+        <Border DockPanel.Dock="Top" Background="{DynamicResource Avd.Card.Bg}" CornerRadius="6"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
                 Padding="12,9" Margin="0,0,0,16">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets"
-                           FontSize="13" Foreground="#888"
+                           FontSize="13" Foreground="{DynamicResource Avd.Fg.Hint}"
                            VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBlock FontSize="11" Foreground="#666" VerticalAlignment="Center">
+                <TextBlock FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" VerticalAlignment="Center">
                     <Run Text="Settings are saved to "/>
                     <Run Text="HKCU\Software\AVDDashboard"
-                         FontFamily="Consolas" Foreground="#0078D4"/>
+                         FontFamily="Consolas" Foreground="{DynamicResource Avd.Fg.Accent}"/>
                 </TextBlock>
             </StackPanel>
         </Border>
@@ -3133,19 +3116,19 @@ $script:CardTotalBorder.Add_MouseLeftButtonUp({
             <Button x:Name="SettingsReloadConfigBtn" Content="Reload Config"
                     DockPanel.Dock="Left"
                     Width="120" Height="32"
-                    Foreground="#555"
+                    Foreground="{DynamicResource Avd.Fg.Secondary}"
                     BorderThickness="0" FontSize="13" Cursor="Hand">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" Background="#F0F0F0" CornerRadius="4" Padding="8,0">
+                        <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Neutral.Bg}" CornerRadius="4" Padding="8,0">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#D0D0D0"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Neutral.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#B8B8B8"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Neutral.Press}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -3155,19 +3138,19 @@ $script:CardTotalBorder.Add_MouseLeftButtonUp({
                         HorizontalAlignment="Right">
                 <Button x:Name="SettingsCancelBtn" Content="Cancel"
                         Width="90" Height="32" Margin="0,0,10,0"
-                        Foreground="#333"
+                        Foreground="{DynamicResource Avd.Fg.Label}"
                         BorderThickness="0" FontSize="13" Cursor="Hand">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="Bd" Background="#E1E4EA" CornerRadius="4" Padding="8,0">
+                            <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Cancel.Bg}" CornerRadius="4" Padding="8,0">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Bd" Property="Background" Value="#CDD0D6"/>
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Hover}"/>
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
-                                    <Setter TargetName="Bd" Property="Background" Value="#B8BCC4"/>
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Press}"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -3179,15 +3162,15 @@ $script:CardTotalBorder.Add_MouseLeftButtonUp({
                         BorderThickness="0" FontSize="13" FontWeight="SemiBold" Cursor="Hand">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="Bd" Background="#0078D4" CornerRadius="4" Padding="8,0">
+                            <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Save.Bg}" CornerRadius="4" Padding="8,0">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Bd" Property="Background" Value="#005A9E"/>
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Hover}"/>
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
-                                    <Setter TargetName="Bd" Property="Background" Value="#003D6B"/>
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Press}"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -3213,122 +3196,279 @@ $script:CardTotalBorder.Add_MouseLeftButtonUp({
             <StackPanel Margin="0,0,4,0">
 
                 <TextBlock Text="Operational Settings" FontSize="18" FontWeight="Bold"
-                           Foreground="#0078D4" Margin="0,0,0,20"/>
+                           Foreground="{DynamicResource Avd.Fg.Accent}" Margin="0,0,0,20"/>
 
                 <!-- Refresh Interval -->
                 <TextBlock Text="Refresh Interval (seconds)" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBox x:Name="RefreshIntervalBox"
                          Height="32" FontSize="13" Padding="8,4"
-                         BorderBrush="#CDD0D6" BorderThickness="1"
-                         Background="White" VerticalContentAlignment="Center"/>
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" VerticalContentAlignment="Center"/>
                 <TextBlock Text="Minimum 10 seconds. Applies immediately on save."
-                           FontSize="11" Foreground="#888" Margin="0,4,0,16"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,16"/>
 
                 <!-- Azure Files Refresh Interval -->
                 <TextBlock Text="Azure Files Refresh (minutes)" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBox x:Name="FilesIntervalBox"
                          Height="32" FontSize="13" Padding="8,4"
-                         BorderBrush="#CDD0D6" BorderThickness="1"
-                         Background="White" VerticalContentAlignment="Center"/>
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" VerticalContentAlignment="Center"/>
                 <TextBlock Text="Minimum 1 minute. Default is 15 minutes."
-                           FontSize="11" Foreground="#888" Margin="0,4,0,16"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,16"/>
 
                 <!-- Storage Warning Threshold -->
                 <TextBlock Text="Storage Warning Threshold (%)" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBox x:Name="StorageWarningPctBox"
                          Height="32" FontSize="13" Padding="8,4"
-                         BorderBrush="#CDD0D6" BorderThickness="1"
-                         Background="White" VerticalContentAlignment="Center"/>
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" VerticalContentAlignment="Center"/>
                 <TextBlock Text="Warning card when any share exceeds this %. Default 90."
-                           FontSize="11" Foreground="#888" Margin="0,4,0,16"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,16"/>
 
                 <!-- Shadow Method -->
                 <TextBlock Text="Shadow Method" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                     <RadioButton x:Name="ShadowMstscRadio" Content="Remote Desktop (mstsc)" IsChecked="True"
+                                 Foreground="{DynamicResource Avd.Window.Fg}"
                                  FontSize="12" Margin="0,0,16,0" GroupName="ShadowMethodGroup"/>
                     <RadioButton x:Name="ShadowMsraRadio"  Content="Remote Assistance (msra)"
+                                 Foreground="{DynamicResource Avd.Window.Fg}"
                                  FontSize="12" GroupName="ShadowMethodGroup"/>
                 </StackPanel>
                 <CheckBox x:Name="ShadowNoConsentCheck"
                           Content="Skip user consent (/noConsentPrompt) - mstsc only"
+                          Foreground="{DynamicResource Avd.Window.Fg}"
                           FontSize="12" Margin="0,4,0,4" IsChecked="False"/>
                 <TextBlock Text="Requires Allow Remote Control GPO on session hosts."
-                           FontSize="11" Foreground="#888" Margin="0,2,0,16"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,2,0,16"/>
 
-                <!-- Connection Mode (Shadow + RDP) -->
+                <!-- ── Session Hosts ── -->
+                <TextBlock Text="Session Hosts" FontSize="15" FontWeight="Bold"
+                           Foreground="{DynamicResource Avd.Fg.Accent}" Margin="0,0,0,4"/>
+                <Border BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,0,1" Margin="0,0,0,10"/>
+
                 <TextBlock Text="Connection Mode" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                     <RadioButton x:Name="ShadowDnsRadio" Content="DNS Hostname" IsChecked="True"
+                                 Foreground="{DynamicResource Avd.Window.Fg}"
                                  FontSize="12" Margin="0,0,16,0" GroupName="ShadowMode"/>
                     <RadioButton x:Name="ShadowIpRadio"  Content="IP Address"
+                                 Foreground="{DynamicResource Avd.Window.Fg}"
                                  FontSize="12" GroupName="ShadowMode"/>
                 </StackPanel>
                 <TextBlock Text="IP resolves VM private IP via Azure. Applies to Shadow and RDP."
-                           FontSize="11" Foreground="#888" Margin="0,4,0,16"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,12"/>
 
-                <!-- Excluded Host Pools -->
                 <TextBlock Text="Excluded Host Pools" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBlock Text="Host pool names to exclude, one per line (exact, case-insensitive)."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,6"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
                 <TextBox x:Name="ExcludedPoolsBox"
                          Height="70" FontSize="12" Padding="8,6"
-                         BorderBrush="#CDD0D6" BorderThickness="1"
-                         Background="White" AcceptsReturn="True"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" AcceptsReturn="True"
                          VerticalScrollBarVisibility="Auto"
                          TextWrapping="NoWrap"/>
 
-                <!-- AVD Include Resource Groups -->
                 <TextBlock Text="AVD Included Resource Groups" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,16,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,12,0,6"/>
                 <TextBlock Text="Only query these RGs, one per line. Blank = all."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,6"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
                 <TextBox x:Name="AvdIncludeRGsBox"
                          Height="60" FontSize="12" Padding="8,6"
-                         BorderBrush="#CDD0D6" BorderThickness="1"
-                         Background="White" AcceptsReturn="True"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" AcceptsReturn="True"
                          VerticalScrollBarVisibility="Auto"
                          TextWrapping="NoWrap"/>
 
-                <!-- AVD Exclude Resource Groups -->
                 <TextBlock Text="AVD Excluded Resource Groups" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,16,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,12,0,6"/>
                 <TextBlock Text="Exclude these RGs, one per line. Applied after inclusion."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,6"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
                 <TextBox x:Name="AvdExcludeRGsBox"
                          Height="60" FontSize="12" Padding="8,6"
-                         BorderBrush="#CDD0D6" BorderThickness="1"
-                         Background="White" AcceptsReturn="True"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" AcceptsReturn="True"
                          VerticalScrollBarVisibility="Auto"
                          TextWrapping="NoWrap"/>
 
-                <!-- Azure Files Resource Groups -->
-                <TextBlock Text="Azure Files Resource Groups" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,16,0,6"/>
+                <!-- ── Azure Files ── -->
+                <TextBlock Text="Azure Files" FontSize="15" FontWeight="Bold"
+                           Foreground="{DynamicResource Avd.Fg.Accent}" Margin="0,20,0,4"/>
+                <Border BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,0,1" Margin="0,0,0,10"/>
+
+                <TextBlock Text="Resource Groups" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBlock Text="Limit Azure Files query to these RGs. Blank = all."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,6"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
                 <TextBox x:Name="FilesRGsBox"
                          Height="60" FontSize="12" Padding="8,6"
-                         BorderBrush="#CDD0D6" BorderThickness="1"
-                         Background="White" AcceptsReturn="True"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" AcceptsReturn="True"
                          VerticalScrollBarVisibility="Auto"
                          TextWrapping="NoWrap"/>
 
-                <!-- Infrastructure Resource Groups -->
-                <TextBlock Text="Infrastructure Resource Groups" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,16,0,6"/>
+                <!-- ── Images (hidden when Images tab is hidden) ── -->
+                <StackPanel x:Name="ImgSettingsPanel">
+                <TextBlock Text="Images" FontSize="15" FontWeight="Bold"
+                           Foreground="{DynamicResource Avd.Fg.Accent}" Margin="0,20,0,4"/>
+                <Border BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,0,1" Margin="0,0,0,10"/>
+
+                <TextBlock Text="Resource Groups" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
+                <TextBlock Text="RGs for image VMs. Blank = empty tab."
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
+                <TextBox x:Name="ImgRGsBox"
+                         Height="60" FontSize="12" Padding="8,6"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto"
+                         TextWrapping="NoWrap"/>
+
+                <TextBlock Text="Include Patterns" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,12,0,6"/>
+                <TextBlock Text="Only show VMs matching these substrings (one per line). Blank = all VMs."
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
+                <TextBox x:Name="ImgIncludePatternsBox"
+                         Height="60" FontSize="12" Padding="8,6"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto"
+                         TextWrapping="NoWrap"/>
+
+                <TextBlock Text="Gallery Resource Groups" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,12,0,6"/>
+                <TextBlock Text="RGs to search for Shared Image Galleries (Create Image dialog). One per line. Blank = search entire subscription."
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
+                <TextBox x:Name="ImgGalleryRGsBox"
+                         Height="60" FontSize="12" Padding="8,6"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto"
+                         TextWrapping="NoWrap"/>
+
+                <TextBlock Text="Preparation VM Sizes" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,12,0,6"/>
+                <TextBlock Text="VM sizes offered in the Create Image dialog (one per line)."
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
+                <TextBox x:Name="ImgPrepVMSizesBox"
+                         Height="80" FontSize="12" Padding="8,6"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto"
+                         TextWrapping="NoWrap"/>
+
+                <TextBlock Text="Preparation VM Size Default" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,12,0,6"/>
+                <TextBlock Text="Size pre-selected in the Create Image dialog."
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
+                <ComboBox x:Name="ImgPrepVMSizeDefaultBox"
+                          Height="30" FontSize="12"
+                          BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                          Background="{DynamicResource Avd.Input.Bg}"/>
+
+                <TextBlock Text="Image Versions to Keep" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,12,0,6"/>
+                <TextBlock Text="Number of versions to retain per image definition (Clean Image Versions button). Newest N kept; older deleted. Default: 5"
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
+                <TextBox x:Name="ImgVersionsToKeepBox"
+                         Width="80" HorizontalAlignment="Left"
+                         Height="30" FontSize="12" Padding="8,4"
+                         VerticalContentAlignment="Center"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}"/>
+
+                <TextBlock Text="BIS-F Path" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,12,0,6"/>
+                <TextBlock Text="Path to BIS-F on the preparation VM (e.g. C:\_source\Bis-F). Used by Create Image."
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
+                <TextBox x:Name="ImgBisFPathBox"
+                         Height="30" FontSize="12" Padding="8,4"
+                         VerticalContentAlignment="Center"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}"/>
+
+                <TextBlock Text="Replication Region 1" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,12,0,6"/>
+                <TextBlock Text="Primary gallery replication region (e.g. westeurope). Required."
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="8"/>
+                        <ColumnDefinition Width="60"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="ImgRegion1Box" Grid.Column="0"
+                             Height="30" FontSize="12" Padding="8,4"
+                             VerticalContentAlignment="Center"
+                             Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                             BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                             Background="{DynamicResource Avd.Input.Bg}"/>
+                    <TextBox x:Name="ImgRegion1ReplicasBox" Grid.Column="2"
+                             Height="30" FontSize="12" Padding="8,4"
+                             VerticalContentAlignment="Center"
+                             Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                             BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                             Background="{DynamicResource Avd.Input.Bg}" ToolTip="Replica count"/>
+                </Grid>
+
+                <TextBlock Text="Replication Region 2" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,12,0,6"/>
+                <TextBlock Text="Optional second replication region. Leave blank to replicate to one region only."
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="8"/>
+                        <ColumnDefinition Width="60"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="ImgRegion2Box" Grid.Column="0"
+                             Height="30" FontSize="12" Padding="8,4"
+                             VerticalContentAlignment="Center"
+                             Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                             BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                             Background="{DynamicResource Avd.Input.Bg}"/>
+                    <TextBox x:Name="ImgRegion2ReplicasBox" Grid.Column="2"
+                             Height="30" FontSize="12" Padding="8,4"
+                             VerticalContentAlignment="Center"
+                             Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                             BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                             Background="{DynamicResource Avd.Input.Bg}" ToolTip="Replica count"/>
+                </Grid>
+                </StackPanel>
+
+                <!-- ── Infrastructure ── -->
+                <TextBlock Text="Infrastructure" FontSize="15" FontWeight="Bold"
+                           Foreground="{DynamicResource Avd.Fg.Accent}" Margin="0,20,0,4"/>
+                <Border BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,0,1" Margin="0,0,0,10"/>
+
+                <TextBlock Text="Resource Groups" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBlock Text="RGs for infrastructure VMs. Blank = empty tab."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,6"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
                 <TextBox x:Name="InfraRGsBox"
                          Height="60" FontSize="12" Padding="8,6"
-                         BorderBrush="#CDD0D6" BorderThickness="1"
-                         Background="White" AcceptsReturn="True"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" AcceptsReturn="True"
                          VerticalScrollBarVisibility="Auto"
                          TextWrapping="NoWrap"/>
 
@@ -3336,7 +3476,7 @@ $script:CardTotalBorder.Add_MouseLeftButtonUp({
             </ScrollViewer>
 
             <!-- Vertical separator -->
-            <Border Grid.Column="1" Width="1" Background="#DDE1E7"
+            <Border Grid.Column="1" Width="1" Background="{DynamicResource Avd.Border.Std}"
                     HorizontalAlignment="Center" Margin="0,0,0,0"/>
 
             <!-- ============================================================= -->
@@ -3346,140 +3486,149 @@ $script:CardTotalBorder.Add_MouseLeftButtonUp({
             <StackPanel Margin="4,0,0,0">
 
                 <TextBlock Text="Display &amp; Filter Settings" FontSize="18" FontWeight="Bold"
-                           Foreground="#0078D4" Margin="0,0,0,4"/>
+                           Foreground="{DynamicResource Avd.Fg.Accent}" Margin="0,0,0,4"/>
                 <TextBlock Text="Override config.psd1 values. Saved to registry."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,16"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,16"/>
 
                 <!-- Secondary Region Highlighting -->
                 <CheckBox x:Name="SecondaryRegionHighlightCheck"
                           Content="Highlight secondary region sessions (red rows)"
-                          FontSize="12" Margin="0,0,0,16" IsChecked="True"/>
+                          Foreground="{DynamicResource Avd.Window.Fg}"
+                          FontSize="12" Margin="0,0,0,8" IsChecked="True"/>
+
 
                 <!-- Hidden Tabs -->
                 <TextBlock Text="Hidden Tabs" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBlock Text="Checked tabs are hidden from the tab strip."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,8"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,8"/>
                 <WrapPanel Margin="0,0,0,4">
-                    <CheckBox x:Name="HTabPerHostPool"    Content="Per Host Pool"    FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HTabByRegion"       Content="By Region"        FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HTabSessionHosts"   Content="Session Hosts"    FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HTabAzureFiles"     Content="Azure Files"      FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HTabMonitoring"     Content="Monitoring"       FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HTabInfrastructure" Content="Infrastructure"   FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HTabAzureDevOps"    Content="Azure DevOps"     FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HTabPerHostPool"    Content="Per Host Pool"    Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HTabByRegion"       Content="By Region"        Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HTabSessionHosts"   Content="Session Hosts"    Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HTabAzureFiles"     Content="Azure Files"      Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HTabMonitoring"     Content="Monitoring"       Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HTabImages"         Content="Images"           Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HTabInfrastructure" Content="Infrastructure"   Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HTabAzureDevOps"    Content="Azure DevOps"     Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
                 </WrapPanel>
                 <TextBlock Text="Changes apply immediately on save."
-                           FontSize="11" Foreground="#888" Margin="0,2,0,16"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,2,0,16"/>
 
                 <!-- Hidden Columns -->
                 <TextBlock Text="Hidden Columns (Per Host Pool)" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBlock Text="Checked columns are hidden. Takes effect on next refresh."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,8"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,8"/>
                 <WrapPanel Margin="0,0,0,4">
-                    <CheckBox x:Name="HColHostPool"       Content="Host Pool"        FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColHPRegion"       Content="HP Region"        FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColWorkspace"      Content="Workspace"        FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColVMRegion"       Content="VM Region"        FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColImageVersionA"  Content="Image Version A"  FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColImageVersionB"  Content="Image Version B"  FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColTotalVMs"       Content="Total VMs"        FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColVMsOn"          Content="VMs Available"           FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColVMsOff"         Content="VMs Not Available"          FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColVMsDrained"     Content="VMs Drained"                FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColActiveUsers"    Content="Active Users"     FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColDisconnected"   Content="Disconnected"     FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColTotalSessions"  Content="Total Sessions"   FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColScalingPlan"    Content="Scaling Plan"     FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColMaxSessions"    Content="Max Sessions"     FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColLoadBalancer"   Content="Load Balancer"    FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColValidation"     Content="Validation"       FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColStartVMOnConnect" Content="Start VM on Connect" FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColRGVMs"          Content="RG VMs"           FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColNetworkAccess"     Content="Network Access"    FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColPrivateEndpoints" Content="Private Endpoints" FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColHostPoolRG"        Content="Host Pool RG"      FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColScope"          Content="Scope"            FontSize="12" Margin="0,0,16,4"/>
-                    <CheckBox x:Name="HColHPLocation"     Content="HP Location"      FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColHostPool"       Content="Host Pool"        Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColHPRegion"       Content="HP Region"        Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColWorkspace"      Content="Workspace"        Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColVMRegion"       Content="VM Region"        Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColImageVersionA"  Content="Image Version A"  Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColImageVersionB"  Content="Image Version B"  Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColTotalVMs"       Content="Total VMs"        Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColVMsOn"          Content="VMs Available"           Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColVMsOff"         Content="VMs Not Available"       Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColVMsDrained"     Content="VMs Drained"             Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColActiveUsers"    Content="Active Users"     Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColDisconnected"   Content="Disconnected"     Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColTotalSessions"  Content="Total Sessions"   Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColScalingPlan"    Content="Scaling Plan"     Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColMaxSessions"    Content="Max Sessions"     Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColLoadBalancer"   Content="Load Balancer"    Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColValidation"     Content="Validation"       Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColStartVMOnConnect" Content="Start VM on Connect" Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColRGVMs"          Content="RG VMs"           Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColNetworkAccess"     Content="Network Access"    Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColPrivateEndpoints" Content="Private Endpoints" Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColHostPoolRG"        Content="Host Pool RG"      Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColScope"          Content="Scope"            Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
+                    <CheckBox x:Name="HColHPLocation"     Content="HP Location"      Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,16,4"/>
                 </WrapPanel>
-                <TextBlock FontSize="11" Foreground="#888" Margin="0,2,0,16"/>
+                <TextBlock FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,2,0,16"/>
 
                 <!-- Low Priority Patterns -->
                 <TextBlock Text="Low Priority Host Pool Patterns" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBlock Text="Substrings sorted to bottom of Per Host Pool tab (one per line)."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,6"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
                 <TextBox x:Name="LowPriorityPatternsBox"
                          Height="60" FontSize="12" Padding="8,6"
-                         BorderBrush="#CDD0D6" BorderThickness="1"
-                         Background="White" AcceptsReturn="True"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" AcceptsReturn="True"
                          VerticalScrollBarVisibility="Auto"
                          TextWrapping="NoWrap"/>
                 <TextBlock Text="Example: -UAT, -TEST, -DEV"
-                           FontSize="11" Foreground="#888" Margin="0,4,0,16"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,16"/>
 
                 <!-- Secondary Regions -->
                 <TextBlock Text="Secondary Regions" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBlock Text="Azure regions treated as secondary (one per line)."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,6"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
                 <TextBox x:Name="SecondaryRegionsBox"
                          Height="60" FontSize="12" Padding="8,6"
-                         BorderBrush="#CDD0D6" BorderThickness="1"
-                         Background="White" AcceptsReturn="True"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" AcceptsReturn="True"
                          VerticalScrollBarVisibility="Auto"
                          TextWrapping="NoWrap"/>
                 <TextBlock Text="Example: francecentral, westeurope"
-                           FontSize="11" Foreground="#888" Margin="0,4,0,16"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,16"/>
 
                 <!-- Scaling Exclude Tag -->
                 <TextBlock Text="Scaling Exclude Tag" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBox x:Name="ScalingExcludeTagBox"
                          Height="32" FontSize="13" Padding="8,4"
-                         BorderBrush="#CDD0D6" BorderThickness="1"
-                         Background="White" VerticalContentAlignment="Center"/>
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" VerticalContentAlignment="Center"/>
                 <TextBlock Text="VM tag name for scaling exclusion. Default: ExcludeFromScaling"
-                           FontSize="11" Foreground="#888" Margin="0,4,0,6"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,6"/>
                 <CheckBox x:Name="DrainSetScalingTagCheck"
                           Content="Set/remove scaling exclude tag when enabling/disabling drain mode"
+                          Foreground="{DynamicResource Avd.Window.Fg}"
                           FontSize="12" Margin="0,0,0,16"/>
 
                 <!-- Storage Account Kinds -->
                 <TextBlock Text="Storage Account Kinds" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBlock Text="Account types for the Azure Files tab."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,8"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,8"/>
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                    <CheckBox x:Name="SAKindFileStorage" Content="FileStorage (Premium)" FontSize="12" Margin="0,0,20,0"/>
-                    <CheckBox x:Name="SAKindStorageV2"   Content="StorageV2 (Standard)"  FontSize="12"/>
+                    <CheckBox x:Name="SAKindFileStorage" Content="FileStorage (Premium)" Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12" Margin="0,0,20,0"/>
+                    <CheckBox x:Name="SAKindStorageV2"   Content="StorageV2 (Standard)"  Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12"/>
                 </StackPanel>
                 <TextBlock Text="At least one kind must be selected."
-                           FontSize="11" Foreground="#888" Margin="0,4,0,16"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,16"/>
 
                 <!-- Per Host Pool: RG VM Count -->
                 <TextBlock Text="Per Host Pool: RG VM Count" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <CheckBox x:Name="ShowRGVMCountCheck"
                           Content="Compare RG VM count with session host count (requires extra ARM call per VM resource group)"
+                          Foreground="{DynamicResource Avd.Window.Fg}"
                           FontSize="12" Margin="0,0,0,4"/>
                 <TextBlock Text="When enabled, flags VMs in the RG that are not registered as session hosts."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,16"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,16"/>
 
                 <!-- Infrastructure Exclude Patterns -->
                 <TextBlock Text="Infrastructure Exclude Patterns" FontSize="13" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,0,6"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,0,6"/>
                 <TextBlock Text="VM name substrings to exclude (one per line, case-insensitive)."
-                           FontSize="11" Foreground="#888" Margin="0,0,0,6"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,0,0,6"/>
                 <TextBox x:Name="InfraExcludePatternsBox"
                          Height="60" FontSize="12" Padding="8,6"
-                         BorderBrush="#CDD0D6" BorderThickness="1"
-                         Background="White" AcceptsReturn="True"
+                         Foreground="{DynamicResource Avd.Window.Fg}" CaretBrush="{DynamicResource Avd.Window.Fg}"
+                         BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                         Background="{DynamicResource Avd.Input.Bg}" AcceptsReturn="True"
                          VerticalScrollBarVisibility="Auto"
                          TextWrapping="NoWrap"/>
                 <TextBlock Text="Example: -TEMP, -OLD"
-                           FontSize="11" Foreground="#888" Margin="0,4,0,0"/>
+                           FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,0"/>
 
 
             </StackPanel>
@@ -3491,12 +3640,14 @@ $script:CardTotalBorder.Add_MouseLeftButtonUp({
 </Window>
 '@
 
+$script:SettingsXamlRaw = $_settingsXamlRaw
+
 # =============================================================================
 # About Dialog
 # =============================================================================
 
 function Show-About {
-    [xml]$aboutXaml = @'
+    $_aboutXamlRaw = @'
 <Window
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -3504,16 +3655,21 @@ function Show-About {
     SizeToContent="Height" Width="520"
     ResizeMode="NoResize"
     WindowStartupLocation="CenterOwner"
-    Background="#F4F6F9"
+    Background="{DynamicResource Avd.Window.Bg}"
+    Foreground="{DynamicResource Avd.Window.Fg}"
     FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
     <DockPanel Margin="28,24,28,20">
 
         <!-- Title + version -->
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
-            <TextBlock Text="AVD Live Dashboard" FontSize="18" FontWeight="Bold" Foreground="#0078D4"/>
-            <TextBlock x:Name="AboutVersion" FontSize="12" Foreground="#555" Margin="0,4,0,0"/>
-            <TextBlock x:Name="AboutPSVersion" FontSize="12" Foreground="#555" Margin="0,2,0,0"/>
-            <TextBlock FontSize="12" Foreground="#555" Margin="0,2,0,0">GitHub: <Hyperlink x:Name="AboutGitHub" Foreground="#0078D4" TextDecorations="None">virtualwebber/AVD-Dashboard</Hyperlink></TextBlock>
+            <TextBlock Text="AVD Live Dashboard" FontSize="18" FontWeight="Bold"
+                       Foreground="{DynamicResource Avd.Fg.Accent}"/>
+            <TextBlock x:Name="AboutVersion"   FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,4,0,0"/>
+            <TextBlock x:Name="AboutPSVersion" FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,2,0,0"/>
+            <TextBlock FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,2,0,0">GitHub: <Hyperlink x:Name="AboutGitHub" Foreground="{DynamicResource Avd.Fg.Accent}" TextDecorations="None">virtualwebber/AVD-Dashboard</Hyperlink></TextBlock>
         </StackPanel>
 
         <!-- Close button -->
@@ -3524,15 +3680,15 @@ function Show-About {
                 BorderThickness="0" FontSize="13" FontWeight="SemiBold" Cursor="Hand">
             <Button.Template>
                 <ControlTemplate TargetType="Button">
-                    <Border x:Name="Bd" Background="#0078D4" CornerRadius="4" Padding="8,0">
+                    <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Save.Bg}" CornerRadius="4" Padding="8,0">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="#005A9E"/>
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Hover}"/>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="#003D6B"/>
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Press}"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -3540,11 +3696,11 @@ function Show-About {
         </Button>
 
         <!-- Disclaimer -->
-        <Border DockPanel.Dock="Bottom" Background="White" CornerRadius="6" Padding="14,12"
-                BorderBrush="#DDE1E7" BorderThickness="1" Margin="0,12,0,0">
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.Card.Bg}" CornerRadius="6" Padding="14,12"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1" Margin="0,12,0,0">
             <StackPanel>
                 <TextBlock Text="DISCLAIMER" FontSize="11" FontWeight="Bold" Foreground="#C42B1C" Margin="0,0,0,6"/>
-                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#444" LineHeight="18">
+                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource Avd.Fg.Label}" LineHeight="18">
                     This script is provided as-is with no warranty, guarantee, or support of any kind.
                     Use at your own risk. The author accepts no responsibility for any issues,
                     data loss, or damages arising from the use of this script in any environment.
@@ -3556,9 +3712,19 @@ function Show-About {
     </DockPanel>
 </Window>
 '@
+    $_aboutXamlRaw = $_aboutXamlRaw -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    [xml]$aboutXaml = $_aboutXamlRaw
     $aReader = New-Object System.Xml.XmlNodeReader $aboutXaml
     $aWin    = [System.Windows.Markup.XamlReader]::Load($aReader)
     $aWin.Owner = $window
+    try { Set-WindowIcon -Window $aWin -IconPath (Join-Path $PSScriptRoot 'data\avd-dashboard.ico') } catch {}
+    if ($script:DarkTheme) {
+        $aWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($aWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
     $aWin.FindName("AboutVersion").Text   = "Version $ScriptVersion"
     $aWin.FindName("AboutPSVersion").Text = "PowerShell $($PSVersionTable.PSVersion)"
     $aWin.FindName("AboutCloseBtn").Add_Click({ $aWin.Close() })
@@ -3568,10 +3734,17 @@ function Show-About {
 }
 
 function Show-Settings {
-    $sReader = New-Object System.Xml.XmlNodeReader $settingsXaml
+    $_sXml   = $script:SettingsXamlRaw -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    [xml]$_sXmlDoc = $_sXml
+    $sReader = New-Object System.Xml.XmlNodeReader $_sXmlDoc
     $sWin    = [System.Windows.Markup.XamlReader]::Load($sReader)
     $sWin.Owner = $window
     try { Set-WindowIcon -Window $sWin -IconPath (Join-Path $PSScriptRoot 'data\avd-dashboard.ico') } catch {}
+    $sWin.Add_SourceInitialized({
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($sWin)).Handle
+        $v = [int]$script:DarkTheme
+        [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+    })
 
     $sInterval      = $sWin.FindName("RefreshIntervalBox")
     $sFilesInterval = $sWin.FindName("FilesIntervalBox")
@@ -3579,7 +3752,18 @@ function Show-Settings {
     $sAvdIncludeRGs     = $sWin.FindName("AvdIncludeRGsBox")
     $sAvdExcludeRGs     = $sWin.FindName("AvdExcludeRGsBox")
     $sFilesRGs          = $sWin.FindName("FilesRGsBox")
-    $sInfraRGs          = $sWin.FindName("InfraRGsBox")
+    $sImgRGs              = $sWin.FindName("ImgRGsBox")
+    $sImgIncludePatterns  = $sWin.FindName("ImgIncludePatternsBox")
+    $sImgGalleryRGs       = $sWin.FindName("ImgGalleryRGsBox")
+    $sImgPrepVMSizes      = $sWin.FindName("ImgPrepVMSizesBox")
+    $sImgPrepVMSizeDefault  = $sWin.FindName("ImgPrepVMSizeDefaultBox")
+    $sImgVersionsToKeep     = $sWin.FindName("ImgVersionsToKeepBox")
+    $sImgBisFPath           = $sWin.FindName("ImgBisFPathBox")
+    $sImgRegion1            = $sWin.FindName("ImgRegion1Box")
+    $sImgRegion1Replicas    = $sWin.FindName("ImgRegion1ReplicasBox")
+    $sImgRegion2            = $sWin.FindName("ImgRegion2Box")
+    $sImgRegion2Replicas    = $sWin.FindName("ImgRegion2ReplicasBox")
+    $sInfraRGs              = $sWin.FindName("InfraRGsBox")
     $sStorageWarnPct    = $sWin.FindName("StorageWarningPctBox")
     $sShadowMstsc       = $sWin.FindName("ShadowMstscRadio")
     $sShadowNoConsent   = $sWin.FindName("ShadowNoConsentCheck")
@@ -3598,7 +3782,19 @@ function Show-Settings {
     $sAvdIncludeRGs.Text     = ($script:AvdIncludeRGs -join "`r`n")
     $sAvdExcludeRGs.Text     = ($script:AvdExcludeRGs -join "`r`n")
     $sFilesRGs.Text          = ($script:FilesRGs -join "`r`n")
-    $sInfraRGs.Text          = ($script:InfraRGs -join "`r`n")
+    $sImgRGs.Text            = ($script:ImgRGs -join "`r`n")
+    $sImgIncludePatterns.Text = ($script:ImgIncludePatterns -join "`r`n")
+    $sImgGalleryRGs.Text          = ($script:ImgGalleryRGs -join "`r`n")
+    $sImgPrepVMSizes.Text         = ($script:ImgPrepVMSizes -join "`r`n")
+    $sImgPrepVMSizeDefault.ItemsSource    = $script:ImgPrepVMSizes
+    $sImgPrepVMSizeDefault.SelectedItem  = if ($script:ImgPrepVMSizeDefault -in $script:ImgPrepVMSizes) { $script:ImgPrepVMSizeDefault } else { $script:ImgPrepVMSizes | Select-Object -First 1 }
+    $sImgVersionsToKeep.Text      = [string]$script:ImgVersionsToKeep
+    $sImgBisFPath.Text            = $script:ImgBisFPath
+    $sImgRegion1.Text             = $script:ImgRegion1
+    $sImgRegion1Replicas.Text     = [string]$script:ImgRegion1Replicas
+    $sImgRegion2.Text             = $script:ImgRegion2
+    $sImgRegion2Replicas.Text     = [string]$script:ImgRegion2Replicas
+    $sInfraRGs.Text               = ($script:InfraRGs -join "`r`n")
     $sStorageWarnPct.Text    = $script:StorageWarningPct
     if ($script:ShadowMethod -eq "MSRA") { $sShadowMsra.IsChecked = $true } else { $sShadowMstsc.IsChecked = $true }
     $sShadowNoConsent.IsChecked = $script:ShadowNoConsent
@@ -3615,6 +3811,7 @@ function Show-Settings {
         'Session Hosts'  = $sWin.FindName("HTabSessionHosts")
         'Azure Files'    = $sWin.FindName("HTabAzureFiles")
         'Monitoring'     = $sWin.FindName("HTabMonitoring")
+        'Images'         = $sWin.FindName("HTabImages")
         'Infrastructure' = $sWin.FindName("HTabInfrastructure")
         'Azure DevOps'   = $sWin.FindName("HTabAzureDevOps")
     }
@@ -3658,6 +3855,20 @@ function Show-Settings {
     foreach ($entry in $htabMap.GetEnumerator()) {
         $entry.Value.IsChecked = ($entry.Key -in $script:HiddenTabs)
     }
+
+    # Hide Images settings panel when the Images tab is hidden; toggle live on checkbox change
+    $sImgSettingsPanel = $sWin.FindName("ImgSettingsPanel")
+    $sImgSettingsPanel.Visibility = if ($htabMap['Images'].IsChecked) { 'Collapsed' } else { 'Visible' }
+    $htabMap['Images'].Add_Checked(  { $sImgSettingsPanel.Visibility = 'Collapsed' }.GetNewClosure())
+    $htabMap['Images'].Add_Unchecked({ $sImgSettingsPanel.Visibility = 'Visible'   }.GetNewClosure())
+
+    # Collapse checkboxes for tabs hidden by config - they are not user-configurable
+    foreach ($tabName in $script:DefaultHiddenTabs) {
+        if ($htabMap.ContainsKey($tabName)) {
+            $htabMap[$tabName].Visibility = 'Collapsed'
+        }
+    }
+
     # Pre-populate Hidden Columns checkboxes
     foreach ($entry in $hcolMap.GetEnumerator()) {
         $entry.Value.IsChecked = ($entry.Key -in $script:HiddenColumns)
@@ -3682,10 +3893,12 @@ function Show-Settings {
             # picks up the new value without needing a full script restart.
             if ($script:vmRefreshRunspace) {
                 $script:vmRefreshRunspace.SessionStateProxy.SetVariable('LawWorkspaceResourceId', $script:LawWorkspaceResourceId)
+                $script:vmRefreshRunspace.SessionStateProxy.SetVariable('LawQueryBaseUrl',        $script:LawQueryBaseUrl)
             }
             $sStatus.Foreground = [System.Windows.Media.Brushes]::DarkGreen
             $sStatus.Text = "Config reloaded from file."
             if (-not $script:currentJob) { $script:nextRefreshAt = [DateTime]::Now }
+            Reset-ImagesTab
             Reset-InfrastructureTab
         } catch {
             $sStatus.Foreground = [System.Windows.Media.Brushes]::Firebrick
@@ -3731,6 +3944,24 @@ function Show-Settings {
         # Parse files RGs
         $filesRgs = @($sFilesRGs.Text -split "`r`n|`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 
+        # Parse Images RGs, include patterns, and gallery RGs
+        $imgRgs        = @($sImgRGs.Text -split "`r`n|`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $imgInclPats   = @($sImgIncludePatterns.Text -split "`r`n|`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $imgGalleryRgs         = @($sImgGalleryRGs.Text -split "`r`n|`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $imgPrepVMSizes        = @($sImgPrepVMSizes.Text -split "`r`n|`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        if ($imgPrepVMSizes.Count -eq 0) { $imgPrepVMSizes = @('Standard_D2s_v5','Standard_D4s_v5','Standard_D8s_v5') }
+        $imgPrepVMSizeDefault  = [string]$sImgPrepVMSizeDefault.SelectedItem
+        if (-not $imgPrepVMSizeDefault) { $imgPrepVMSizeDefault = 'Standard_D4s_v5' }
+        $imgVersionsToKeepVal  = 0
+        $imgVersionsToKeep     = if ([int]::TryParse($sImgVersionsToKeep.Text.Trim(), [ref]$imgVersionsToKeepVal) -and $imgVersionsToKeepVal -gt 0) { $imgVersionsToKeepVal } else { 5 }
+        $imgBisFPath           = if ($sImgBisFPath.Text.Trim()) { $sImgBisFPath.Text.Trim() } else { 'C:\_source\Bis-F' }
+        $imgRegion1            = $sImgRegion1.Text.Trim()
+        $imgRegion1ReplicasVal = 0
+        $imgRegion1Replicas    = if ([int]::TryParse($sImgRegion1Replicas.Text.Trim(), [ref]$imgRegion1ReplicasVal) -and $imgRegion1ReplicasVal -gt 0) { $imgRegion1ReplicasVal } else { 1 }
+        $imgRegion2            = $sImgRegion2.Text.Trim()
+        $imgRegion2ReplicasVal = 0
+        $imgRegion2Replicas    = if ([int]::TryParse($sImgRegion2Replicas.Text.Trim(), [ref]$imgRegion2ReplicasVal) -and $imgRegion2ReplicasVal -gt 0) { $imgRegion2ReplicasVal } else { 1 }
+
         # Parse infrastructure RGs
         $infraRgs = @($sInfraRGs.Text -split "`r`n|`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 
@@ -3739,8 +3970,8 @@ function Show-Settings {
 
         # ---- Parse display/filter settings ----
 
-        # Hidden Tabs: collect checked tab names
-        $hiddenTabs = @($htabMap.GetEnumerator() | Where-Object { $_.Value.IsChecked -eq $true } | ForEach-Object { $_.Key })
+        # Hidden Tabs: collect checked tab names, then union in config defaults (config is the hard floor)
+        $hiddenTabs = @(@($htabMap.GetEnumerator() | Where-Object { $_.Value.IsChecked -eq $true } | ForEach-Object { $_.Key }) + $script:DefaultHiddenTabs | Select-Object -Unique)
 
         # Hidden Columns: collect checked column names
         $hiddenCols = @($hcolMap.GetEnumerator() | Where-Object { $_.Value.IsChecked -eq $true } | ForEach-Object { $_.Key })
@@ -3795,7 +4026,8 @@ function Show-Settings {
                 -InfraExcludePatterns $infraExcPats `
                 -DrainSetScalingTag ([int]$drainSetScalingTag) `
                 -ShowRGVMCount ([int]$showRgVmCount) `
-                -AdoOrgUrl $adoUrl
+                -AdoOrgUrl $adoUrl `
+                -DarkTheme ([int]$script:DarkTheme)
         } catch {
             $sStatus.Text = "Failed to save to registry: $_"
             return
@@ -3812,6 +4044,20 @@ function Show-Settings {
         $script:AvdIncludeRGs               = $avdIncRgs
         $script:AvdExcludeRGs               = $avdExcRgs
         $script:FilesRGs                    = $filesRgs
+        $script:ImgRGs                      = $imgRgs
+        $script:ImgIncludePatterns          = $imgInclPats
+        $script:ImgGalleryRGs               = $imgGalleryRgs
+        $script:ImgPrepVMSizes              = $imgPrepVMSizes
+        $script:ImgPrepVMSizeDefault        = $imgPrepVMSizeDefault
+        $sImgPrepVMSizeDefault.ItemsSource  = $script:ImgPrepVMSizes
+        $sImgPrepVMSizeDefault.SelectedItem = if ($imgPrepVMSizeDefault -in $script:ImgPrepVMSizes) { $imgPrepVMSizeDefault } else { $script:ImgPrepVMSizes | Select-Object -First 1 }
+        $script:ImgVersionsToKeep          = $imgVersionsToKeep
+        $script:ImgBisFPath                = $imgBisFPath
+        $script:ImgRegion1                 = $imgRegion1
+        $script:ImgRegion1Replicas         = $imgRegion1Replicas
+        $script:ImgRegion2                 = $imgRegion2
+        $script:ImgRegion2Replicas         = $imgRegion2Replicas
+        $script:imgCachedGalleries          = $null   # clear cache so dialog re-fetches with new RG scope
         $script:InfraRGs                    = $infraRgs
         $script:SecondaryRegionHighlight    = $secondaryHighlight
 
@@ -3836,6 +4082,7 @@ function Show-Settings {
         if (-not $script:currentJob) {
             $script:nextRefreshAt = [DateTime]::Now
         }
+        Reset-ImagesTab
         Reset-InfrastructureTab
 
         $sWin.Close()
@@ -3872,30 +4119,35 @@ function Show-SwitchSubscription {
     }
 
     # Build picker dialog - returns the selected subscription object or $null
-    [xml]$subXaml = @'
+    $_subXamlRaw = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Switch Subscription" Height="420" Width="520"
         MinHeight="300" MinWidth="400"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
-        Background="#F4F6F9" FontFamily="Segoe UI">
+        Background="{DynamicResource Avd.Window.Bg}"
+        Foreground="{DynamicResource Avd.Window.Fg}"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
     <DockPanel Margin="20,16,20,16">
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
                     HorizontalAlignment="Right" Margin="0,12,0,0">
             <Button x:Name="SubCancelBtn" Content="Cancel"
                     Width="90" Height="32" Margin="0,0,10,0"
-                    Foreground="#333"
+                    Foreground="{DynamicResource Avd.Fg.Label}"
                     BorderThickness="0" FontSize="13" Cursor="Hand">
                 <Button.Template><ControlTemplate TargetType="Button">
-                    <Border x:Name="Bd" Background="#E1E4EA" CornerRadius="4" Padding="8,0">
+                    <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Cancel.Bg}" CornerRadius="4" Padding="8,0">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="#CDD0D6"/>
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Hover}"/>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="#B8BCC4"/>
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Press}"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate></Button.Template>
@@ -3905,7 +4157,7 @@ function Show-SwitchSubscription {
                     Foreground="White"
                     BorderThickness="0" FontSize="13" FontWeight="SemiBold" Cursor="Hand">
                 <Button.Template><ControlTemplate TargetType="Button">
-                    <Border x:Name="Bd" Background="#0078D4" CornerRadius="4" Padding="8,0">
+                    <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Save.Bg}" CornerRadius="4" Padding="8,0">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
@@ -3913,10 +4165,10 @@ function Show-SwitchSubscription {
                             <Setter TargetName="Bd" Property="Background" Value="#AAD0EF"/>
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="#005A9E"/>
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Hover}"/>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="#003D6B"/>
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Press}"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate></Button.Template>
@@ -3924,11 +4176,12 @@ function Show-SwitchSubscription {
         </StackPanel>
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
             <TextBlock Text="Switch Subscription" FontSize="18" FontWeight="Bold"
-                       Foreground="#0078D4" Margin="0,0,0,4"/>
+                       Foreground="{DynamicResource Avd.Fg.Accent}" Margin="0,0,0,4"/>
             <TextBlock Text="Select a subscription to switch to. The dashboard will refresh automatically."
-                       FontSize="12" Foreground="#666"/>
+                       FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}"/>
         </StackPanel>
-        <ListBox x:Name="SubList" Background="White" BorderBrush="#DDE1E7" BorderThickness="1"
+        <ListBox x:Name="SubList" Background="{DynamicResource Avd.Card.Bg}"
+                 BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
                  FontSize="13" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
             <ListBox.ItemContainerStyle>
                 <Style TargetType="ListBoxItem">
@@ -3936,11 +4189,11 @@ function Show-SwitchSubscription {
                     <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                     <Style.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter Property="Background" Value="#EEF4FC"/>
+                            <Setter Property="Background" Value="{DynamicResource Avd.Hover.Bg}"/>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter Property="Background" Value="#D0E7FA"/>
-                            <Setter Property="Foreground" Value="#003A70"/>
+                            <Setter Property="Background" Value="{DynamicResource Avd.Selected.Bg}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Selected}"/>
                         </Trigger>
                     </Style.Triggers>
                 </Style>
@@ -3949,7 +4202,7 @@ function Show-SwitchSubscription {
                 <DataTemplate>
                     <StackPanel>
                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13"/>
-                        <TextBlock Text="{Binding Id}" FontSize="11" Foreground="#888" Margin="0,2,0,0"/>
+                        <TextBlock Text="{Binding Id}" FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,2,0,0"/>
                     </StackPanel>
                 </DataTemplate>
             </ListBox.ItemTemplate>
@@ -3957,9 +4210,19 @@ function Show-SwitchSubscription {
     </DockPanel>
 </Window>
 '@
+    $_subXamlRaw = $_subXamlRaw -replace '<!-- THEME_SLOT -->', (Get-Content -Raw -Path "$PSScriptRoot\data\$script:_themeFile-theme.xaml" -ErrorAction Stop)
+    [xml]$subXaml = $_subXamlRaw
     $subReader = New-Object System.Xml.XmlNodeReader $subXaml
     $subWin    = [System.Windows.Markup.XamlReader]::Load($subReader)
     $subWin.Owner = $window
+    try { Set-WindowIcon -Window $subWin -IconPath (Join-Path $PSScriptRoot 'data\avd-dashboard.ico') } catch {}
+    if ($script:DarkTheme) {
+        $subWin.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($subWin)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
 
     $subList    = $subWin.FindName("SubList")
     $confirmBtn = $subWin.FindName("SubConfirmBtn")
@@ -4074,6 +4337,7 @@ function Show-SwitchSubscription {
     # Trigger immediate refresh of AVD data and VM tab
     $script:nextRefreshAt = [DateTime]::Now
     Reset-SessionHostsTab
+    Reset-ImagesTab
     Reset-InfrastructureTab
 }
 
@@ -4131,7 +4395,7 @@ $window.Add_Closed({
     try { if ($script:shRunCmdPS)          { $script:shRunCmdPS.Stop(); $script:shRunCmdPS.Dispose() } }       catch {}
     try { if ($script:shRunCmdRS)          { $script:shRunCmdRS.Close(); $script:shRunCmdRS.Dispose() } }      catch {}
     try { if ($script:detailPS)            { $script:detailPS.Stop(); $script:detailPS.Dispose() } }           catch {}
-    # Cost-lookup runspaces — these are only alive while Load Costs is in flight.
+    # Cost-lookup runspaces - these are only alive while Load Costs is in flight.
     # Without explicit cleanup here they become zombie threads if the window is
     # closed or crashes mid-fetch.
     try { if ($script:shCostPS)  { $script:shCostPS.Stop();  $script:shCostPS.Runspace.Dispose();  $script:shCostPS.Dispose() } }  catch {}
@@ -4140,7 +4404,10 @@ $window.Add_Closed({
     try { if ($script:isTxnPS)   { $script:isTxnPS.Stop();   $script:isTxnPS.Runspace.Dispose();   $script:isTxnPS.Dispose() } }   catch {}
     try { if ($script:afCostPS)  { $script:afCostPS.Stop();  $script:afCostPS.Runspace.Dispose();  $script:afCostPS.Dispose() } }  catch {}
     # Kill any orphaned MFA child process (powershell.exe running Connect-AzAccount)
-    try { if ($script:_mfaProc -and -not $script:_mfaProc.HasExited) { $script:_mfaProc.Kill() } } catch {}
+    try { if ($script:_mfaProc   -and -not $script:_mfaProc.HasExited)   { $script:_mfaProc.Kill() }   } catch {}
+    # Kill any orphaned Profile Tools or Log Viewer child processes
+    try { if ($script:toolsProc  -and -not $script:toolsProc.HasExited)  { $script:toolsProc.Kill() }  } catch {}
+    try { if ($script:lvProc     -and -not $script:lvProc.HasExited)     { $script:lvProc.Kill() }     } catch {}
     if (Test-Path $contextFile) { Remove-Item $contextFile -Force -ErrorAction SilentlyContinue }
 })
 
@@ -4164,5 +4431,27 @@ $window.Add_ContentRendered({
         $window.Focus()
     }
 })
+
+try {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class DwmApiHelper {
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+}
+public class ConsoleHelper {
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+'@ -ErrorAction Stop
+} catch {}
+if ($script:DarkTheme) {
+    $window.Add_SourceInitialized({
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+        $v = 1
+        [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+    })
+}
 
 [void]$window.ShowDialog()

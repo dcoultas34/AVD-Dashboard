@@ -66,8 +66,8 @@ $AzureDevOpsTab_Xaml = @'
     <DockPanel>
 
         <!-- Top bar -->
-        <Border DockPanel.Dock="Top" Background="#F4F6F9"
-                BorderBrush="#DDE1E7" BorderThickness="0,0,0,1" Padding="12,7">
+        <Border DockPanel.Dock="Top" Background="{DynamicResource Avd.CostBar.Bg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,0,1" Padding="12,7">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>    <!-- 0: status text -->
@@ -82,23 +82,23 @@ $AzureDevOpsTab_Xaml = @'
 
                 <!-- Running Pipelines tile - sits immediately after the status text -->
                 <Border x:Name="ADORunningTile" Grid.Column="1"
-                        Background="White" CornerRadius="4" Padding="8,3"
-                        BorderBrush="#DDE1E7" BorderThickness="1"
+                        Background="{DynamicResource Avd.Card.Bg}" CornerRadius="4" Padding="8,3"
+                        BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
                         Margin="0,0,0,0" VerticalAlignment="Center" Height="26">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock x:Name="ADORunningCount" Text="-"
-                                   FontSize="14" FontWeight="Bold" Foreground="#0078D4"
+                                   FontSize="14" FontWeight="Bold" Foreground="{DynamicResource Avd.Fg.Accent}"
                                    VerticalAlignment="Center"/>
                         <TextBlock Text=" Running"
-                                   FontSize="11" Foreground="#888"
+                                   FontSize="11" Foreground="{DynamicResource Avd.Fg.Hint}"
                                    VerticalAlignment="Center" Margin="4,0,0,0"/>
                     </StackPanel>
                 </Border>
 
                 <Button x:Name="ADOConfigurePATButton" Grid.Column="3"
                         Content="Set PAT"
-                        Background="Transparent" BorderThickness="1" BorderBrush="#C8CDD3"
-                        Foreground="#555" FontSize="11" Cursor="Hand" Padding="8,3" Margin="0,0,6,0">
+                        Background="Transparent" BorderThickness="1" BorderBrush="{DynamicResource Avd.Border.Input}"
+                        Foreground="{DynamicResource Avd.Fg.Secondary}" FontSize="11" Cursor="Hand" Padding="8,3" Margin="0,0,6,0">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
                             <Border x:Name="BdPAT" Background="{TemplateBinding Background}"
@@ -117,7 +117,7 @@ $AzureDevOpsTab_Xaml = @'
                 </Button>
                 <Button x:Name="ADORefreshButton" Grid.Column="4"
                         Content="Refresh"
-                        Background="#0078D4" Foreground="White"
+                        Background="{DynamicResource Avd.Btn.Accent.Bg}" Foreground="White"
                         BorderThickness="0" FontSize="12"
                         FontWeight="SemiBold" Cursor="Hand" Padding="12,3">
                     <Button.Template>
@@ -128,7 +128,7 @@ $AzureDevOpsTab_Xaml = @'
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="BdAR" Property="Background" Value="#005A9E"/>
+                                    <Setter TargetName="BdAR" Property="Background" Value="{DynamicResource Avd.Btn.Accent.Hover}"/>
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
                                     <Setter TargetName="BdAR" Property="Background" Value="#003D6B"/>
@@ -141,10 +141,10 @@ $AzureDevOpsTab_Xaml = @'
         </Border>
 
         <!-- Bottom action bar -->
-        <Border DockPanel.Dock="Bottom" Background="#F4F6F9"
-                BorderBrush="#DDE1E7" BorderThickness="0,1,0,0" Height="32">
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.CostBar.Bg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,1,0,0" Height="32">
             <TextBlock x:Name="ADOActionStatus"
-                       Margin="12,0" FontSize="12" Foreground="#555"
+                       Margin="12,0" FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}"
                        VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                        ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
         </Border>
@@ -158,19 +158,19 @@ $AzureDevOpsTab_Xaml = @'
             </Grid.ColumnDefinitions>
 
             <!-- Left: pipeline folder tree -->
-            <Border Grid.Column="0" BorderBrush="#DDE1E7" BorderThickness="0,0,1,0">
+            <Border Grid.Column="0" BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,1,0">
                 <DockPanel>
-                    <Border DockPanel.Dock="Top" Background="#F9FAFB"
-                            BorderBrush="#DDE1E7" BorderThickness="0,0,0,1" Padding="8,5">
+                    <Border DockPanel.Dock="Top" Background="{DynamicResource Avd.NearWhite.Bg}"
+                            BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,0,1" Padding="8,5">
                         <TextBox x:Name="ADOTreeFilter"
                                  FontSize="11" Padding="6,3"
                                  VerticalContentAlignment="Center"
-                                 BorderBrush="#C8CDD3" BorderThickness="1"
-                                 Background="White" Foreground="#333"
+                                 BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                                 Background="{DynamicResource Avd.Input.Bg}" Foreground="{DynamicResource Avd.Fg.Label}"
                                  ToolTip="Filter pipeline names"/>
                     </Border>
                     <TreeView x:Name="ADOFolderTree"
-                              Background="White" BorderThickness="0"
+                              Background="{DynamicResource Avd.Card.Bg}" BorderThickness="0"
                               FontSize="12" Padding="4">
                         <TreeView.ItemContainerStyle>
                             <Style TargetType="TreeViewItem">
@@ -190,14 +190,14 @@ $AzureDevOpsTab_Xaml = @'
             <!-- Splitter -->
             <GridSplitter Grid.Column="1" Width="4"
                           HorizontalAlignment="Center" VerticalAlignment="Stretch"
-                          Background="#DDE1E7" Cursor="SizeWE"/>
+                          Background="{DynamicResource Avd.Border.Std}" Cursor="SizeWE"/>
 
             <!-- Right: runs grid -->
             <DockPanel Grid.Column="2">
-                <Border DockPanel.Dock="Top" Background="#F9FAFB"
-                        BorderBrush="#DDE1E7" BorderThickness="0,0,0,1" Padding="10,5">
+                <Border DockPanel.Dock="Top" Background="{DynamicResource Avd.NearWhite.Bg}"
+                        BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,0,0,1" Padding="10,5">
                     <TextBlock x:Name="ADOSelectionLabel"
-                               FontSize="12" Foreground="#555"
+                               FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}"
                                Text="Select a pipeline or folder to view runs"
                                VerticalAlignment="Center"/>
                 </Border>
@@ -209,7 +209,7 @@ $AzureDevOpsTab_Xaml = @'
                           HeadersVisibility="Column"
                           CanUserReorderColumns="True" CanUserResizeColumns="True"
                           CanUserSortColumns="True" FontSize="12"
-                          BorderThickness="0" Background="White"
+                          BorderThickness="0" Background="{DynamicResource Avd.Card.Bg}"
                           HorizontalScrollBarVisibility="Auto"
                           VerticalScrollBarVisibility="Auto">
                     <DataGrid.Resources>
@@ -239,13 +239,13 @@ $AzureDevOpsTab_Xaml = @'
                              internal visual layer that overrides IsSelected triggers, so we
                              handle alternation here instead via AlternationIndex. -->
                         <Style TargetType="DataGridRow">
-                            <Setter Property="Background" Value="White"/>
+                            <Setter Property="Background" Value="{DynamicResource Avd.Card.Bg}"/>
                             <Style.Triggers>
                                 <Trigger Property="ItemsControl.AlternationIndex" Value="1">
-                                    <Setter Property="Background" Value="#F9FAFB"/>
+                                    <Setter Property="Background" Value="{DynamicResource Avd.NearWhite.Bg}"/>
                                 </Trigger>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter Property="Background" Value="#EEF4FC"/>
+                                    <Setter Property="Background" Value="{DynamicResource Avd.Hover.Bg}"/>
                                 </Trigger>
                                 <Trigger Property="IsSelected" Value="True">
                                     <Setter Property="Background" Value="#D0E7FA"/>
@@ -256,12 +256,12 @@ $AzureDevOpsTab_Xaml = @'
                     </DataGrid.Resources>
                     <DataGrid.ColumnHeaderStyle>
                         <Style TargetType="DataGridColumnHeader">
-                            <Setter Property="Background" Value="#EEF2F7"/>
-                            <Setter Property="Foreground" Value="#1A1A2E"/>
+                            <Setter Property="Background" Value="{DynamicResource Avd.ColHeader.Bg}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource Avd.ColHeader.Fg}"/>
                             <Setter Property="FontWeight" Value="SemiBold"/>
                             <Setter Property="FontSize" Value="12"/>
                             <Setter Property="Padding" Value="10,6"/>
-                            <Setter Property="BorderBrush" Value="#DDE1E7"/>
+                            <Setter Property="BorderBrush" Value="{DynamicResource Avd.ColHeader.Border}"/>
                             <Setter Property="BorderThickness" Value="0,0,1,1"/>
                         </Style>
                     </DataGrid.ColumnHeaderStyle>
@@ -290,7 +290,7 @@ $AzureDevOpsTab_Xaml = @'
 # (username = 'ADO-PAT' as a label, password = the PAT as a SecureString).
 # Export-Clixml serialises the SecureString using the Windows Data Protection
 # API (DPAPI).  DPAPI binds the encryption to the current Windows user account
-# AND the current machine — the resulting file:
+# AND the current machine - the resulting file:
 #   • Cannot be decrypted by any other Windows user, even on the same machine.
 #   • Cannot be copied to a different PC and decrypted there.
 #   • Does NOT require the user to supply a separate password or key.
@@ -312,7 +312,7 @@ $AzureDevOpsTab_Xaml = @'
 # ─── How it is used for authentication ───────────────────────────────────────
 # Azure DevOps REST API uses HTTP Basic Authentication.
 # The Authorization header value is:  Basic <base64(':PAT')>
-# Note the leading colon — ADO expects the format  username:password  where
+# Note the leading colon - ADO expects the format  username:password  where
 # the username is intentionally empty and the password is the PAT.
 # The PAT is loaded once at tab initialisation into $script:adoPat and rebuilt
 # into a base64 header string each time an API call is made.
@@ -322,14 +322,14 @@ function _ADO_GetPatPath {
     # Returns the full path to the DPAPI-encrypted PAT credential file.
     # Location: %APPDATA%\AVDDashboard\ado-pat.xml
     # e.g.    : C:\Users\<username>\AppData\Roaming\AVDDashboard\ado-pat.xml
-    # Uses AVDDashboard (no hyphen) — same folder as the SP credential stored
+    # Uses AVDDashboard (no hyphen) - same folder as the SP credential stored
     # by avd-live-dashboard.ps1, so all credentials live in one place.
     Join-Path $env:APPDATA 'AVDDashboard\ado-pat.xml'
 }
 
 function _ADO_SavePat {
     # Encrypts the PAT using DPAPI and saves it to disk as a PSCredential XML.
-    # The 'ADO-PAT' username is a human-readable label only — it is never sent
+    # The 'ADO-PAT' username is a human-readable label only - it is never sent
     # to Azure DevOps. Creates %APPDATA%\AVDDashboard\ if it does not exist.
     param([string]$Pat)
     $path = _ADO_GetPatPath
@@ -378,7 +378,7 @@ function _ADO_DeletePat {
 
 function _ADO_GetAuthHeader {
     # Builds the HTTP Authorization header for Azure DevOps REST API calls.
-    # Format: Basic <base64(':PAT')>  — colon prefix is mandatory (empty username).
+    # Format: Basic <base64(':PAT')>  - colon prefix is mandatory (empty username).
     # Returns $null when no PAT is configured so callers can guard before API calls.
     # NOTE: Only used for on-thread calls (Run Pipeline dialog pre-flight fetches).
     #       Background runspace calls pass $b64 as a plain string and reconstruct
@@ -1042,7 +1042,7 @@ function _ADO_ShowRunDialog {
     $nb.Margin = [System.Windows.Thickness]::new(0,0,0,16)
     [void]$sp.Children.Add($nb)
 
-    # Loading indicator — replaced once the background fetch completes
+    # Loading indicator - replaced once the background fetch completes
     $loadingTb = New-Object System.Windows.Controls.TextBlock
     $loadingTb.Text       = 'Loading pipeline details...'
     $loadingTb.FontSize   = 12
@@ -1050,7 +1050,7 @@ function _ADO_ShowRunDialog {
     $loadingTb.Margin     = [System.Windows.Thickness]::new(0,0,0,16)
     [void]$sp.Children.Add($loadingTb)
 
-    # Content placeholder — populated by the background fetch callback
+    # Content placeholder - populated by the background fetch callback
     $contentSP = New-Object System.Windows.Controls.StackPanel
     [void]$sp.Children.Add($contentSP)
 
@@ -1090,7 +1090,7 @@ function _ADO_ShowRunDialog {
     $defaultBranch = 'master'
 
     # ── Background fetch: definition + branches + preview ─────────────────────
-    # Results are cached per pipeline ID — subsequent opens of the same pipeline
+    # Results are cached per pipeline ID - subsequent opens of the same pipeline
     # are instant. Cache is invalidated when the PAT or OrgUrl changes.
     $cachedResult = if ($script:adoPipelineCache.ContainsKey($DefId)) {
         Write-Log "INFO [ADO] Run dialog: cache hit for pipeline $DefId"
@@ -1305,7 +1305,7 @@ function _ADO_ShowRunDialog {
     $fetchHandle = if ($cachedResult) { $null } else { $fetchPS.BeginInvoke() }
 
     # ── Poll for fetch completion via DispatcherTimer ──────────────────────────
-    # On a cache hit $fetchHandle is $null — the timer fires once and uses $cachedResult directly.
+    # On a cache hit $fetchHandle is $null - the timer fires once and uses $cachedResult directly.
     $fetchTimer = New-Object System.Windows.Threading.DispatcherTimer
     $fetchTimer.Interval = [TimeSpan]::FromMilliseconds(200)
     $fetchTimer.Add_Tick({
@@ -1314,10 +1314,10 @@ function _ADO_ShowRunDialog {
 
         $result = $null
         if ($cachedResult) {
-            # Cache hit — use stored result, no runspace to clean up
+            # Cache hit - use stored result, no runspace to clean up
             $result = $cachedResult
         } else {
-            # Fresh fetch — read from runspace and cache for next time
+            # Fresh fetch - read from runspace and cache for next time
             $resultJson = $null
             try { $resultJson = $fetchPS.EndInvoke($fetchHandle) | Select-Object -Last 1 } catch {}
             $fetchPS.Dispose(); $fetchRS.Close(); $fetchRS.Dispose()
@@ -1789,7 +1789,7 @@ function Initialize-AzureDevOpsTab {
     })
 
     if (-not $script:AdoOrgUrl) {
-        $script:ADOStatusText.Text = 'Azure DevOps not configured — click Set PAT to configure'
+        $script:ADOStatusText.Text = 'Azure DevOps not configured - click Set PAT to configure'
         $script:ADORefreshButton.IsEnabled = $false
         Write-Log 'WARN [ADO] AzureDevOps.OrganisationUrl is not configured - tab disabled'
         return

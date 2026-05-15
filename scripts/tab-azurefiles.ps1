@@ -25,7 +25,7 @@
 #
 # The dedicated single runspace ($script:filesRunspace) is created in the main
 # script and kept alive for the dashboard lifetime. All Azure calls use direct
-# REST API via bearer token — no Az modules are imported into runspaces.
+# REST API via bearer token - no Az modules are imported into runspaces.
 # =============================================================================
 
 # PSScriptAnalyzer flags $AzureFilesTab_Xaml as "assigned but never used"
@@ -53,19 +53,19 @@ $AzureFilesTab_Xaml = @'
          xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <DockPanel>
         <!-- ═══ Cost totals bar - shown after Load Costs is clicked ═══ -->
-        <Border x:Name="AFTotalsBar" DockPanel.Dock="Bottom" Background="#EEF4FC"
-                BorderBrush="#DDE1E7" BorderThickness="0,1,0,0"
+        <Border x:Name="AFTotalsBar" DockPanel.Dock="Bottom" Background="{DynamicResource Avd.CostBar.Bg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,1,0,0"
                 Height="28" Visibility="Collapsed">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
                         VerticalAlignment="Center" Margin="12,0">
                 <TextBlock Text="Total Storage GBP/mo:" FontSize="11" FontWeight="SemiBold"
-                           Foreground="#333" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                           Foreground="{DynamicResource Avd.Fg.Label}" Margin="0,0,8,0" VerticalAlignment="Center"/>
                 <TextBlock x:Name="AFTotalStorage" FontSize="11" FontWeight="SemiBold"
-                           Foreground="#0078D4" VerticalAlignment="Center"/>
+                           Foreground="{DynamicResource Avd.Fg.Accent}" VerticalAlignment="Center"/>
             </StackPanel>
         </Border>
-        <Border DockPanel.Dock="Bottom" Background="#F4F6F9"
-                BorderBrush="#DDE1E7" BorderThickness="0,1,0,0"
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.CostBar.Bg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="0,1,0,0"
                 Height="34">
             <Grid Margin="12,0">
                 <Grid.ColumnDefinitions>
@@ -73,12 +73,12 @@ $AzureFilesTab_Xaml = @'
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock x:Name="FilesStatus" Grid.Column="0"
-                           Foreground="#555" FontSize="12"
+                           Foreground="{DynamicResource Avd.Fg.Secondary}" FontSize="12"
                            VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
                 <Button x:Name="FilesRefreshButton"
                         Content="Refresh" Margin="0,4,6,4"
-                        Background="#0078D4" Foreground="White"
+                        Background="{DynamicResource Avd.Btn.Accent.Bg}" Foreground="White"
                         BorderThickness="0" FontSize="12"
                         FontWeight="SemiBold" Cursor="Hand"
                         Padding="14,4">
@@ -90,7 +90,7 @@ $AzureFilesTab_Xaml = @'
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Bd" Property="Background" Value="#005A9E"/>
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Accent.Hover}"/>
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
                                     <Setter TargetName="Bd" Property="Background" Value="#003D6B"/>
@@ -236,7 +236,7 @@ $script:filesScript = {
     $nowStr = $now.ToString('yyyy-MM-ddTHH:mm:ssZ')
     $agoStr = $ago.ToString('yyyy-MM-ddTHH:mm:ssZ')
 
-    # Per-account scriptblock — runs in parallel via RunspacePool.
+    # Per-account scriptblock - runs in parallel via RunspacePool.
     # Uses REST API via Invoke-Arm injected from $RestHelperDef.
     # ARM share endpoint does not return snapshots, so no IsSnapshot filter needed.
     # FileCapacity metric is queried once per storage account (not per share).
@@ -311,7 +311,7 @@ $script:filesScript = {
         try {
             $out = $h.PS.EndInvoke($h.Handle)
             if ($out) { foreach ($r in $out) { $rows.Add($r) } }
-        } catch { <# individual SA query failed — skip it #> }
+        } catch { <# individual SA query failed - skip it #> }
         finally { $h.PS.Dispose() }
     }
     # Note: $saPool is persistent - do NOT close or dispose it here
@@ -393,7 +393,7 @@ function Initialize-AzureFilesTab {
 
     # AutoGeneratingColumn: hide internal _ columns and fix the Storage GBP/mo binding.
     # WPF's PropertyPath parser treats '/' as a path separator, so "Storage GBP/mo"
-    # must use indexer form "[Storage GBP/mo]" to bind correctly — same fix as the
+    # must use indexer form "[Storage GBP/mo]" to bind correctly - same fix as the
     # Session Hosts cost columns.
     $script:FilesGrid.Add_AutoGeneratingColumn({
         param($grid, $e)
@@ -421,12 +421,15 @@ function Initialize-AzureFilesTab {
         }
         $lvBtn.IsEnabled = $false
         $lvBtn.Content   = "Log Viewer (Running)"
-        $lvProc = Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$lvScript`"" -PassThru
+        $script:lvProc   = Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$lvScript`"" -PassThru
+        $localLvProc     = $script:lvProc
+
         $lvTimer          = New-Object System.Windows.Threading.DispatcherTimer
         $lvTimer.Interval = [TimeSpan]::FromSeconds(2)
         $lvTimer.Add_Tick({
-            if ($lvProc.HasExited) {
+            if ($localLvProc -and $localLvProc.HasExited) {
                 $lvTimer.Stop()
+                $script:lvProc   = $null
                 $lvBtn.IsEnabled = $true
                 $lvBtn.Content   = "Log Viewer"
             }
@@ -437,23 +440,28 @@ function Initialize-AzureFilesTab {
     # Wire up the Profile Tools launch button
     $script:ToolsLaunchButton.Add_Click({
         $toolsBtn    = $script:ToolsLaunchButton
-        $toolsScript = Join-Path $script:dashboardDir 'Profile-Tools.ps1'
+        $toolsScript = Join-Path $script:dashboardDir 'profile-tools.ps1'
         if (-not (Test-Path $toolsScript)) {
             [System.Windows.MessageBox]::Show(
-                "Profile-Tools.ps1 was not found in the same folder as this dashboard.`n`nExpected location:`n$toolsScript",
+                "profile-tools.ps1 was not found in the same folder as this dashboard.`n`nExpected location:`n$toolsScript",
                 "Script Not Found", "OK", "Warning") | Out-Null
             return
         }
         $toolsBtn.IsEnabled = $false
         $toolsBtn.Content   = "Profile Tools (Running)"
-        $proc = Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$toolsScript`"" -PassThru
+        $_ptThemeArg = [int]$script:DarkTheme
+        $script:toolsProc   = Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$toolsScript`" -UseExistingContext -DashboardTheme $_ptThemeArg" -PassThru
+        $localToolsProc     = $script:toolsProc   # local ref captured by GetNewClosure()
 
-        # Re-enable the button once the Profile Tools window is closed
+        # Re-enable the button once the Profile Tools window is closed.
+        # $script: scope is unreliable inside GetNewClosure() closures, so use
+        # the locally-captured Process reference to call HasExited directly.
         $toolsTimer          = New-Object System.Windows.Threading.DispatcherTimer
         $toolsTimer.Interval = [TimeSpan]::FromSeconds(2)
         $toolsTimer.Add_Tick({
-            if ($proc.HasExited) {
+            if ($localToolsProc -and $localToolsProc.HasExited) {
                 $toolsTimer.Stop()
+                $script:toolsProc   = $null
                 $toolsBtn.IsEnabled = $true
                 $toolsBtn.Content   = "Profile Tools"
             }
@@ -490,7 +498,7 @@ function Invoke-AzureFilesTabTimer {
             $rows = $script:filesPS.EndInvoke($script:filesHandle)
             if ($rows -and $rows.Count -gt 0) {
                 # Build the DataTable and reapply any cached costs from a previous Load Costs fetch.
-                # Costs survive auto-refresh without re-calling the API — same pattern as Session Hosts.
+                # Costs survive auto-refresh without re-calling the API - same pattern as Session Hosts.
                 $script:afDataTable = ConvertTo-DataTable -Objects @($rows)
 
                 if ($script:afCostCache -and $script:afCostCache.Count -gt 0) {
@@ -517,15 +525,27 @@ function Invoke-AzureFilesTabTimer {
                     $script:CardStorageIcon.Foreground    = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xC1,0x7F,0x00))
                     $script:CardStorageText.Text          = "$($worst."Share") $($worst."Used %")% used"
                     $script:CardStorageText.Foreground    = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x7D,0x52,0x00))
-                    $script:CardStorageBorder.Background  = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xFF,0xF4,0xCE))
-                    $script:CardStorageBorder.BorderBrush = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xF7,0xB9,0x00))
+                    if ($script:DarkTheme) {
+                        $script:CardStorageBorder.Background  = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x2A,0x22,0x10))
+                        $script:CardStorageBorder.BorderBrush = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xF7,0xB9,0x00))
+                    } else {
+                        $script:CardStorageBorder.Background  = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xFF,0xF4,0xCE))
+                        $script:CardStorageBorder.BorderBrush = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xF7,0xB9,0x00))
+                    }
                 } else {
                     $script:CardStorageIcon.Text          = [char]0x2714  # checkmark
-                    $script:CardStorageIcon.Foreground    = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x10,0x7C,0x10))
-                    $script:CardStorageText.Text          = "Storage OK"
-                    $script:CardStorageText.Foreground    = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x55,0x55,0x55))
-                    $script:CardStorageBorder.Background  = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xF7,0xF9,0xFC))
-                    $script:CardStorageBorder.BorderBrush = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xDD,0xE1,0xE7))
+                    if ($script:DarkTheme) {
+                        $script:CardStorageIcon.Foreground    = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x4C,0xAF,0x50))
+                        $script:CardStorageText.Foreground    = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x9D,0x9D,0x9D))
+                        $script:CardStorageBorder.Background  = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x2D,0x2D,0x30))
+                        $script:CardStorageBorder.BorderBrush = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x3F,0x3F,0x46))
+                    } else {
+                        $script:CardStorageIcon.Foreground    = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x10,0x7C,0x10))
+                        $script:CardStorageText.Foreground    = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x55,0x55,0x55))
+                        $script:CardStorageBorder.Background  = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xF7,0xF9,0xFC))
+                        $script:CardStorageBorder.BorderBrush = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xDD,0xE1,0xE7))
+                    }
+                    $script:CardStorageText.Text = "Storage OK"
                 }
             } else {
                 $script:filesNextRefresh = [DateTime]::Now.AddSeconds($script:FilesRefreshIntervalSeconds)
@@ -567,8 +587,13 @@ function Reset-AzureFilesTab {
     $script:CardStorageIcon.Text       = "-"
     $script:CardStorageIcon.Foreground = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x88,0x88,0x88))
     $script:CardStorageText.Text       = "Storage"
-    $script:CardStorageBorder.Background  = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xF7,0xF9,0xFC))
-    $script:CardStorageBorder.BorderBrush = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xDD,0xE1,0xE7))
+    if ($script:DarkTheme) {
+        $script:CardStorageBorder.Background  = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x2D,0x2D,0x30))
+        $script:CardStorageBorder.BorderBrush = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x3F,0x3F,0x46))
+    } else {
+        $script:CardStorageBorder.Background  = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xF7,0xF9,0xFC))
+        $script:CardStorageBorder.BorderBrush = [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xDD,0xE1,0xE7))
+    }
 
     # Schedule an immediate refresh for the new subscription
     $script:filesNextRefresh = [DateTime]::Now

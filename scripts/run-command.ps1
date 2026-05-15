@@ -136,10 +136,21 @@ function Show-RunCommandPicker {
     $win.ResizeMode             = 'CanResize'
     $win.WindowStartupLocation  = 'CenterOwner'
     $win.Owner                  = [System.Windows.Application]::Current.MainWindow
-    $icoPath = Join-Path $PSScriptRoot '..\data\avd-dashboard.ico'
-    if (Test-Path $icoPath) {
-        $win.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create(
-            [System.Uri]([System.IO.Path]::GetFullPath($icoPath)))
+
+    # Inject theme resources
+    $_themeRdXaml = "<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_themeContent</ResourceDictionary>"
+    $_themeRd = [Windows.Markup.XamlReader]::Parse($_themeRdXaml)
+    $win.Resources.MergedDictionaries.Add($_themeRd)
+    $win.SetResourceReference([System.Windows.Window]::BackgroundProperty, 'Avd.Window.Bg')
+    $win.SetResourceReference([System.Windows.Window]::ForegroundProperty, 'Avd.Window.Fg')
+
+    try { Set-WindowIcon -Window $win -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+    if ($script:DarkTheme) {
+        $win.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($win)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
     }
 
     # Wrap in a single-element array so closures capture the reference object,
@@ -198,7 +209,7 @@ function Show-RunCommandPicker {
     $lblNote            = New-Object System.Windows.Controls.TextBlock
     $lblNote.Text       = 'Note: Commands run in the SYSTEM (computer) context, not as the logged-on user.'
     $lblNote.FontSize   = 11
-    $lblNote.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom('#888')
+    $lblNote.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Fg.Hint')
     $lblNote.FontStyle  = 'Italic'
     $lblNote.Margin     = '0,0,0,10'
 
@@ -209,7 +220,7 @@ function Show-RunCommandPicker {
     $listBox                = New-Object System.Windows.Controls.ListBox
     $listBox.Height         = 110
     $listBox.Margin         = '0,0,0,8'
-    $listBox.BorderBrush    = [System.Windows.Media.Brushes]::LightGray
+    $listBox.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty, 'Avd.Border.Input')
     foreach ($name in $rcRef.Commands.Keys) { [void]$listBox.Items.Add($name) }
 
     $lblDesc        = New-Object System.Windows.Controls.TextBlock
@@ -220,15 +231,15 @@ function Show-RunCommandPicker {
     $descBox.Height       = 46
     $descBox.IsReadOnly   = $true
     $descBox.TextWrapping = 'Wrap'
-    $descBox.Background   = [System.Windows.Media.Brushes]::WhiteSmoke
-    $descBox.BorderBrush  = [System.Windows.Media.Brushes]::LightGray
+    $descBox.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'Avd.Input.Bg')
+    $descBox.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty, 'Avd.Border.Input')
     $descBox.Padding      = '4'
 
     # ── Status text (shown while running) ────────────────────────────────────
     $statusText              = New-Object System.Windows.Controls.TextBlock
     $statusText.Margin       = '0,10,0,4'
     $statusText.FontWeight   = 'SemiBold'
-    $statusText.Foreground   = [System.Windows.Media.Brushes]::DimGray
+    $statusText.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Fg.Secondary')
     $statusText.TextWrapping = 'Wrap'
     $statusText.Visibility   = 'Collapsed'
 
@@ -246,8 +257,8 @@ function Show-RunCommandPicker {
     $outputBox.HorizontalScrollBarVisibility = 'Auto'
     $outputBox.FontFamily                    = New-Object System.Windows.Media.FontFamily('Consolas')
     $outputBox.FontSize                      = 11
-    $outputBox.Background                    = [System.Windows.Media.Brushes]::WhiteSmoke
-    $outputBox.BorderBrush                   = [System.Windows.Media.Brushes]::LightGray
+    $outputBox.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'Avd.Input.Bg')
+    $outputBox.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty, 'Avd.Border.Input')
     $outputBox.Padding                       = '6'
     $outputBox.Text                          = '(waiting for output...)'
     $outputBox.Visibility                    = 'Collapsed'
@@ -391,10 +402,16 @@ function Invoke-SessionHostRunCommand {
                     $pollResp = Invoke-RestMethod -Uri $pollUrl -Headers $pollHdr -ErrorAction Stop
                 } while ($pollResp.status -and $pollResp.status -notin @('Succeeded','Failed','Canceled','Cancelled'))
 
-                if ($pollResp.status -eq 'Succeeded' -and $pollResp.properties.output.value) {
+                if ($pollResp.status -in @('Succeeded') -and $pollResp.properties.output.value) {
                     $result = $pollResp.properties.output
                 } elseif ($pollResp.properties.output) {
                     $result = $pollResp.properties.output
+                }
+                # Capture failure detail from the async operation response
+                if ($pollResp.status -in @('Failed','Canceled','Cancelled')) {
+                    $errDetail = if ($pollResp.error) { "Status: $($pollResp.status)`n$($pollResp.error | ConvertTo-Json -Depth 3)" } else { "Run Command operation ended with status: $($pollResp.status)" }
+                    [PSCustomObject]@{ Stdout = ''; Stderr = $errDetail }
+                    return
                 }
             }
         }
@@ -428,6 +445,22 @@ function Show-RunCommandOutput {
     $win.WindowStartupLocation = 'CenterScreen'
     $win.Owner                 = [System.Windows.Application]::Current.MainWindow
 
+    # Inject theme resources
+    $_themeRdXaml = "<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_themeContent</ResourceDictionary>"
+    $_themeRd = [Windows.Markup.XamlReader]::Parse($_themeRdXaml)
+    $win.Resources.MergedDictionaries.Add($_themeRd)
+    $win.SetResourceReference([System.Windows.Window]::BackgroundProperty, 'Avd.Window.Bg')
+    $win.SetResourceReference([System.Windows.Window]::ForegroundProperty, 'Avd.Window.Fg')
+
+    try { Set-WindowIcon -Window $win -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+    if ($script:DarkTheme) {
+        $win.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($win)).Handle
+            $v = 1
+            [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
+
     $outer = New-Object System.Windows.Controls.DockPanel
 
     # ── Close button (bottom) ────────────────────────────────────────────────
@@ -453,7 +486,7 @@ function Show-RunCommandOutput {
 
     $hdr2             = New-Object System.Windows.Controls.TextBlock
     $hdr2.Text        = "Command: $CommandName"
-    $hdr2.Foreground  = [System.Windows.Media.Brushes]::DimGray
+    $hdr2.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Fg.Secondary')
 
     [void]$header.Children.Add($hdr1)
     [void]$header.Children.Add($hdr2)
@@ -477,8 +510,8 @@ function Show-RunCommandOutput {
     $textBox.FontSize                         = 11
     $textBox.Margin                           = '12,0,12,0'
     $textBox.Padding                          = '6'
-    $textBox.Background                       = [System.Windows.Media.Brushes]::WhiteSmoke
-    $textBox.BorderBrush                      = [System.Windows.Media.Brushes]::LightGray
+    $textBox.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'Avd.Input.Bg')
+    $textBox.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty, 'Avd.Border.Input')
     $textBox.Text                             = $displayText
 
     [void]$outer.Children.Add($header)
@@ -496,7 +529,7 @@ function Invoke-RunCommandTimer {
     if (-not $script:shRunCmdHandle) { return }
 
     if (-not $script:shRunCmdHandle.IsCompleted) {
-        # Still running — animate dots inside the output box; status text stays static
+        # Still running - animate dots inside the output box; status text stays static
         if ($script:shRunCmdPickerOpen -and $script:shRunCmdPickerOutputBox) {
             $script:rcDotCount = (($script:rcDotCount + 1) % 4)
             $script:shRunCmdPickerOutputBox.Text = "(waiting for output...)`n$('.' * ($script:rcDotCount + 1))"
@@ -504,14 +537,21 @@ function Invoke-RunCommandTimer {
         return
     }
 
-    # Job completed — collect result then update UI
+    # Job completed - collect result then update UI
     try {
         $raw = @($script:shRunCmdPS.EndInvoke($script:shRunCmdHandle))
         $out = if ($raw.Count -gt 0 -and $null -ne $raw[0]) { [string]$raw[0].Stdout } else { '' }
         $err = if ($raw.Count -gt 0 -and $null -ne $raw[0]) { [string]$raw[0].Stderr } else { '' }
 
+        # Surface any PowerShell stream errors from the runspace (e.g. REST call failures)
+        $streamErrors = @($script:shRunCmdPS.Streams.Error)
+        if ($streamErrors.Count -gt 0) {
+            $streamErrText = ($streamErrors | ForEach-Object { $_.ToString() }) -join "`n"
+            $err = if ($err) { "$err`n$streamErrText" } else { $streamErrText }
+        }
+
         $displayText = if ([string]::IsNullOrWhiteSpace($out) -and [string]::IsNullOrWhiteSpace($err)) {
-            '(No output returned)'
+            '(No output returned - the command ran but produced no stdout or stderr)'
         } else {
             $parts = @()
             if (-not [string]::IsNullOrWhiteSpace($out)) { $parts += $out.Trim() }
@@ -520,7 +560,7 @@ function Invoke-RunCommandTimer {
         }
 
         if ($script:shRunCmdPickerOpen -and $script:shRunCmdPickerOutputBox) {
-            # Picker is open — update it inline and re-enable controls
+            # Picker is open - update it inline and re-enable controls
             $script:shRunCmdPickerOutputBox.Text        = $displayText
             $script:shRunCmdPickerStatusText.Text       = "Completed '$($script:shRunCmdName)' on $($script:shRunCmdVmName)."
             $script:shRunCmdPickerStatusText.Foreground = [System.Windows.Media.Brushes]::DarkGreen
@@ -530,7 +570,7 @@ function Invoke-RunCommandTimer {
             $script:shRunCmdPickerRunBtn.IsEnabled    = ($null -ne $script:shRunCmdPickerListBox.SelectedItem)
             $script:shRunCmdPickerReloadBtn.IsEnabled = $true
         } else {
-            # Picker closed — show standalone output window
+            # Picker closed - show standalone output window
             Show-RunCommandOutput -VmName $script:shRunCmdVmName -CommandName $script:shRunCmdName -Output $out -Errors $err
         }
     } catch {

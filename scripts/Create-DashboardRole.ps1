@@ -41,17 +41,17 @@
     than exiting with an error.
 
 .EXAMPLE
-    .\Create-DashboardRole.ps1
+    .\create-dashboardrole.ps1
 
     Creates the "AVD Dashboard Operator" role in the current subscription.
 
 .EXAMPLE
-    .\Create-DashboardRole.ps1 -SubscriptionId "00000000-0000-0000-0000-000000000000"
+    .\create-dashboardrole.ps1 -SubscriptionId "00000000-0000-0000-0000-000000000000"
 
     Creates the role scoped to the specified subscription.
 
 .EXAMPLE
-    .\Create-DashboardRole.ps1 -Update
+    .\create-dashboardrole.ps1 -Update
 
     Updates an existing "AVD Dashboard Operator" role if it already exists.
 
@@ -81,7 +81,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # =============================================================================
-# Module check — only Az.Accounts required (REST API used for role management)
+# Module check - only Az.Accounts required (REST API used for role management)
 # =============================================================================
 
 if (-not (Get-Module -ListAvailable -Name 'Az.Accounts')) {
@@ -136,7 +136,7 @@ $actions = @(
     'Microsoft.DesktopVirtualization/applicationgroups/read'
     'Microsoft.DesktopVirtualization/scalingplans/read'
 
-    # ── Virtual Machines — read and power actions ─────────────────────────────
+    # ── Virtual Machines - read and power actions ─────────────────────────────
     # Read: VM properties, sizes, extensions, managed disks.
     # Write: Start/deallocate/restart from Session Hosts and Infrastructure tabs.
     # Required by: Session Hosts tab (power buttons), Infrastructure tab.
@@ -164,7 +164,7 @@ $actions = @(
     'Microsoft.Network/networkInterfaces/read'
 
     # ── Resource Graph ────────────────────────────────────────────────────────
-    # Required by: Phase 3 of Session Hosts refresh — batch VM property lookup
+    # Required by: Phase 3 of Session Hosts refresh - batch VM property lookup
     # (Power State, resource ID, disk info) via a single Resource Graph query
     # instead of N per-VM ARM calls.
     'Microsoft.ResourceGraph/resources/read'
@@ -185,27 +185,27 @@ $actions = @(
 
     # ── Storage accounts (Azure Files tab) ───────────────────────────────────
     # Required by: Azure Files tab (share quota, used capacity).
-    # Read-only — no write access to storage accounts or file shares.
+    # Read-only - no write access to storage accounts or file shares.
     'Microsoft.Storage/storageAccounts/read'
     'Microsoft.Storage/storageAccounts/listKeys/action'                            # Required for Azure Files data plane (SharedKey auth for metrics)
     'Microsoft.Storage/storageAccounts/fileServices/read'
     'Microsoft.Storage/storageAccounts/fileServices/shares/read'
 
     # ── Cost Management ───────────────────────────────────────────────────────
-    # Required by: "Load Costs" button — queries actual 30-day disk transaction
+    # Required by: "Load Costs" button - queries actual 30-day disk transaction
     # charges via the Azure Cost Management Query API.
     'Microsoft.CostManagement/query/action'
     'Microsoft.CostManagement/exports/read'
 
     # ── Resource groups and subscriptions (general read) ─────────────────────
-    # Required by: all tabs — resource group location cache used for region
+    # Required by: all tabs - resource group location cache used for region
     # resolution, subscription listing for Switch Subscription button.
     'Microsoft.Resources/subscriptions/read'
     'Microsoft.Resources/subscriptions/resourceGroups/read'
     'Microsoft.Resources/deployments/read'
 )
 
-# No data actions required — all access is via ARM REST API with bearer token.
+# No data actions required - all access is via ARM REST API with bearer token.
 $dataActions = @()
 
 # No deny actions.
@@ -213,7 +213,7 @@ $notActions     = @()
 $notDataActions = @()
 
 # =============================================================================
-# ARM token helper — uses Az.Accounts only, same pattern as rest-api-helpers.ps1
+# ARM token helper - uses Az.Accounts only, same pattern as rest-api-helpers.ps1
 # =============================================================================
 
 function Get-ArmToken {

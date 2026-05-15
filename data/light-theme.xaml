@@ -1,0 +1,244 @@
+<!-- AVD Dashboard — Light Theme Resources
+     Injected into <Window.Resources> at XAML parse time via THEME_SLOT placeholder.
+     Keys prefixed Avd.* to avoid collision with WPF built-ins. -->
+
+<!-- ── Backgrounds ─────────────────────────────────────── -->
+<SolidColorBrush x:Key="Avd.Window.Bg"        Color="#F4F6F9"/>
+<SolidColorBrush x:Key="Avd.Window.Fg"        Color="#1F2937"/>
+<SolidColorBrush x:Key="Avd.Panel.Bg"         Color="#F4F6F9"/>
+<SolidColorBrush x:Key="Avd.Card.Bg"          Color="White"/>
+<SolidColorBrush x:Key="Avd.Header.Bg"        Color="White"/>
+<SolidColorBrush x:Key="Avd.Input.Bg"         Color="White"/>
+<SolidColorBrush x:Key="Avd.Grid.Bg"          Color="White"/>
+<SolidColorBrush x:Key="Avd.AltRow.Bg"        Color="#F7F9FC"/>
+<SolidColorBrush x:Key="Avd.NearWhite.Bg"     Color="#F9FAFB"/>
+<SolidColorBrush x:Key="Avd.Hover.Bg"         Color="#EEF4FC"/>
+<SolidColorBrush x:Key="Avd.Selected.Bg"      Color="#D0E7FA"/>
+<SolidColorBrush x:Key="Avd.CostBar.Bg"       Color="#EEF4FC"/>
+<SolidColorBrush x:Key="Avd.TabHover.Bg"      Color="#F0F4F8"/>
+
+<!-- ── Foregrounds ───────────────────────────────────────── -->
+<SolidColorBrush x:Key="Avd.Fg.Label"         Color="#333333"/>
+<SolidColorBrush x:Key="Avd.Fg.Secondary"     Color="#555555"/>
+<SolidColorBrush x:Key="Avd.Fg.Muted"         Color="#666666"/>
+<SolidColorBrush x:Key="Avd.Fg.Subtle"        Color="#777777"/>
+<SolidColorBrush x:Key="Avd.Fg.Hint"          Color="#888888"/>
+<SolidColorBrush x:Key="Avd.Fg.Accent"        Color="#0078D4"/>
+<SolidColorBrush x:Key="Avd.Fg.Selected"      Color="#1F2937"/>
+<SolidColorBrush x:Key="Avd.Fg.DarkNav"       Color="#1A1A2E"/>
+<SolidColorBrush x:Key="Avd.Fg.Available"     Color="#107C10"/>
+<SolidColorBrush x:Key="Avd.Fg.Disconnected"  Color="#797775"/>
+<SolidColorBrush x:Key="Avd.Fg.Countdown"     Color="#B3D7F5"/>
+
+<!-- ── Borders / lines ───────────────────────────────────── -->
+<SolidColorBrush x:Key="Avd.Border.Std"       Color="#DDE1E7"/>
+<SolidColorBrush x:Key="Avd.Border.Input"     Color="#CDD0D6"/>
+<SolidColorBrush x:Key="Avd.Border.Input2"    Color="#C8CDD3"/>
+<SolidColorBrush x:Key="Avd.Border.Grid"      Color="#E8EAED"/>
+
+<!-- ── Column headers ────────────────────────────────────── -->
+<SolidColorBrush x:Key="Avd.ColHeader.Bg"     Color="#0078D4"/>
+<SolidColorBrush x:Key="Avd.ColHeader.Border" Color="#005A9E"/>
+<SolidColorBrush x:Key="Avd.ColHeader.Fg"     Color="White"/>
+
+<!-- ── Status bar ────────────────────────────────────────── -->
+<SolidColorBrush x:Key="Avd.StatusBar.Bg"     Color="#0078D4"/>
+
+<!-- ── Buttons: accent (Refresh / primary action) ────────── -->
+<SolidColorBrush x:Key="Avd.Btn.Accent.Bg"    Color="#0078D4"/>
+<SolidColorBrush x:Key="Avd.Btn.Accent.Hover" Color="#005A9E"/>
+<SolidColorBrush x:Key="Avd.Btn.Accent.Press" Color="#003D6B"/>
+
+<!-- ── Buttons: standard (secondary action, Export etc.) ──── -->
+<SolidColorBrush x:Key="Avd.Btn.Std.Bg"       Color="#005A9E"/>
+<SolidColorBrush x:Key="Avd.Btn.Std.Hover"    Color="#004F8C"/>
+<SolidColorBrush x:Key="Avd.Btn.Std.Press"    Color="#003D6B"/>
+
+<!-- ── Buttons: neutral (Reload Config) ──────────────────── -->
+<SolidColorBrush x:Key="Avd.Btn.Neutral.Bg"   Color="#F0F0F0"/>
+<SolidColorBrush x:Key="Avd.Btn.Neutral.Hover" Color="#D0D0D0"/>
+<SolidColorBrush x:Key="Avd.Btn.Neutral.Press" Color="#B8B8B8"/>
+
+<!-- ── Buttons: cancel ───────────────────────────────────── -->
+<SolidColorBrush x:Key="Avd.Btn.Cancel.Bg"    Color="#E1E4EA"/>
+<SolidColorBrush x:Key="Avd.Btn.Cancel.Hover" Color="#CDD0D6"/>
+<SolidColorBrush x:Key="Avd.Btn.Cancel.Press" Color="#B8BCC4"/>
+
+<!-- ── Buttons: danger (delete / destructive actions) ────── -->
+<SolidColorBrush x:Key="Avd.Btn.Danger.Bg"       Color="#D83B01"/>
+<SolidColorBrush x:Key="Avd.Btn.Danger.Hover"    Color="#B33200"/>
+<SolidColorBrush x:Key="Avd.Btn.Danger.Press"    Color="#8C2600"/>
+<SolidColorBrush x:Key="Avd.Btn.Danger.Disabled" Color="#C89070"/>
+
+<!-- ── Buttons: save (keeps blue in both themes) ─────────── -->
+<SolidColorBrush x:Key="Avd.Btn.Save.Bg"      Color="#0078D4"/>
+<SolidColorBrush x:Key="Avd.Btn.Save.Hover"   Color="#005A9E"/>
+<SolidColorBrush x:Key="Avd.Btn.Save.Press"   Color="#003D6B"/>
+
+<!-- ── Metric heat-map cell colours ──────────────────────── -->
+<SolidColorBrush x:Key="Avd.Metric.Green"         Color="#81C784"/>
+<SolidColorBrush x:Key="Avd.Metric.Amber"         Color="#FFB74D"/>
+<SolidColorBrush x:Key="Avd.Metric.Red"           Color="#E57373"/>
+
+<!-- ── Permission status row backgrounds ─────────────────── -->
+<SolidColorBrush x:Key="Avd.Status.Granted.Bg"   Color="#F1F8E9"/>
+<SolidColorBrush x:Key="Avd.Status.Missing.Bg"   Color="#FFEBEE"/>
+<SolidColorBrush x:Key="Avd.Status.Partial.Bg"   Color="#FFF8E1"/>
+<SolidColorBrush x:Key="Avd.Status.NotConfig.Bg" Color="#F5F5F5"/>
+<SolidColorBrush x:Key="Avd.Status.Info.Bg"      Color="#E3F2FD"/>
+
+<!-- ── Shadow effect ─────────────────────────────────────── -->
+<DropShadowEffect x:Key="Avd.CardShadow"
+                  Color="#000000" BlurRadius="8" ShadowDepth="1" Opacity="0.10"/>
+
+<!-- ── Windows 11-style thin scrollbar ───────────────────── -->
+<Style TargetType="{x:Type ScrollBar}">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Width"      Value="15"/>
+    <Setter Property="MinWidth"   Value="15"/>
+
+    <Setter Property="Template">
+        <Setter.Value>
+            <ControlTemplate TargetType="{x:Type ScrollBar}">
+                <Border x:Name="TrackBd" Background="Transparent" Width="15" SnapsToDevicePixels="True">
+                    <Track x:Name="PART_Track" IsDirectionReversed="True">
+                        <Track.DecreaseRepeatButton>
+                            <RepeatButton x:Name="DecreaseBtn"
+                                          Command="{x:Static ScrollBar.PageUpCommand}"
+                                          Opacity="0" Focusable="False" IsHitTestVisible="False"/>
+                        </Track.DecreaseRepeatButton>
+                        <Track.Thumb>
+                            <Thumb>
+                                <Thumb.Template>
+                                    <ControlTemplate TargetType="{x:Type Thumb}">
+                                        <Border x:Name="Bd" Background="#C0C0C0"
+                                                CornerRadius="5" Margin="2,2"/>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Bd" Property="Background" Value="#A0A0A0"/>
+                                            </Trigger>
+                                            <Trigger Property="IsDragging" Value="True">
+                                                <Setter TargetName="Bd" Property="Background" Value="#808080"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Thumb.Template>
+                            </Thumb>
+                        </Track.Thumb>
+                        <Track.IncreaseRepeatButton>
+                            <RepeatButton x:Name="IncreaseBtn"
+                                          Command="{x:Static ScrollBar.PageDownCommand}"
+                                          Opacity="0" Focusable="False" IsHitTestVisible="False"/>
+                        </Track.IncreaseRepeatButton>
+                    </Track>
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="Orientation" Value="Horizontal">
+                        <Setter Property="Width"     Value="Auto"/>
+                        <Setter Property="MinWidth"  Value="0"/>
+                        <Setter Property="Height"    Value="15"/>
+                        <Setter Property="MinHeight" Value="15"/>
+                        <Setter TargetName="TrackBd"    Property="Width"               Value="Auto"/>
+                        <Setter TargetName="TrackBd"    Property="Height"              Value="15"/>
+                        <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+                        <Setter TargetName="PART_Track" Property="Orientation"         Value="Horizontal"/>
+                        <Setter TargetName="DecreaseBtn" Property="Command" Value="{x:Static ScrollBar.PageLeftCommand}"/>
+                        <Setter TargetName="IncreaseBtn" Property="Command" Value="{x:Static ScrollBar.PageRightCommand}"/>
+                    </Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate>
+        </Setter.Value>
+    </Setter>
+</Style>
+
+<!-- ── Light ComboBox ─────────────────────────────────────── -->
+<Style TargetType="{x:Type ComboBox}">
+    <Setter Property="Foreground"      Value="#1F2937"/>
+    <Setter Property="Background"      Value="White"/>
+    <Setter Property="BorderBrush"     Value="#CDD0D6"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="Template">
+        <Setter.Value>
+            <ControlTemplate TargetType="{x:Type ComboBox}">
+                <Grid>
+                    <ToggleButton Focusable="False" ClickMode="Press"
+                                  IsChecked="{Binding IsDropDownOpen, Mode=TwoWay,
+                                      RelativeSource={RelativeSource TemplatedParent}}">
+                        <ToggleButton.Template>
+                            <ControlTemplate TargetType="{x:Type ToggleButton}">
+                                <Border x:Name="Bd" Background="White"
+                                        BorderBrush="#CDD0D6" BorderThickness="1" CornerRadius="3">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="24"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Path Grid.Column="1" Data="M 0 0 L 5 5 L 10 0"
+                                              Stroke="#666666" StrokeThickness="1.5"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Grid>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="Bd" Property="BorderBrush" Value="#0078D4"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </ToggleButton.Template>
+                    </ToggleButton>
+                    <ContentPresenter IsHitTestVisible="False" Margin="8,0,28,0"
+                                      VerticalAlignment="Center" HorizontalAlignment="Left"
+                                      Content="{TemplateBinding SelectionBoxItem}"
+                                      TextBlock.Foreground="#1F2937"/>
+                    <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}"
+                           Placement="Bottom" AllowsTransparency="True"
+                           Focusable="False" PopupAnimation="Slide"
+                           MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=ComboBox}}">
+                        <Border Background="White" BorderBrush="#CDD0D6" BorderThickness="1">
+                            <ScrollViewer MaxHeight="200">
+                                <StackPanel IsItemsHost="True"
+                                            KeyboardNavigation.DirectionalNavigation="Contained"/>
+                            </ScrollViewer>
+                        </Border>
+                    </Popup>
+                </Grid>
+            </ControlTemplate>
+        </Setter.Value>
+    </Setter>
+    <Setter Property="ItemContainerStyle">
+        <Setter.Value>
+            <Style TargetType="{x:Type ComboBoxItem}">
+                <Setter Property="Foreground" Value="#1F2937"/>
+                <Setter Property="Background" Value="White"/>
+                <Setter Property="Padding"    Value="8,5"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type ComboBoxItem}">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter TextBlock.Foreground="{TemplateBinding Foreground}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="#EEF4FC"/>
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="#D0E7FA"/>
+                                    <Setter Property="Foreground" Value="#1F2937"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </Setter.Value>
+    </Setter>
+</Style>
+
+<!-- ── Light CheckBox / RadioButton (foreground only, default indicator) -->
+<Style TargetType="{x:Type CheckBox}">
+    <Setter Property="Foreground" Value="#1F2937"/>
+</Style>
+<Style TargetType="{x:Type RadioButton}">
+    <Setter Property="Foreground" Value="#1F2937"/>
+</Style>
