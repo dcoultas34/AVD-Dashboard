@@ -1,7 +1,9 @@
 # AVD Live Dashboard
 
 ![Dashboard Overview](screenshots/dashboard.png)
+![Dashboard Dark Mode](screenshots/dashboard-dark.png)
 ![Session Hosts](screenshots/session-hosts.png)
+![Monitoring](screenshots/monitoring.png)
 ![Session History](screenshots/session-history.png)
 ![Session Detail](screenshots/session-detail.png)
 ![Log Viewer](screenshots/log-viewer.png)
@@ -792,6 +794,8 @@ Hovering over the chart shows a crosshair with a tooltip displaying the exact bi
 
 Queries use placeholder tokens (`{{DisplayStart}}`, `{{DisplayEnd}}`, `{{BinSize}}`, `{{HostPoolFilter}}`) that are replaced at runtime. Requires `LogAnalytics.WorkspaceResourceId` to be configured in `config.psd1`.
 
+**Custom KQL Query** (toolbar button): Opens a popup window for running arbitrary KQL queries directly against the configured Log Analytics workspace. Enter any KQL in the editor, click **Run**, and results appear in a dynamic table with one column per field returned by the query. Column widths auto-size to content and a horizontal scrollbar handles wide result sets. The status bar shows row count and elapsed time. Named queries can be saved to and loaded from `%APPDATA%\AVDDashboard\kql-queries.json` — a sample query (`WVDConnections | take 10`) is created automatically on first use. The popup honours the active dark or light theme. Requires `LogAnalytics.WorkspaceResourceId` to be configured.
+
 ### Switch Subscription
 
 A **Switch Subscription** button in the status bar opens a dialog listing all Azure subscriptions accessible to the signed-in account. Selecting a subscription switches the active context immediately and triggers a full refresh of both AVD and Azure Files data — no restart required. The current subscription name is shown in the status bar alongside the signed-in account.
@@ -1104,12 +1108,15 @@ A **Switch Subscription** button in the status bar allows checking permissions a
 ## Sample Screenshots
 
 ![Dashboard Overview](screenshots/dashboard.png)
+![Dashboard Dark Mode](screenshots/dashboard-dark.png)
 ![Session Hosts](screenshots/session-hosts.png)
+![Monitoring](screenshots/monitoring.png)
 ![Session History](screenshots/session-history.png)
 ![Session Detail](screenshots/session-detail.png)
 ![Performance History](screenshots/performance-history.png)
 ![Azure Files](screenshots/azure-files.png)
 ![Infrastructure](screenshots/infrastructure.png)
+![Images](screenshots/images.png)
 ![Run Command](screenshots/run-command.png)
 ![Send Message](screenshots/send-message.png)
 ![Settings](screenshots/settings.png)

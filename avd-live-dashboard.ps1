@@ -140,7 +140,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-05-14
+    Version       : 2026-05-15
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -174,7 +174,7 @@ param(
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-05-14"
+$ScriptVersion = "2026-05-15"
 
 # =============================================================================
 # Customer / Environment Configuration

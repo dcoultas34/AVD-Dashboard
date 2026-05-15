@@ -68,6 +68,231 @@ $script:_kqlWinlogonHostPools = [System.IO.File]::ReadAllText((Join-Path $script
 $script:_kqlSessionHistory   = [System.IO.File]::ReadAllText((Join-Path $script:_kqlDir 'session-history.kql'))
 
 # =============================================================================
+# Self-contained query scriptblock for the monitoring runspace.
+# All inputs come from variables injected via SessionStateProxy.SetVariable().
+# No $script: references; no Az module functions (token is pre-fetched on UI thread).
+# Returns a single hashtable consumed by the poll-timer Tick handler.
+# =============================================================================
+$script:_monQueryScript = @'
+function Invoke-MonQuery {
+    param([string]$Kql, [string]$Timespan = 'PT24H')
+    $body = @{ query = $Kql; timespan = $Timespan } | ConvertTo-Json -Compress
+    if ($queryBaseUrl) {
+        $uri = "$queryBaseUrl/v1$workspaceId/query"
+        return Invoke-RestMethod -Method POST -Uri $uri -Body $body `
+            -Headers @{ Authorization = "Bearer $lawToken"; 'Content-Type' = 'application/json' } `
+            -ErrorAction Stop
+    }
+    $uri = "https://management.azure.com$workspaceId/api/query?api-version=2020-08-01"
+    return Invoke-RestMethod -Method POST -Uri $uri -Body $body `
+        -Headers @{ Authorization = "Bearer $armToken"; 'Content-Type' = 'application/json' } `
+        -ErrorAction Stop
+}
+
+function Get-MonColNames { param($Columns)
+    @($Columns | ForEach-Object {
+        $n = [string]$_.name
+        if (-not $n) { $n = [string]$_.ColumnName }
+        if (-not $n) { $n = [string]$_ }
+        $n
+    })
+}
+
+$isoTimespan = switch ($timeRange) {
+    '1h'  { 'PT1H'  }  '4h'  { 'PT4H'  }
+    '8h'  { 'PT8H'  }  '12h' { 'PT12H' }
+    '24h' { 'PT24H' }  '48h' { 'PT48H' }
+    '7d'  { 'P7D'   }  '30d' { 'P30D'  }
+    default { 'PT24H' }
+}
+if ($timeRange -eq 'custom') { $isoTimespan = 'P30D' }
+
+$result = @{
+    HostPools = @()
+    StageData = @()
+    RttData   = @()
+    History   = @{ Sessions = @(); Disconnected = @(); Total = @(); BinMins = 30 }
+    Error     = $null
+}
+
+try {
+    # Query 1: Host pool names for dropdown
+    try {
+        $resp  = Invoke-MonQuery -Kql $kqlWinlogonHostPools -Timespan 'P7D'
+        $pools = [System.Collections.Generic.List[string]]::new()
+        if ($resp.tables -and $resp.tables[0].rows -and $resp.tables[0].rows.Count -gt 0) {
+            foreach ($r in $resp.tables[0].rows) {
+                $name = [string]$r[0]
+                if ($name) { $pools.Add($name) }
+            }
+        }
+        $result.HostPools = @($pools)
+    } catch {}
+
+    # Query 2: Winlogon stages
+    try {
+        $hpFilter = ''
+        if ($hostPoolFilter -and $hostPoolFilter -ne 'All Host Pools') {
+            $escapedHp = $hostPoolFilter.Replace("'", "''").ToLower()
+            $hpFilter  = "| where tolower(tostring(split(_ResourceId, '/')[8])) == '$escapedHp'"
+        }
+        if ($customFrom -and $customTo) {
+            $kql = $kqlWinlogonStages `
+                -replace 'ago\(\{\{TimeRange\}\}\)', "datetime($customFrom)" `
+                -replace '\{\{HostPoolFilter\}\}', $hpFilter
+            $kql = $kql -replace "(where TimeGenerated > datetime\($([regex]::Escape($customFrom))\))", "`$1`n| where TimeGenerated < datetime($customTo)"
+            $ts  = 'P30D'
+        } else {
+            $kql = $kqlWinlogonStages -replace '\{\{TimeRange\}\}', $timeRange -replace '\{\{HostPoolFilter\}\}', $hpFilter
+            $ts  = $isoTimespan
+        }
+        $resp     = Invoke-MonQuery -Kql $kql -Timespan $ts
+        $stages   = [System.Collections.Generic.List[PSObject]]::new()
+        if ($resp.tables -and $resp.tables[0].rows -and $resp.tables[0].rows.Count -gt 0) {
+            $cols    = Get-MonColNames $resp.tables[0].columns
+            $colsLow = @($cols | ForEach-Object { $_.ToLower() })
+            $idxStage   = [array]::IndexOf($colsLow, 'stage')
+            $idxP50     = [array]::IndexOf($colsLow, 'p50')
+            $idxP95     = [array]::IndexOf($colsLow, 'p95')
+            $idxSamples = [array]::IndexOf($colsLow, 'samples')
+            if ($idxStage -ge 0 -and $idxP50 -ge 0 -and $idxP95 -ge 0) {
+                foreach ($r in $resp.tables[0].rows) {
+                    $stages.Add([PSCustomObject]@{
+                        Stage   = [string]$r[$idxStage]
+                        P50     = [double]$r[$idxP50]
+                        P95     = [double]$r[$idxP95]
+                        Samples = if ($idxSamples -ge 0) { [int]$r[$idxSamples] } else { 0 }
+                    })
+                }
+            }
+        }
+        $stageOrder = @{ 'Others'=0; 'User Auth.'=1; 'Group policy'=2; 'Shell'=3; 'FSLogix'=4 }
+        $result.StageData = @($stages | Sort-Object { if ($stageOrder.ContainsKey($_.Stage)) { $stageOrder[$_.Stage] } else { 99 } })
+    } catch { $result.StageData = @() }
+
+    # Query 3: RTT by gateway region
+    try {
+        if ($customFrom -and $customTo) {
+            $kql = $kqlRttByGateway `
+                -replace 'ago\(\{\{TimeRange\}\}\)', "datetime($customFrom)"
+            $kql = $kql -replace "(where TimeGenerated > datetime\($([regex]::Escape($customFrom))\))", "`$1`n    | where TimeGenerated < datetime($customTo)"
+            $ts  = 'P30D'
+        } else {
+            $kql = $kqlRttByGateway -replace '\{\{TimeRange\}\}', $timeRange
+            $ts  = $isoTimespan
+        }
+        $resp = Invoke-MonQuery -Kql $kql -Timespan $ts
+        $rows = [System.Collections.Generic.List[PSObject]]::new()
+        if ($resp.tables -and $resp.tables[0].rows -and $resp.tables[0].rows.Count -gt 0) {
+            $cols    = Get-MonColNames $resp.tables[0].columns
+            $colsLow = @($cols | ForEach-Object { $_.ToLower() })
+            $idxRegion = [array]::IndexOf($colsLow, 'gatewayregion')
+            $idxUsers  = [array]::IndexOf($colsLow, 'users')
+            $idxMedian = [array]::IndexOf($colsLow, 'median')
+            $idxP95    = [array]::IndexOf($colsLow, 'p95')
+            $idxPeak   = [array]::IndexOf($colsLow, 'peak')
+            $idxPeakT  = [array]::IndexOf($colsLow, 'peaktime')
+            if ($idxRegion -ge 0) {
+                foreach ($r in $resp.tables[0].rows) {
+                    $peakTimeStr = ''
+                    if ($idxPeakT -ge 0 -and $r[$idxPeakT]) {
+                        try { $peakTimeStr = ([datetime]$r[$idxPeakT]).ToLocalTime().ToString('dd/MM/yyyy, HH:mm:ss.fff') } catch { $peakTimeStr = [string]$r[$idxPeakT] }
+                    }
+                    $rows.Add([PSCustomObject]@{
+                        GatewayRegion = [string]$r[$idxRegion]
+                        Users         = if ($idxUsers  -ge 0) { [int]$r[$idxUsers] }    else { 0 }
+                        Median        = if ($idxMedian -ge 0) { "$([int]$r[$idxMedian])ms" } else { '-' }
+                        P95           = if ($idxP95    -ge 0) { "$([int]$r[$idxP95])ms" }    else { '-' }
+                        Peak          = if ($idxPeak   -ge 0) { "$([int]$r[$idxPeak]) ms" }  else { '-' }
+                        PeakTime      = $peakTimeStr
+                    })
+                }
+            }
+        }
+        $result.RttData = @($rows)
+    } catch { $result.RttData = @() }
+
+    # Query 4: Session history
+    try {
+        if ($timeRange -eq 'custom' -and $customFrom -and $customTo) {
+            $spanHours = ([datetime]$customTo - [datetime]$customFrom).TotalHours
+            if ($spanHours -le 24) { $binSize = '30m'; $binMins = 30 }
+            else                   { $binSize = '1h';  $binMins = 60 }
+        } else {
+            $binSize = switch ($timeRange) {
+                '1h'  { '5m'  }  '4h'  { '15m' }
+                '8h'  { '30m' }  '12h' { '30m' }
+                '24h' { '30m' }  '48h' { '30m' }
+                '7d'  { '1h'  }  '30d' { '1h'  }
+                default { '30m' }
+            }
+            $binMins = switch ($timeRange) {
+                '1h'  { 5  }  '4h'  { 15 }
+                '8h'  { 30 }  '12h' { 30 }
+                '24h' { 30 }  '48h' { 30 }
+                '7d'  { 60 }  '30d' { 60 }
+                default { 30 }
+            }
+        }
+        $shHpFilter = ''
+        if ($hostPoolFilter -and $hostPoolFilter -ne 'All Host Pools') {
+            $escapedHp  = $hostPoolFilter.Replace("'", "''").ToLower()
+            $shHpFilter = "| where tolower(tostring(split(_ResourceId, '/')[8])) == '$escapedHp'"
+        }
+        if ($timeRange -eq 'custom' -and $customFrom -and $customTo) {
+            $displayStart = "datetime($customFrom)"
+            $displayEnd   = "datetime($customTo)"
+        } else {
+            $displayStart = "ago($timeRange)"
+            $displayEnd   = "now()"
+        }
+        $kql = $kqlSessionHistory `
+            -replace '\{\{DisplayStart\}\}',   $displayStart `
+            -replace '\{\{DisplayEnd\}\}',     $displayEnd `
+            -replace '\{\{BinSize\}\}',        $binSize `
+            -replace '\{\{HostPoolFilter\}\}', $shHpFilter
+
+        $resp            = Invoke-MonQuery -Kql $kql -Timespan 'P30D'
+        $activePts       = [System.Collections.Generic.List[PSCustomObject]]::new()
+        $disconnectedPts = [System.Collections.Generic.List[PSCustomObject]]::new()
+        $totalPts        = [System.Collections.Generic.List[PSCustomObject]]::new()
+        if ($resp.tables -and $resp.tables[0].rows -and $resp.tables[0].rows.Count -gt 0) {
+            $cols   = @($resp.tables[0].columns | ForEach-Object {
+                $n = [string]$_.name
+                if (-not $n) { $n = [string]$_.ColumnName }
+                if (-not $n) { $n = [string]$_ }
+                $n.ToLower()
+            })
+            $iTime  = [array]::IndexOf($cols, 'timegenerated')
+            $iAct   = [array]::IndexOf($cols, 'active')
+            $iDisc  = [array]::IndexOf($cols, 'disconnected')
+            $iTotal = [array]::IndexOf($cols, 'total')
+            if ($iTime -ge 0 -and $iAct -ge 0 -and $iDisc -ge 0) {
+                foreach ($r in $resp.tables[0].rows) {
+                    $t    = ([datetime]$r[$iTime]).ToUniversalTime()
+                    $act  = [double]$r[$iAct]
+                    $disc = [double]$r[$iDisc]
+                    $tot  = if ($iTotal -ge 0) { [double]$r[$iTotal] } else { $act + $disc }
+                    $activePts.Add([PSCustomObject]@{       Time = $t; Value = $act  })
+                    $disconnectedPts.Add([PSCustomObject]@{ Time = $t; Value = $disc })
+                    $totalPts.Add([PSCustomObject]@{        Time = $t; Value = $tot  })
+                }
+            }
+        }
+        $activePts       = [System.Collections.Generic.List[PSCustomObject]]($activePts       | Sort-Object Time)
+        $disconnectedPts = [System.Collections.Generic.List[PSCustomObject]]($disconnectedPts | Sort-Object Time)
+        $totalPts        = [System.Collections.Generic.List[PSCustomObject]]($totalPts        | Sort-Object Time)
+        $result.History  = @{ Sessions = @($activePts); Disconnected = @($disconnectedPts); Total = @($totalPts); BinMins = $binMins }
+    } catch { $result.History = @{ Sessions = @(); Disconnected = @(); Total = @(); BinMins = 30 } }
+
+} catch {
+    $result.Error = "$_"
+}
+
+$result
+'@
+
+# =============================================================================
 # 1. XAML fragment
 #
 # The main script contains the placeholder comment <!-- TAB:MONITORING -->
@@ -1400,6 +1625,98 @@ function Initialize-MonitoringTab {
     $script:_monSessionHistoryFilled   = $null
     $script:_monShCache                = @{}  # cache: "$TimeRange|$HostPool|$CustomFrom|$CustomTo" -> @{ Data; FetchedAt }
 
+    # ── Background runspace for LAW queries ───────────────────────────────────
+    # A persistent MTA runspace (opened once, reused every Refresh) so queries
+    # run off the UI thread and the window stays responsive during data fetches.
+    $script:monRunspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+    $script:monRunspace.ApartmentState = 'MTA'
+    $script:monRunspace.Open()
+    $script:monPS     = $null
+    $script:monHandle = $null
+
+    # Poll timer: checks every 200ms whether the background job has finished.
+    # Fires on the UI thread (DispatcherTimer), so all UI updates here are safe.
+    $script:_monPollTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $script:_monPollTimer.Interval = [TimeSpan]::FromMilliseconds(200)
+    $script:_monPollTimer.Add_Tick({
+        if (-not $script:monHandle -or -not $script:monHandle.IsCompleted) { return }
+        $script:_monPollTimer.Stop()
+
+        $result = $null; $errMsg = $null
+        try {
+            $result = $script:monPS.EndInvoke($script:monHandle)
+        } catch {
+            $errMsg = "$_"
+        } finally {
+            $script:monPS.Dispose()
+            $script:monPS = $null; $script:monHandle = $null
+        }
+
+        if ($errMsg -or $result.Error) {
+            $script:monWinlogonStatus.Text       = "Query error: $(if ($errMsg) { $errMsg } else { $result.Error })"
+            $script:monSessionHistoryStatus.Text = ''
+            $script:_monRefreshing = $false
+            return
+        }
+
+        # Refresh host pool dropdown, preserving the current selection
+        try {
+            $hpSelected       = $script:monWinlogonHostPool.SelectedItem
+            $currentSelection = if ($hpSelected) { [string]$hpSelected.Content } else { 'All Host Pools' }
+            $script:monWinlogonHostPool.Items.Clear()
+            $allItem = New-Object System.Windows.Controls.ComboBoxItem
+            $allItem.Content = 'All Host Pools'
+            [void]$script:monWinlogonHostPool.Items.Add($allItem)
+            $script:monWinlogonHostPool.SelectedIndex = 0
+            foreach ($p in $result.HostPools) {
+                $item = New-Object System.Windows.Controls.ComboBoxItem
+                $item.Content = $p
+                [void]$script:monWinlogonHostPool.Items.Add($item)
+                if ($p -eq $currentSelection) { $script:monWinlogonHostPool.SelectedItem = $item }
+            }
+        } catch {}
+
+        # Winlogon chart
+        $script:_monWinlogonData = $result.StageData
+        Update-WinlogonChart -Canvas $script:monWinlogonCanvas -StageData $result.StageData
+        if ($result.StageData -and $result.StageData.Count -gt 0) {
+            $totalSamples = ($result.StageData | ForEach-Object { $_.Samples } | Measure-Object -Sum).Sum
+            $totalP95     = [math]::Round(($result.StageData | ForEach-Object { $_.P95 } | Measure-Object -Sum).Sum, 1)
+            $script:monWinlogonStatus.Text = "$($result.StageData.Count) stage(s), $totalSamples sample(s) - P95 total logon time: ${totalP95}s"
+        } else {
+            $script:monWinlogonStatus.Text = 'No winlogon stage data found for the selected time range.'
+        }
+
+        # RTT datagrid
+        $script:monRttGrid.ItemsSource = $result.RttData
+        if ($result.RttData -and $result.RttData.Count -gt 0) {
+            $regionCount = $result.RttData.Count
+            $totalUsers  = ($result.RttData | ForEach-Object { $_.Users } | Measure-Object -Sum).Sum
+            $script:monRttStatus.Text = "$regionCount region(s), $totalUsers unique user(s)"
+        } else {
+            $script:monRttStatus.Text = 'No RTT data found for the selected time range.'
+        }
+
+        # Session history chart
+        $shData = $result.History
+        if ($shData -and $shData.Sessions -and $shData.Sessions.Count -gt 0) {
+            $script:_monSessionHistoryData    = $shData
+            $script:_monSessionHistoryBinMins = if ($shData.BinMins) { $shData.BinMins } else { $script:_monSessionHistoryBinMins }
+            Update-SessionHistoryChart -Canvas $script:monSessionHistoryCanvas `
+                -SessionsData     $shData.Sessions `
+                -DisconnectedData $shData.Disconnected `
+                -TotalData        $shData.Total `
+                -BinMinutes       $script:_monSessionHistoryBinMins
+            $maxSessions = [int](($shData.Sessions | Measure-Object Value -Maximum).Maximum)
+            $maxTotal    = if ($shData.Total) { [int](($shData.Total | Measure-Object Value -Maximum).Maximum) } else { 0 }
+            $script:monSessionHistoryStatus.Text = "Peak Active: $maxSessions  |  Peak Total: $maxTotal"
+        } else {
+            $script:monSessionHistoryStatus.Text = 'No session history data found for the selected time range.'
+        }
+
+        $script:_monRefreshing = $false
+    })
+
     # Custom range display label and stored values (set by popup)
     $script:monRangeDisplay   = $Window.FindName('MonRangeDisplay')
     $script:_monCustomFrom    = [DateTime]::Today.AddDays(-7).ToString('dd/MM/yyyy 00:00')
@@ -1574,17 +1891,11 @@ function Initialize-MonitoringTab {
     }
 
     # ── Refresh button click handler ───────────────────────────────────────
-    # Runs the three LAW queries sequentially on the calling thread, then
-    # renders results. Sequential is required because the query functions
-    # are defined in this script scope and are not available in fresh runspaces.
+    # Dispatches LAW queries to $script:monRunspace via BeginInvoke() so the UI
+    # stays responsive. $script:_monPollTimer checks completion every 200ms.
     $script:monWinlogonRefreshBtn.Add_Click({
         if ($script:_monRefreshing) { return }
         $script:_monRefreshing = $true
-
-        $script:monWinlogonStatus.Text       = 'Querying Log Analytics...'
-        $script:monSessionHistoryStatus.Text = 'Querying session history...'
-        $script:monWinlogonCanvas.Children.Clear()
-        $script:monWinlogonCanvas.UpdateLayout()
 
         $params = & $script:_monGetRangeParams
 
@@ -1600,95 +1911,38 @@ function Initialize-MonitoringTab {
             }
         }
 
-        try {
-            # ── Step 1: Refresh host pool dropdown ─────────────────────────────
-            try {
-                $pools = Invoke-WinlogonHostPoolsQuery
-                $hpSelected = $script:monWinlogonHostPool.SelectedItem
-                $currentSelection = if ($hpSelected) { [string]$hpSelected.Content } else { 'All Host Pools' }
-                $script:monWinlogonHostPool.Items.Clear()
-                $allItem = New-Object System.Windows.Controls.ComboBoxItem
-                $allItem.Content = 'All Host Pools'
-                [void]$script:monWinlogonHostPool.Items.Add($allItem)
-                $script:monWinlogonHostPool.SelectedIndex = 0
-                foreach ($p in $pools) {
-                    $item = New-Object System.Windows.Controls.ComboBoxItem
-                    $item.Content = $p
-                    [void]$script:monWinlogonHostPool.Items.Add($item)
-                    if ($p -eq $currentSelection) { $script:monWinlogonHostPool.SelectedItem = $item }
-                }
-            } catch {}
-
-            # ── Step 2: Run all three queries sequentially ─────────────────────
-            $range      = $params.Range
-            $customFrom = $params.CustomFrom
-            $customTo   = $params.CustomTo
-            $hpFilter   = $params.HpFilter
-
-            $data = @()
-            try {
-                $data = @(Invoke-WinlogonStagesQuery -TimeRange $range -HostPoolFilter $hpFilter -CustomFrom $customFrom -CustomTo $customTo)
-            } catch { $script:monWinlogonStatus.Text = "Winlogon query failed: $_" }
-
-            $rttDataArr = @()
-            try {
-                $rttDataArr = @(Invoke-RttByGatewayQuery -TimeRange $range -CustomFrom $customFrom -CustomTo $customTo)
-            } catch { $script:monRttStatus.Text = "RTT query failed: $_" }
-
-            $shData = $null
-            try {
-                # Invalidate the cache for this specific key so the Refresh button
-                # always fetches fresh data from LAW, ignoring any cached result.
-                $shCacheKey = "$range|$hpFilter|$customFrom|$customTo"
-                $script:_monShCache.Remove($shCacheKey)
-                Write-Log "[SessionHistory] Manual refresh - cache invalidated for '$shCacheKey'"
-                $shData = Invoke-SessionHistoryQuery -TimeRange $range -HostPool $hpFilter -CustomFrom $customFrom -CustomTo $customTo
-            } catch { $script:monSessionHistoryStatus.Text = "Session History query failed: $_" }
-
-            # ── Step 3: Render Winlogon chart ──────────────────────────────────
-            $script:_monWinlogonData = $data
-            Update-WinlogonChart -Canvas $script:monWinlogonCanvas -StageData $data
-            if ($data.Count -gt 0) {
-                $totalSamples = ($data | ForEach-Object { $_.Samples } | Measure-Object -Sum).Sum
-                $totalP95     = [math]::Round(($data | ForEach-Object { $_.P95 } | Measure-Object -Sum).Sum, 1)
-                $script:monWinlogonStatus.Text = "$($data.Count) stage(s), $totalSamples sample(s) - P95 total logon time: ${totalP95}s"
-            } else {
-                if (-not $script:monWinlogonStatus.Text.StartsWith('Winlogon query failed')) {
-                    $script:monWinlogonStatus.Text = 'No winlogon stage data found for the selected time range.'
-                }
-            }
-
-            # ── Step 4: Render RTT grid ────────────────────────────────────────
-            $script:monRttGrid.ItemsSource = $rttDataArr
-            if (-not $script:monRttStatus.Text.StartsWith('RTT query failed')) {
-                $regionCount = $rttDataArr.Count
-                $totalUsers  = ($rttDataArr | ForEach-Object { $_.Users } | Measure-Object -Sum).Sum
-                $script:monRttStatus.Text = "$regionCount region(s), $totalUsers unique user(s)"
-            }
-
-            # ── Step 5: Render Session History chart ───────────────────────────
-            if ($shData) {
-                $script:_monSessionHistoryData    = $shData
-                $script:_monSessionHistoryBinMins = if ($shData.BinMins) { $shData.BinMins } else { $script:_monSessionHistoryBinMins }
-                Update-SessionHistoryChart -Canvas $script:monSessionHistoryCanvas `
-                    -SessionsData     $shData.Sessions `
-                    -DisconnectedData $shData.Disconnected `
-                    -TotalData        $shData.Total `
-                    -BinMinutes       $script:_monSessionHistoryBinMins
-                $pts = if ($shData.Sessions) { $shData.Sessions.Count } else { 0 }
-                if ($pts -gt 0) {
-                    $maxSessions = [int](($shData.Sessions | Measure-Object Value -Maximum).Maximum)
-                    $maxTotal    = if ($shData.Total) { [int](($shData.Total | Measure-Object Value -Maximum).Maximum) } else { 0 }
-                    $script:monSessionHistoryStatus.Text = "Peak Active: $maxSessions  |  Peak Total: $maxTotal"
-                } else {
-                    if (-not $script:monSessionHistoryStatus.Text.StartsWith('Session History query failed')) {
-                        $script:monSessionHistoryStatus.Text = 'No session history data found for the selected time range.'
-                    }
-                }
-            }
+        # Acquire tokens on the UI thread (fast - usually a cache hit)
+        $lawTok = try { Get-LawToken } catch { $null }
+        $armTok = try { Get-ArmToken } catch { $null }
+        if (-not $lawTok -and -not $armTok) {
+            $script:monWinlogonStatus.Text = 'Token acquisition failed. Check Azure sign-in.'
+            $script:_monRefreshing = $false; return
         }
-        catch { $script:monWinlogonStatus.Text = "Query failed: $_" }
-        finally { $script:_monRefreshing = $false }
+
+        $script:monWinlogonStatus.Text       = 'Querying Log Analytics...'
+        $script:monSessionHistoryStatus.Text = 'Querying session history...'
+        $script:monWinlogonCanvas.Children.Clear()
+        $script:monWinlogonCanvas.UpdateLayout()
+
+        # Inject all runtime values into the runspace scope
+        $script:monRunspace.SessionStateProxy.SetVariable('lawToken',             $lawTok)
+        $script:monRunspace.SessionStateProxy.SetVariable('armToken',             $armTok)
+        $script:monRunspace.SessionStateProxy.SetVariable('workspaceId',          $script:LawWorkspaceResourceId)
+        $script:monRunspace.SessionStateProxy.SetVariable('queryBaseUrl',         $script:LawQueryBaseUrl)
+        $script:monRunspace.SessionStateProxy.SetVariable('timeRange',            $params.Range)
+        $script:monRunspace.SessionStateProxy.SetVariable('customFrom',           $params.CustomFrom)
+        $script:monRunspace.SessionStateProxy.SetVariable('customTo',             $params.CustomTo)
+        $script:monRunspace.SessionStateProxy.SetVariable('hostPoolFilter',       $params.HpFilter)
+        $script:monRunspace.SessionStateProxy.SetVariable('kqlWinlogonStages',    $script:_kqlWinlogonStages)
+        $script:monRunspace.SessionStateProxy.SetVariable('kqlRttByGateway',      $script:_kqlRttByGateway)
+        $script:monRunspace.SessionStateProxy.SetVariable('kqlSessionHistory',    $script:_kqlSessionHistory)
+        $script:monRunspace.SessionStateProxy.SetVariable('kqlWinlogonHostPools', $script:_kqlWinlogonHostPools)
+
+        $script:monPS = [System.Management.Automation.PowerShell]::Create()
+        $script:monPS.Runspace = $script:monRunspace
+        [void]$script:monPS.AddScript($script:_monQueryScript)
+        $script:monHandle = $script:monPS.BeginInvoke()
+        $script:_monPollTimer.Start()
     })
 
     # ── Resize handler: redraw chart when canvas size changes ──────────────

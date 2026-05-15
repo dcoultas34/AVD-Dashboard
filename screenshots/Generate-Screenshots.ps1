@@ -194,6 +194,22 @@ function Set-HeatMapStyle {
     }
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper: apply the dark theme resource dictionary to a window
+# ─────────────────────────────────────────────────────────────────────────────
+function Apply-Theme {
+    param([System.Windows.Window]$Window, [string]$ThemeFile)
+    $tc = Get-Content -Raw -Path (Join-Path $scriptRoot "data\$ThemeFile-theme.xaml") -Encoding UTF8
+    $rd = [System.Windows.Markup.XamlReader]::Parse(
+        "<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' " +
+        "xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$tc</ResourceDictionary>")
+    $Window.Resources.MergedDictionaries.Add($rd)
+    $Window.SetResourceReference([System.Windows.Window]::BackgroundProperty, 'Avd.Window.Bg')
+    $Window.SetResourceReference([System.Windows.Window]::ForegroundProperty, 'Avd.Window.Fg')
+}
+function Apply-LightTheme { param([System.Windows.Window]$Window); Apply-Theme $Window 'light' }
+function Apply-DarkTheme  { param([System.Windows.Window]$Window); Apply-Theme $Window 'dark'  }
+
 # =============================================================================
 # Read and assemble the main dashboard XAML
 # =============================================================================
@@ -216,6 +232,8 @@ $dashFull = $dashRaw `
     -replace '<!-- TAB:SESSION_INFO -->',  $siTabXaml `
     -replace '<!-- TAB:IMAGES -->',        $imgTabXaml
 
+$dashFull = $dashFull.Replace('<!-- THEME_SLOT -->', '')
+
 # Clean up labels for screenshots
 $dashFull = $dashFull -replace 'DEVELOPMENT BUILD', ''
 
@@ -225,6 +243,7 @@ $dashFull = $dashFull -replace 'DEVELOPMENT BUILD', ''
 function Initialize-DashboardWindow {
     param([System.Windows.Window]$W, [int]$Width = 1200)
     $W.Width = $Width
+    Apply-LightTheme $W
     $W.FindName("CardPools").Text   = "6"
     $W.FindName("CardVMs").Text     = "47"
     $W.FindName("CardOn").Text      = "32"
@@ -303,6 +322,18 @@ Set-GridData -Grid $w1.FindName("PoolGrid") `
     -Data $poolData
 Select-Tab $w1 'Per Host Pool'
 Save-WindowScreenshot -Window $w1 -OutputPath (Join-Path $outDir 'dashboard.png') -Show:$ShowWindows
+
+# 1b. Dark mode - Per Host Pool tab
+Write-Host "  [1b/14] Per Host Pool tab (dark mode)..."
+$w1d = New-WpfWindow -Xaml $dashFull
+Initialize-DashboardWindow $w1d
+Set-GridData -Grid $w1d.FindName("PoolGrid") `
+    -Columns @('Host Pool','Workspace','VM Region','Image Version','Total VMs','VMs On','VMs Off','Active Users','Disconnected','Total Sessions','Scaling Plan','Host Pool RG','Scope','HP Location') `
+    -Data $poolData
+Apply-DarkTheme $w1d
+$w1d.FindName('DarkToggle').IsChecked = $true
+Select-Tab $w1d 'Per Host Pool'
+Save-WindowScreenshot -Window $w1d -OutputPath (Join-Path $outDir 'dashboard-dark.png') -Show:$ShowWindows
 
 # =============================================================================
 # 2. Azure Files tab
@@ -383,11 +414,27 @@ Select-Tab $wImg 'Images'
 Save-WindowScreenshot -Window $wImg -OutputPath (Join-Path $outDir 'images.png') -Show:$ShowWindows
 
 # =============================================================================
-# 6. Settings dialog
+# 6. Monitoring tab
 # =============================================================================
-Write-Host "  [7/13] Settings dialog..."
-$settingsXaml = Get-XamlFromScript -Path (Join-Path $scriptRoot 'avd-live-dashboard.ps1') -VariableName '$settingsXaml'
+Write-Host "  [6/14] Monitoring tab..."
+$wMon = New-WpfWindow -Xaml $dashFull
+Initialize-DashboardWindow $wMon
+$monWinlogonStatus = $wMon.FindName('MonWinlogonStatus')
+$monRttStatus      = $wMon.FindName('MonRttStatus')
+$monRangeDisplay   = $wMon.FindName('MonRangeDisplay')
+if ($monWinlogonStatus) { $monWinlogonStatus.Text = 'Log Analytics Workspace not configured.' }
+if ($monRttStatus)      { $monRttStatus.Text      = 'Log Analytics Workspace not configured.' }
+if ($monRangeDisplay)   { $monRangeDisplay.Text   = 'Last 48 Hours' }
+Select-Tab $wMon 'Monitoring'
+Save-WindowScreenshot -Window $wMon -OutputPath (Join-Path $outDir 'monitoring.png') -Show:$ShowWindows
+
+# =============================================================================
+# 7. Settings dialog
+# =============================================================================
+Write-Host "  [7/14] Settings dialog..."
+$settingsXaml = (Get-XamlFromScript -Path (Join-Path $scriptRoot 'avd-live-dashboard.ps1') -VariableName '$_settingsXamlRaw').Replace('<!-- THEME_SLOT -->', '')
 $ws = New-WpfWindow -Xaml $settingsXaml
+Apply-LightTheme $ws
 # Left column: Operational Settings
 $ws.FindName("RefreshIntervalBox").Text     = "30"
 $ws.FindName("FilesIntervalBox").Text       = "15"
@@ -414,8 +461,9 @@ Save-WindowScreenshot -Window $ws -OutputPath (Join-Path $outDir 'settings.png')
 # 6. Profile Tools
 # =============================================================================
 Write-Host "  [8/13] Profile Tools..."
-$ptXaml = Get-XamlFromScript -Path (Join-Path $scriptRoot 'profile-tools.ps1') -VariableName '$xaml'
+$ptXaml = (Get-XamlFromScript -Path (Join-Path $scriptRoot 'profile-tools.ps1') -VariableName '$_ptXamlRaw').Replace('<!-- THEME_SLOT -->', '')
 $wp = New-WpfWindow -Xaml $ptXaml
+Apply-LightTheme $wp
 $subText = $wp.FindName("SubText")
 if ($subText) { $subText.Text = "Connected as: admin@contoso.com  |  Subscription: Contoso Production" }
 $statusBar = $wp.FindName("StatusBar")
@@ -652,8 +700,9 @@ Write-Host "  Saved: $perfOutPath"
 # 8. Session Detail window
 # =============================================================================
 Write-Host "  [10/13] Session Detail window..."
-$sdXaml = Get-XamlFromScript -Path (Join-Path $scriptRoot 'scripts\session-detail.ps1') -VariableName '$sessionXaml'
+$sdXaml = (Get-XamlFromScript -Path (Join-Path $scriptRoot 'scripts\session-detail.ps1') -VariableName '$sessionXaml').Replace('<!-- THEME_SLOT -->', '')
 $sdWin  = New-WpfWindow -Xaml $sdXaml
+Apply-LightTheme $sdWin
 $sdWin.Width  = 1920
 $sdWin.Height = 520
 
@@ -837,8 +886,9 @@ Save-WindowScreenshot -Window $rcWin -OutputPath (Join-Path $outDir 'run-command
 # 10. Send Message dialog
 # =============================================================================
 Write-Host "  [12/13] Send Message dialog..."
-$smXaml = Get-XamlFromScript -Path (Join-Path $scriptRoot 'scripts\session-detail.ps1') -VariableName '$msgXaml'
+$smXaml = (Get-XamlFromScript -Path (Join-Path $scriptRoot 'scripts\session-detail.ps1') -VariableName '$msgXaml').Replace('<!-- THEME_SLOT -->', '')
 $smWin  = New-WpfWindow -Xaml $smXaml
+Apply-LightTheme $smWin
 
 $smWin.FindName("RecipientLabel").Text = "To: john.smith (AVDSH-UKS-001)"
 $smWin.FindName("TitleBox").Text       = "IT Notice"

@@ -1,5 +1,10 @@
 # AVD Live Dashboard - Changelog
 
+## 2026-05-15
+- Monitoring tab: LAW queries (Winlogon Stages, RTT by Gateway, Session History) now run in a dedicated background runspace (`$script:monRunspace`) via `BeginInvoke()`. The UI remains fully responsive while queries execute; a 200ms poll timer applies results when the job completes.
+- Screenshot script: fixed `<!-- THEME_SLOT -->` not being replaced in light-mode windows, causing the WPF window background/foreground to fall back to system defaults. All XAML windows now get the light theme via `Apply-LightTheme` (MergedDictionaries); dark screenshots add dark theme on top.
+- Screenshot script: Dark Mode toggle now rendered as checked (on) in the dark mode screenshot.
+
 ## 2026-05-14
 - Monitoring tab: Custom KQL Query panel — run arbitrary KQL against the configured Log Analytics workspace, view results in a dynamic table, and save/load named queries to AppData.
 
