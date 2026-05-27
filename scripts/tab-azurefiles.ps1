@@ -241,7 +241,8 @@ $script:filesScript = {
     # ARM share endpoint does not return snapshots, so no IsSnapshot filter needed.
     # FileCapacity metric is queried once per storage account (not per share).
     $saScript = [scriptblock]::Create($RestHelperDef + @'
-        $tok = $args[0]; $saName = $args[1]; $saRG = $args[2]; $saLocation = $args[3]; $saId = $args[4]; $agoStr = $args[5]; $nowStr = $args[6]; $LogFile = $args[7]; $saSkuName = $args[8]; $saKind = $args[9]
+        $tok = $args[0]; $saName = $args[1]; $saRG = $args[2]; $saLocation = $args[3]; $saId = $args[4]; $agoStr = $args[5]; $nowStr = $args[6]; $LogFile = $args[7]; $saSkuName = $args[8]; $saKind = $args[9]; $saPublicAccessRaw = $args[10]
+        $saPublicAccess = if ($saPublicAccessRaw -eq 'False') { 'Denied' } else { 'Allowed' }
 
         # Derive human-readable Performance, Replication and Account Kind from sku.name and kind
         $skuParts    = $saSkuName -split '_'
@@ -288,6 +289,7 @@ $script:filesScript = {
                 "Used (GiB)"       = $usedGiB
                 "Free (GiB)"       = $freeGiB
                 "Used %"           = $usedPct
+                "Public Access"    = $saPublicAccess
                 "Storage GBP/mo"   = '-'
                 "_StorageCostSort" = [double]-1
                 "_SkuName"         = [string]$saSkuName
@@ -302,7 +304,7 @@ $script:filesScript = {
     $handles = @(foreach ($sa in $storageAccounts) {
         $ps = [System.Management.Automation.PowerShell]::Create()
         $ps.RunspacePool = $saPool
-        [void]$ps.AddScript($saScript).AddArgument($ArmToken).AddArgument($sa.name).AddArgument($sa.id.Split('/')[4]).AddArgument($sa.location).AddArgument($sa.id).AddArgument($agoStr).AddArgument($nowStr).AddArgument($LogFile).AddArgument([string]$sa.sku.name).AddArgument([string]$sa.kind)
+        [void]$ps.AddScript($saScript).AddArgument($ArmToken).AddArgument($sa.name).AddArgument($sa.id.Split('/')[4]).AddArgument($sa.location).AddArgument($sa.id).AddArgument($agoStr).AddArgument($nowStr).AddArgument($LogFile).AddArgument([string]$sa.sku.name).AddArgument([string]$sa.kind).AddArgument([string]$sa.properties.allowBlobPublicAccess)
         [PSCustomObject]@{ PS = $ps; Handle = $ps.BeginInvoke() }
     })
 

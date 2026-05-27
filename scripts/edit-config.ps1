@@ -522,7 +522,15 @@ $_rawXaml = @'
       <TabItem Header="Azure">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel Margin="24,16,24,24">
-            <TextBlock Style="{StaticResource SectionHeader}" Text="Azure Connection"/>
+            <TextBlock Style="{StaticResource SectionHeader}" Text="General"/>
+            <Border Style="{StaticResource Rule}"/>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Configuration Name"/>
+            <TextBox x:Name="ConfigNameBox"/>
+            <TextBlock Style="{StaticResource HintText}"
+                       Text="Display name shown in the config picker when multiple configs are present. Defaults to the filename (without .psd1) if left blank."/>
+
+            <TextBlock Style="{StaticResource SectionHeader}" Text="Azure Connection" Margin="0,16,0,0"/>
             <Border Style="{StaticResource Rule}"/>
 
             <TextBlock Style="{StaticResource FieldLabel}" Text="Tenant ID"/>
@@ -1044,6 +1052,9 @@ $newButton            = $win.FindName('NewButton')
 $statusBar            = $win.FindName('StatusBar')
 $darkToggle           = $win.FindName('DarkToggle')
 
+# General
+$configNameBox        = $win.FindName('ConfigNameBox')
+
 # Azure
 $tenantIdBox          = $win.FindName('TenantIdBox')
 $subscriptionIdBox    = $win.FindName('SubscriptionIdBox')
@@ -1165,6 +1176,7 @@ $rcDownBtn            = $win.FindName('RcDownBtn')
 
 function New-DefaultConfig {
     @{
+        Name  = ''
         Azure = @{
             TenantId       = ''
             SubscriptionId = ''
@@ -1264,6 +1276,9 @@ function Initialize-Controls {
     # Header
     $filePathText.Text = $script:currentConfigFile
 
+    # General
+    $configNameBox.Text = if ($c.ContainsKey('Name')) { [string]$c.Name } else { '' }
+
     # Azure
     $tenantIdBox.Text       = [string]$c.Azure.TenantId
     $subscriptionIdBox.Text = [string]$c.Azure.SubscriptionId
@@ -1306,7 +1321,8 @@ function Initialize-Controls {
     Set-CheckedState $hideColScope         ($hiddenCols -contains 'Scope')
     Set-CheckedState $hideColHPLocation    ($hiddenCols -contains 'HP Location')
 
-    Set-CheckedState $showRGVMCountCheck (if ($null -ne $c.AVDHostPools.ShowRGVMCount) { [bool]$c.AVDHostPools.ShowRGVMCount } else { $true })
+    $_rgVmShow = if ($null -ne $c.AVDHostPools.ShowRGVMCount) { [bool]$c.AVDHostPools.ShowRGVMCount } else { $true }
+    Set-CheckedState $showRGVMCountCheck $_rgVmShow
     $scalingExcludeTagBox.Text = if ($c.AVDHostPools.ScalingExcludeTag) { [string]$c.AVDHostPools.ScalingExcludeTag } else { 'ExcludeFromScaling' }
 
     # Azure Files
@@ -1715,6 +1731,10 @@ function Save-Config {
 
 @{
 
+    # Optional display name shown in the config picker when multiple configs are present.
+    # Defaults to the filename (without .psd1) if omitted.
+    Name = $(Format-PsdString $configNameBox.Text.Trim())
+
     # =========================================================================
     # Azure Connection - used by avd-live-dashboard.ps1
     # =========================================================================
@@ -2004,7 +2024,7 @@ function Save-Config {
             $dlg.Filter           = "Config Files (*.psd1)|*.psd1|All Files (*.*)|*.*"
             $dlg.DefaultExt       = '.psd1'
             $dlg.InitialDirectory = [System.IO.Path]::GetDirectoryName($script:currentConfigFile)
-            if (-not $dlg.ShowDialog()) { return }
+            if (-not $dlg.ShowDialog() -or [string]::IsNullOrWhiteSpace($dlg.FileName)) { return }
             $script:currentConfigFile = $dlg.FileName
             $filePathText.Text = $script:currentConfigFile
         }
@@ -2067,34 +2087,55 @@ $darkToggle.Add_Unchecked({
 })
 
 $browseButton.Add_Click({
-    $dlg = New-Object Microsoft.Win32.OpenFileDialog
-    $dlg.Title            = "Open Config File"
-    $dlg.Filter           = "Config Files (*.psd1)|*.psd1|All Files (*.*)|*.*"
-    $dlg.InitialDirectory = [System.IO.Path]::GetDirectoryName($script:currentConfigFile)
+    try {
+        $dlg = New-Object Microsoft.Win32.OpenFileDialog
+        $dlg.Title   = "Open Config File"
+        $dlg.Filter  = "Config Files (*.psd1)|*.psd1|All Files (*.*)|*.*"
+        $_initDir = try { [System.IO.Path]::GetFullPath([System.IO.Path]::GetDirectoryName($script:currentConfigFile)) } catch { '' }
+        if (-not [string]::IsNullOrWhiteSpace($_initDir) -and (Test-Path -LiteralPath $_initDir)) {
+            $dlg.InitialDirectory = $_initDir
+        }
 
-    if (-not $dlg.ShowDialog()) { return }
+        $_shown = $false
+        try { $_shown = $dlg.ShowDialog() } catch {
+            $errorPanel.Visibility    = [System.Windows.Visibility]::Visible
+            $errorDetailText.Text     = "Browse dialog error: $_"
+            $mainTabControl.IsEnabled = $false
+            $saveButton.IsEnabled     = $false
+            return
+        }
+        if (-not $_shown) { return }
 
-    $newCfg = Import-ConfigFile $dlg.FileName
-    $script:currentConfigFile = $dlg.FileName
-    $filePathText.Text = $script:currentConfigFile
+        $_path = [string]$dlg.FileName
+        if ([string]::IsNullOrWhiteSpace($_path)) { return }
 
-    if (-not $newCfg) {
+        $newCfg = Import-ConfigFile $_path
+        $script:currentConfigFile = $_path
+        $filePathText.Text = $script:currentConfigFile
+
+        if (-not $newCfg) {
+            $errorPanel.Visibility    = [System.Windows.Visibility]::Visible
+            $errorDetailText.Text     = $script:lastConfigError
+            $mainTabControl.IsEnabled = $false
+            $saveButton.IsEnabled     = $false
+            return
+        }
+
+        $script:isNewConfig = $false
+        $script:cfg = $newCfg
+        Merge-ConfigDefaults -Config $script:cfg -Defaults (New-DefaultConfig)
+        Initialize-Controls $script:cfg
+        $errorPanel.Visibility    = [System.Windows.Visibility]::Collapsed
+        $mainTabControl.IsEnabled = $true
+        $saveButton.IsEnabled     = $true
+        $statusText.Foreground = [System.Windows.Media.Brushes]::White
+        $statusText.Text = "Opened  -  $($script:currentConfigFile)"
+    } catch {
         $errorPanel.Visibility    = [System.Windows.Visibility]::Visible
-        $errorDetailText.Text     = $script:lastConfigError
+        $errorDetailText.Text     = "Unexpected error in Browse handler: $_`n$($_.ScriptStackTrace)"
         $mainTabControl.IsEnabled = $false
         $saveButton.IsEnabled     = $false
-        return
     }
-
-    $script:isNewConfig = $false
-    $script:cfg = $newCfg
-    Merge-ConfigDefaults -Config $script:cfg -Defaults (New-DefaultConfig)
-    Initialize-Controls $script:cfg
-    $errorPanel.Visibility    = [System.Windows.Visibility]::Collapsed
-    $mainTabControl.IsEnabled = $true
-    $saveButton.IsEnabled     = $true
-    $statusText.Foreground = [System.Windows.Media.Brushes]::White
-    $statusText.Text = "Opened  -  $($script:currentConfigFile)"
 })
 
 $newButton.Add_Click({
@@ -2106,7 +2147,7 @@ $newButton.Add_Click({
     $dlg.OverwritePrompt  = $false   # file doesn't exist yet, overwrite check is on Save
     $dlg.InitialDirectory = [System.IO.Path]::GetDirectoryName($script:currentConfigFile)
 
-    if (-not $dlg.ShowDialog()) { return }
+    if (-not $dlg.ShowDialog() -or [string]::IsNullOrWhiteSpace($dlg.FileName)) { return }
 
     $script:currentConfigFile = $dlg.FileName
     $script:isNewConfig = $true

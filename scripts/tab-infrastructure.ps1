@@ -868,8 +868,12 @@ function Invoke-InfrastructureTabTimer {
     if ($script:infraHandle -and $script:infraHandle.IsCompleted) {
         try {
             $infraData = $script:infraPS.EndInvoke($script:infraHandle)
-            if ($infraData -and $infraData.VmRows) {
-                _IS_UpdateGrid -VmRows $infraData.VmRows -Timestamp $infraData.Timestamp
+            # Always call _IS_UpdateGrid - even with 0 VMs so the status text
+            # and timestamp update. An empty array is falsy in PowerShell so
+            # the old "if ($infraData.VmRows)" check skipped this when the RG
+            # had no VMs, leaving the status stuck at "Refreshing..." forever.
+            if ($null -ne $infraData) {
+                _IS_UpdateGrid -VmRows @($infraData.VmRows) -Timestamp $infraData.Timestamp
             }
             $script:infraNextRefresh = [DateTime]::Now.AddSeconds($script:InfraRefreshIntervalSeconds)
         } catch {

@@ -7,6 +7,10 @@
 
 @{
 
+    # Optional display name shown in the config picker when multiple configs are present.
+    # Defaults to the filename (without .psd1) if omitted.
+    Name = 'Example Configuration'
+
     # =========================================================================
     # Azure Connection - used by avd-live-dashboard.ps1
     # =========================================================================

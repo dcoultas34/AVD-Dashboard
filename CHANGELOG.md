@@ -1,5 +1,20 @@
 # AVD Live Dashboard - Changelog
 
+## 2026-05-26
+- Session Hosts tab: when more than 3 users are on a host, shows first 2 names and "..." on the third line; tooltip shows all users. Reduced font and line spacing so 3 names fit within the standard row height.
+- Images tab: added "sysprep only" option to the BIS-F / Sysprep dropdown; skips BIS-F and runs the Sysprep Run Command directly.
+- Images tab: fixed blank Subnet dropdown on dialog open; initial subnets now fetched via a per-VNet ARM GET in the Loaded handler.
+- Images tab: added diagnostic Write-Log calls throughout the Create Image dialog (enabled when -EnableLogging is passed to the dashboard).
+- Images tab: "Other" VM count no longer shows negative when a refresh races with a VM state change.
+- Azure Files tab: added Public Access column showing whether public blob access is allowed or denied on each storage account.
+- Config editor: fixed "Empty path name is not legal" error on Browse / Open caused by a PowerShell parse failure in Initialize-Controls.
+
+## 2026-05-22
+- Multi-config support: place multiple `.psd1` files in the `config\` folder. If more than one is found, a picker appears at launch; set a default to skip the prompt. Each config gets its own registry subkey for independent saved settings. A Switch Config button appears in the footer when multiple configs are present.
+
+## 2026-05-19
+- Theme toggle: fixed title bar changing colour before the window content when switching between light and dark mode. A `Dispatcher.Invoke` at `DispatcherPriority::Render` now flushes WPF's pending render pass before `DwmSetWindowAttribute` is called, ensuring both update in the same frame.
+
 ## 2026-05-15
 - Monitoring tab: LAW queries (Winlogon Stages, RTT by Gateway, Session History) now run in a dedicated background runspace (`$script:monRunspace`) via `BeginInvoke()`. The UI remains fully responsive while queries execute; a 200ms poll timer applies results when the job completes.
 - Screenshot script: fixed `<!-- THEME_SLOT -->` not being replaced in light-mode windows, causing the WPF window background/foreground to fall back to system defaults. All XAML windows now get the light theme via `Apply-LightTheme` (MergedDictionaries); dark screenshots add dark theme on top.

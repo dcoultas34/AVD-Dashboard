@@ -140,7 +140,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-05-15
+    Version       : 2026-05-26
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -174,7 +174,330 @@ param(
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-05-15"
+$ScriptVersion = "2026-05-26"
+
+# All native type definitions and assembly loads are done here, before any WPF windows
+# are created. Show-ConfigPicker (the startup config picker) runs before the main
+# pre-flight section, so anything it needs must be initialised at this point.
+
+# WPF assemblies
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Data
+
+# Native Win32 types: DWM (dark title bar), DWM console hiding, and Shell32 (taskbar AppID).
+# Defined early so the startup config picker gets a dark title bar and the correct taskbar icon.
+try {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class DwmApiHelper {
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+}
+public class ConsoleHelper {
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+'@ -ErrorAction Stop
+} catch {}
+
+# Set the AppUserModelID so the process appears as "AVD Dashboard" in the taskbar
+# (separate from the generic PowerShell group) with the custom window icon.
+# Must be set before any window is shown - moving it here ensures the startup
+# config picker also gets the correct taskbar entry rather than the PS icon.
+try {
+    $null = Add-Type -MemberDefinition @'
+[DllImport("shell32.dll")]
+public static extern int SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string AppID);
+'@ -Name 'Shell32' -Namespace 'Win32' -PassThru -ErrorAction Stop
+    [Win32.Shell32]::SetCurrentProcessExplicitAppUserModelID('AVDDashboard') | Out-Null
+} catch {}
+
+# =============================================================================
+# Registry base path
+# Single config: flat key HKCU:\Software\AVDDashboard (unchanged from before).
+# Multiple configs: Resolve-StartupConfig sets a per-config subkey so each
+# environment keeps its own saved settings.
+# =============================================================================
+
+# $script:RegPath is the active registry subkey for the current config's settings.
+# Single config  → HKCU:\Software\AVDDashboard        (flat, unchanged from before multi-config)
+# Multiple configs → HKCU:\Software\AVDDashboard\<slug>  (per-config subkey, set by Resolve-StartupConfig)
+#
+# $script:GlobalRegPath always points at the root key and never changes.
+# It is used for settings that are global (not per-config), currently just DarkTheme.
+# Registry layout (multi-config example):
+#   HKCU:\Software\AVDDashboard\
+#       DarkTheme      = 1           ← global UI pref, read/written via GlobalRegPath
+#       DefaultConfig  = "prod"      ← slug of the config to auto-load next launch
+#       prod\
+#           RefreshInterval = 30
+#           ExcludedPools   = ...
+#           ...
+#       staging\
+#           RefreshInterval = 60
+#           ...
+$script:RegPath           = 'HKCU:\Software\AVDDashboard'
+$script:GlobalRegPath     = 'HKCU:\Software\AVDDashboard'
+$script:_availableConfigs = @()
+
+# =============================================================================
+# Get-AvailableConfigs
+# Scans config\*.psd1 (excluding the example template) and returns an array of
+# objects with Path, Slug (filename without extension), and DisplayName.
+# DisplayName comes from the optional Name = '...' key inside each .psd1 file;
+# falls back to the slug if the key is absent or the file cannot be parsed.
+# =============================================================================
+function Get-AvailableConfigs {
+    @(
+        Get-ChildItem -Path (Join-Path $PSScriptRoot 'config') -Filter '*.psd1' -ErrorAction SilentlyContinue |
+        Where-Object  { $_.Name -ne 'EXAMPLE-config.psd1' } |
+        Sort-Object   Name |
+        ForEach-Object {
+            $_slug = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+            $_disp = $_slug   # default display name - overridden below if Name key is present
+            try {
+                $_d = & ([scriptblock]::Create([System.IO.File]::ReadAllText($_.FullName)))
+                if ($_d.Name) { $_disp = [string]$_d.Name }
+            } catch {}
+            [PSCustomObject]@{ Path = $_.FullName; Slug = $_slug; DisplayName = $_disp }
+        }
+    )
+}
+
+# =============================================================================
+# Show-ConfigPicker
+# Modal WPF dialog listing available configs. Used at startup (AllowCancel=$false,
+# button says "Load") and from the in-dashboard Switch Config button
+# (AllowCancel=$true, button says "Switch").
+#
+# Returns a hashtable: { Config, SetDefault, ClearDefault }
+#   Config       - PSCustomObject from Get-AvailableConfigs, or $null if ClearDefault
+#   SetDefault   - $true if the user ticked "Remember this choice"
+#   ClearDefault - $true if the user clicked "Clear saved default"
+# Returns $null if the user cancelled.
+#
+# Theme: reads DarkTheme from GlobalRegPath (the root key) so the picker is
+# correctly themed even at startup before a config has been selected.
+# The theme ResourceDictionary is injected into <!-- THEME_SLOT --> in the XAML
+# so all DynamicResource colour keys resolve correctly.
+# =============================================================================
+function Show-ConfigPicker {
+    param([object[]]$Configs, [bool]$AllowCancel = $true)
+
+    # Determine theme: use $script:DarkTheme if already set (in-dashboard switch),
+    # otherwise read directly from the global root registry key.
+    # DarkTheme is a global setting - it never lives in a per-config subkey.
+    $_dark = if ($null -ne $script:DarkTheme) { [bool]$script:DarkTheme } else {
+        try { [bool][int](Get-ItemProperty -Path $script:GlobalRegPath -Name 'DarkTheme' -ErrorAction Stop).DarkTheme } catch { $false }
+    }
+    $_tf = if ($_dark) { 'dark' } else { 'light' }
+
+    # Load the appropriate theme XAML so DynamicResource colour keys resolve correctly.
+    # The <!-- THEME_SLOT --> placeholder in the Window XAML is replaced with this content.
+    $_themeContent = Get-Content -Raw -Path (Join-Path $PSScriptRoot "data\$_tf-theme.xaml") -ErrorAction SilentlyContinue
+
+    $_cxRaw = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AVD Live Dashboard - Select Configuration"
+        SizeToContent="Height" Width="400"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
+        Background="{DynamicResource Avd.Window.Bg}"
+        FontFamily="Segoe UI" ShowInTaskbar="True">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
+    <Border Padding="24,20,24,20">
+        <StackPanel>
+            <TextBlock Text="Select a configuration:" FontSize="13" FontWeight="SemiBold"
+                       Foreground="{DynamicResource Avd.Window.Fg}" Margin="0,0,0,10"/>
+            <ListBox x:Name="ConfigList" Height="130" Margin="0,0,0,12"
+                     BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                     Background="{DynamicResource Avd.Card.Bg}"
+                     Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12"/>
+            <CheckBox x:Name="SetDefaultCheck" Content="Remember this choice"
+                      Foreground="{DynamicResource Avd.Window.Fg}" Margin="0,0,0,4"/>
+            <!-- Shown only when a default is already saved, so the user can clear it -->
+            <Button x:Name="ClearDefaultBtn" Content="Clear saved default"
+                    HorizontalAlignment="Left" FontSize="11" Background="Transparent"
+                    BorderThickness="0" Foreground="#2563EB" Cursor="Hand"
+                    Visibility="Collapsed" Padding="0" Margin="0,2,0,0"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                <Button x:Name="CancelBtn" Content="Cancel"
+                        Width="90" Height="32" Margin="0,0,8,0"
+                        Foreground="{DynamicResource Avd.Fg.Label}"
+                        BorderThickness="0" FontSize="13" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Cancel.Bg}" CornerRadius="4" Padding="8,0">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Hover}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Press}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+                <Button x:Name="OkBtn" Content="Load"
+                        Width="90" Height="32"
+                        Foreground="White"
+                        BorderThickness="0" FontSize="13" FontWeight="SemiBold" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Save.Bg}" CornerRadius="4" Padding="8,0">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Hover}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Press}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>
+'@
+    # Inject theme content then parse as XML
+    $_cxRaw = $_cxRaw -replace '<!-- THEME_SLOT -->', $_themeContent
+    [xml]$_cx = $_cxRaw
+    $_reader = New-Object System.Xml.XmlNodeReader($_cx)
+    $_w      = [System.Windows.Markup.XamlReader]::Load($_reader)
+
+    # Apply dark title bar via DWM when in dark mode.
+    # SourceInitialized fires once the HWND exists but before the window is shown,
+    # which is the correct moment for DwmSetWindowAttribute. We use $sender ($s)
+    # instead of closing over $_w to avoid PowerShell event handler closure issues.
+    if ($_dark) {
+        $_w.Add_SourceInitialized({
+            param($s, $e)
+            try {
+                $_hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($s)).Handle
+                $_dv = 1; [void][DwmApiHelper]::DwmSetWindowAttribute($_hwnd, 20, [ref]$_dv, 4)
+            } catch {}
+        })
+    }
+
+    # Set window icon - Set-WindowIcon is not yet available at startup (rest-api-helpers.ps1
+    # hasn't been dot-sourced yet), so the icon is loaded inline here.
+    $_iconPath = Join-Path $PSScriptRoot 'data\avd-dashboard.ico'
+    if (Test-Path $_iconPath) {
+        try {
+            $_stream = [System.IO.File]::OpenRead((Resolve-Path $_iconPath).ProviderPath)
+            $_w.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create(
+                $_stream,
+                [System.Windows.Media.Imaging.BitmapCreateOptions]::None,
+                [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+            $_stream.Close()
+        } catch {}
+    }
+
+    $_list   = $_w.FindName('ConfigList')
+    $_okBtn  = $_w.FindName('OkBtn')
+    $_cnlBtn = $_w.FindName('CancelBtn')
+    $_setDef = $_w.FindName('SetDefaultCheck')
+    $_clrBtn = $_w.FindName('ClearDefaultBtn')
+
+    # Populate list with display names from the configs array
+    foreach ($_c in $Configs) { [void]$_list.Items.Add($_c.DisplayName) }
+    if ($_list.Items.Count -gt 0) { $_list.SelectedIndex = 0 }
+
+    # Show "Clear saved default" link only when a default is already saved
+    # and the caller allows cancellation (i.e. this is an in-dashboard switch, not startup)
+    $_rootReg = 'HKCU:\Software\AVDDashboard'
+    $_hasDef  = $false
+    try { $_hasDef = $null -ne (Get-ItemProperty -Path $_rootReg -Name 'DefaultConfig' -ErrorAction Stop).DefaultConfig } catch {}
+    if ($_hasDef -and $AllowCancel) { $_clrBtn.Visibility = 'Visible' }
+
+    # At startup (AllowCancel=$false) Cancel is hidden and the button says "Load".
+    # From the Switch Config button (AllowCancel=$true) Cancel is shown and button says "Switch".
+    if (-not $AllowCancel) { $_cnlBtn.Visibility = 'Collapsed' }
+    if ($AllowCancel)      { $_okBtn.Content = 'Switch' }
+
+    $_okBtn.Add_Click({
+        if ($_list.SelectedIndex -lt 0) { return }
+        $script:_cfgPickerResult = @{
+            Config       = $Configs[$_list.SelectedIndex]
+            SetDefault   = [bool]$_setDef.IsChecked
+            ClearDefault = $false
+        }
+        $_w.DialogResult = $true; $_w.Close()
+    })
+    $_cnlBtn.Add_Click({ $_w.DialogResult = $false; $_w.Close() })
+    $_clrBtn.Add_Click({
+        # User clicked "Clear saved default" - signal caller to remove the DefaultConfig registry value
+        $script:_cfgPickerResult = @{ Config = $null; SetDefault = $false; ClearDefault = $true }
+        $_w.DialogResult = $true; $_w.Close()
+    })
+
+    $null = $_w.ShowDialog()
+    if (-not $_w.DialogResult) { return $null }
+    return $script:_cfgPickerResult
+}
+
+# =============================================================================
+# Resolve-StartupConfig
+# Called once at startup to determine which config file to load.
+#
+# Logic:
+#   1 file found  → load it silently; $script:RegPath stays at the root flat key.
+#   0 files found → fall back to config\config.psd1 (original behaviour).
+#   2+ files found:
+#     a) DefaultConfig registry value present and matching file exists
+#        → load silently; $script:RegPath set to per-config subkey.
+#     b) No usable default → show picker; save DefaultConfig if user ticked
+#        "Remember this choice"; set $script:RegPath to per-config subkey.
+#
+# Returns the full path of the config file to load.
+# =============================================================================
+function Resolve-StartupConfig {
+    $configs = Get-AvailableConfigs
+    $script:_availableConfigs = $configs   # stored so the Switch Config button can reference them later
+
+    if ($configs.Count -le 1) {
+        # Single config (or none): flat registry path unchanged - existing installs are unaffected
+        if ($configs.Count -eq 1) { return $configs[0].Path }
+        return Join-Path $PSScriptRoot 'config\config.psd1'   # fallback if config folder is empty
+    }
+
+    # Multiple configs: check whether the user has previously saved a default choice
+    $_rootReg   = 'HKCU:\Software\AVDDashboard'
+    $_savedSlug = try { (Get-ItemProperty -Path $_rootReg -Name 'DefaultConfig' -ErrorAction Stop).DefaultConfig } catch { $null }
+    if ($_savedSlug) {
+        $_m = $configs | Where-Object { $_.Slug -eq $_savedSlug } | Select-Object -First 1
+        if ($_m) {
+            # Default found and the file still exists - load silently without showing the picker
+            $script:RegPath = "$_rootReg\$($_m.Slug)"
+            return $_m.Path
+        }
+        # Default slug saved but the file has been removed - fall through to show picker
+    }
+
+    # No usable default: show the picker. Cancel is disabled at startup so the
+    # user must choose a config before the dashboard can open.
+    $_p = Show-ConfigPicker -Configs $configs -AllowCancel $false
+    if (-not $_p -or -not $_p.Config) { exit }
+
+    # Save DefaultConfig to root registry if user ticked "Remember this choice"
+    if ($_p.SetDefault) {
+        if (-not (Test-Path $_rootReg)) { try { New-Item -Path $_rootReg -Force | Out-Null } catch {} }
+        try { Set-ItemProperty -Path $_rootReg -Name 'DefaultConfig' -Value $_p.Config.Slug } catch {}
+    }
+
+    # Switch to the per-config registry subkey for this config's settings
+    $script:RegPath = "$_rootReg\$($_p.Config.Slug)"
+    return $_p.Config.Path
+}
 
 # =============================================================================
 # Customer / Environment Configuration
@@ -183,7 +506,7 @@ $ScriptVersion = "2026-05-15"
 # - not this one - when deploying to a new customer or environment.
 # =============================================================================
 
-$_configFile = if ($ConfigFile) { $ConfigFile } else { Join-Path $PSScriptRoot 'config\config.psd1' }
+$_configFile = if ($ConfigFile) { $ConfigFile } else { Resolve-StartupConfig }
 $script:_configFile = $_configFile   # exposed for Invoke-ConfigReload
 if (-not (Test-Path $_configFile)) {
     [System.Windows.MessageBox]::Show(
@@ -507,9 +830,9 @@ $script:armToken = Get-ArmToken
 # Splash / Loading Window - shown immediately so the user knows something is happening
 # =============================================================================
 
-# Quick early read of dark theme — Read-Settings isn't defined yet at this point
+# Quick early read of dark theme — global setting, always at the root registry key
 $_earlyDark = try {
-    $k = Get-ItemProperty -Path 'HKCU:\Software\AVDDashboard' -Name 'DarkTheme' -ErrorAction Stop
+    $k = Get-ItemProperty -Path $script:GlobalRegPath -Name 'DarkTheme' -ErrorAction Stop
     [bool][int]$k.DarkTheme
 } catch { $false }
 
@@ -1331,12 +1654,11 @@ function ConvertTo-DataTable {
 
 # =============================================================================
 # Registry Settings  (HKCU so no elevation needed)
+# $script:RegPath is set at startup (flat for single config, subkey for multi)
 # =============================================================================
 
-$script:RegPath = 'HKCU:\Software\AVDDashboard'
-
 function Read-Settings {
-    $defaults = @{ RefreshInterval = 30; FilesRefreshInterval = 900; StorageWarningPct = 90; ShadowMethod = 'MSTSC'; ShadowNoConsent = 0; ShadowUseIP = 0; ExcludedPools = @(); AvdIncludeRGs = @(); AvdExcludeRGs = @(); FilesRGs = @(); InfraRGs = @(); SecondaryRegionHighlight = 1; HiddenTabs = @(); HiddenTabsSaved = $false; HiddenColumns = @(); LowPriorityPatterns = @(); SecondaryRegions = @(); ScalingExcludeTag = ''; StorageAccountKinds = @(); InfraExcludePatterns = @(); DrainSetScalingTag = 1; AdoOrgUrl = ''; AdoRefreshInterval = 0; ShowRGVMCount = 1; DarkTheme = 0 }
+    $defaults = @{ RefreshInterval = 30; FilesRefreshInterval = 900; StorageWarningPct = 90; ShadowMethod = 'MSTSC'; ShadowNoConsent = 0; ShadowUseIP = 0; ExcludedPools = @(); AvdIncludeRGs = @(); AvdExcludeRGs = @(); FilesRGs = @(); InfraRGs = @(); SecondaryRegionHighlight = 1; HiddenTabs = @(); HiddenTabsSaved = $false; HiddenColumns = @(); LowPriorityPatterns = @(); SecondaryRegions = @(); ScalingExcludeTag = ''; StorageAccountKinds = @(); InfraExcludePatterns = @(); DrainSetScalingTag = 1; AdoOrgUrl = ''; AdoRefreshInterval = 0; ShowRGVMCount = $null; DarkTheme = 0 }
     try {
         if (-not (Test-Path $script:RegPath)) { return $defaults }
         $k = Get-ItemProperty -Path $script:RegPath -ErrorAction Stop
@@ -1366,10 +1688,12 @@ function Read-Settings {
             StorageAccountKinds  = @(if ($k.StorageAccountKinds)   { $k.StorageAccountKinds -split ',' | Where-Object { $_ } } else { @() })
             InfraExcludePatterns = @(if ($k.InfraExcludePatterns)  { $k.InfraExcludePatterns -split ',' | Where-Object { $_ } } else { @() })
             DrainSetScalingTag   = if ($null -ne $k.DrainSetScalingTag) { [int]$k.DrainSetScalingTag } else { 1 }
-            ShowRGVMCount        = if ($null -ne $k.ShowRGVMCount) { [int]$k.ShowRGVMCount } else { 1 }
+            ShowRGVMCount        = if ($null -ne $k.ShowRGVMCount) { [int]$k.ShowRGVMCount } else { $null }
             AdoOrgUrl            = if ($k.AdoOrgUrl)               { [string]$k.AdoOrgUrl } else { '' }
             AdoRefreshInterval   = if ($k.AdoRefreshInterval)     { [int]$k.AdoRefreshInterval } else { 0 }
-            DarkTheme            = if ($null -ne $k.DarkTheme)    { [int]$k.DarkTheme }          else { 0 }
+            # DarkTheme is a global UI preference - always read from the root key,
+            # never from the per-config subkey, so the setting survives config switches.
+            DarkTheme            = try { [int](Get-ItemProperty -Path $script:GlobalRegPath -Name 'DarkTheme' -ErrorAction Stop).DarkTheme } catch { 0 }
         }
     } catch { $defaults }
 }
@@ -1415,7 +1739,10 @@ function Write-Settings {
     Set-ItemProperty -Path $script:RegPath -Name 'DrainSetScalingTag'       -Value $DrainSetScalingTag
     Set-ItemProperty -Path $script:RegPath -Name 'ShowRGVMCount'           -Value $ShowRGVMCount
     Set-ItemProperty -Path $script:RegPath -Name 'AdoOrgUrl'               -Value $AdoOrgUrl
-    Set-ItemProperty -Path $script:RegPath -Name 'DarkTheme'               -Value $DarkTheme
+    # DarkTheme is written to the root key (GlobalRegPath), not the per-config subkey,
+    # so the theme preference is shared across all configs on this machine.
+    if (-not (Test-Path $script:GlobalRegPath)) { New-Item -Path $script:GlobalRegPath -Force | Out-Null }
+    Set-ItemProperty -Path $script:GlobalRegPath -Name 'DarkTheme'         -Value $DarkTheme
 }
 
 # =============================================================================
@@ -1641,20 +1968,6 @@ $rawXaml = @'
             </Style.Triggers>
         </Style>
 
-        <!-- Row hover and selection -->
-        <Style TargetType="DataGridRow">
-            <Setter Property="Foreground" Value="{DynamicResource Avd.Window.Fg}"/>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Avd.Hover.Bg}"/>
-                </Trigger>
-                <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Avd.Selected.Bg}"/>
-                    <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Selected}"/>
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-
         <!-- Tab item style - bottom-border underline -->
         <Style TargetType="TabItem">
             <Setter Property="FontSize"   Value="13"/>
@@ -1782,6 +2095,11 @@ $rawXaml = @'
                     <Button x:Name="RefreshButton"
                             Content="Refresh Now"
                             Style="{StaticResource RefreshBtn}"
+                            Margin="0,0,8,0"/>
+                    <Button x:Name="SwitchConfigButton"
+                            Content="Switch Config"
+                            Style="{StaticResource RefreshBtn}"
+                            Visibility="Collapsed"
                             Margin="0,0,8,0"/>
                     <Button x:Name="SwitchSubButton"
                             Content="Switch Subscription"
@@ -2012,47 +2330,22 @@ function Switch-DashboardTheme {
         $window.Resources[$_key] = $_rd[$_key]
     }
 
-    # Rebuild pool row style with updated colors
-    $_rowSecBg   = if ($Dark) { [System.Windows.Media.Color]::FromRgb(0x4A,0x1A,0x1A) } else { [System.Windows.Media.Color]::FromRgb(0xFF,0xD7,0xD7) }
-    $_rowHoverBg = if ($Dark) { [System.Windows.Media.Color]::FromRgb(0x2A,0x2D,0x2E) } else { [System.Windows.Media.Color]::FromRgb(0xEE,0xF4,0xFC) }
-    $_rowSelBg   = if ($Dark) { [System.Windows.Media.Color]::FromRgb(0x09,0x47,0x71) } else { [System.Windows.Media.Color]::FromRgb(0xD0,0xE7,0xFA) }
-    $_rowSelFg   = if ($Dark) { [System.Windows.Media.Color]::FromRgb(0xCC,0xCC,0xCC) } else { [System.Windows.Media.Color]::FromRgb(0x1F,0x29,0x37) }
+    # Rebuild pool row style: BasedOn theme (hover/select) + _IsSecondary tint trigger
+    $_poolBaseStyle = $window.TryFindResource('Avd.DataGridRow.Style')
     $_newStyle = New-Object System.Windows.Style([System.Windows.Controls.DataGridRow])
-    $_secTrig = New-Object System.Windows.DataTrigger
+    if ($_poolBaseStyle) { $_newStyle.BasedOn = $_poolBaseStyle }
+    $_secBrush = $window.TryFindResource('Avd.Secondary.Bg')
+    $_secTrig  = New-Object System.Windows.DataTrigger
     $_secTrig.Binding = New-Object System.Windows.Data.Binding('[_IsSecondary]')
     $_secTrig.Value   = 'True'
-    [void]$_secTrig.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::BackgroundProperty, [System.Windows.Media.SolidColorBrush]($_rowSecBg))))
-    $_hovTrig = New-Object System.Windows.Trigger
-    $_hovTrig.Property = [System.Windows.Controls.DataGridRow]::IsMouseOverProperty
-    $_hovTrig.Value    = $true
-    [void]$_hovTrig.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::BackgroundProperty, [System.Windows.Media.SolidColorBrush]($_rowHoverBg))))
-    $_selTrig = New-Object System.Windows.Trigger
-    $_selTrig.Property = [System.Windows.Controls.DataGridRow]::IsSelectedProperty
-    $_selTrig.Value    = $true
-    [void]$_selTrig.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::BackgroundProperty, [System.Windows.Media.SolidColorBrush]($_rowSelBg))))
-    [void]$_selTrig.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::ForegroundProperty, [System.Windows.Media.SolidColorBrush]($_rowSelFg))))
+    [void]$_secTrig.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::BackgroundProperty, $_secBrush)))
     [void]$_newStyle.Triggers.Add($_secTrig)
-    [void]$_newStyle.Triggers.Add($_hovTrig)
-    [void]$_newStyle.Triggers.Add($_selTrig)
     if ($script:PoolGrid) { $script:PoolGrid.RowStyle = $_newStyle }
 
-    # Rebuild SHGrid row style with updated theme colours
+    # SHGrid: use theme style directly (no extra triggers needed)
     if ($script:SHGrid) {
-        $_shFg    = if ($Dark) { [System.Windows.Media.Color]::FromRgb(0xD4,0xD4,0xD4) } else { [System.Windows.Media.Color]::FromRgb(0x1F,0x29,0x37) }
-        $_shStyle = New-Object System.Windows.Style([System.Windows.Controls.DataGridRow])
-        [void]$_shStyle.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::ForegroundProperty, [System.Windows.Media.SolidColorBrush]($_shFg))))
-        $_shHov = New-Object System.Windows.Trigger
-        $_shHov.Property = [System.Windows.Controls.DataGridRow]::IsMouseOverProperty
-        $_shHov.Value    = $true
-        [void]$_shHov.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::BackgroundProperty, [System.Windows.Media.SolidColorBrush]($_rowHoverBg))))
-        $_shSel = New-Object System.Windows.Trigger
-        $_shSel.Property = [System.Windows.Controls.DataGridRow]::IsSelectedProperty
-        $_shSel.Value    = $true
-        [void]$_shSel.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::BackgroundProperty, [System.Windows.Media.SolidColorBrush]($_rowSelBg))))
-        [void]$_shSel.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.DataGridRow]::ForegroundProperty, [System.Windows.Media.SolidColorBrush]($_rowSelFg))))
-        [void]$_shStyle.Triggers.Add($_shHov)
-        [void]$_shStyle.Triggers.Add($_shSel)
-        $script:SHGrid.RowStyle = $_shStyle
+        $_shStyle = $window.TryFindResource('Avd.DataGridRow.Style')
+        if ($_shStyle) { $script:SHGrid.RowStyle = $_shStyle }
     }
 
     # Force SHGrid column regeneration so metric cell colours reflect the new theme.
@@ -2069,6 +2362,9 @@ function Switch-DashboardTheme {
         $script:CardStorageBorder.Background  = $window.Resources['Avd.Card.Bg']
         $script:CardStorageBorder.BorderBrush = $window.Resources['Avd.Border.Std']
     }
+
+    # Flush WPF render pass so client area updates visually before DWM changes the title bar
+    $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Render)
 
     # Update title bar
     try {
@@ -2099,7 +2395,9 @@ $script:StatusText    = $window.FindName("StatusText")
 $script:CountdownText = $window.FindName("CountdownText")
 $script:ConnectedAsText   = $window.FindName("ConnectedAsText")
 $script:ConnectedAsText.Text = "Connected as: $($azContext.Account.Id)   |   Subscription: $($azContext.Subscription.Name)"
-$script:RefreshButton  = $window.FindName("RefreshButton")
+$script:RefreshButton      = $window.FindName("RefreshButton")
+$script:SwitchConfigButton = $window.FindName("SwitchConfigButton")
+if ($script:_availableConfigs.Count -ge 2) { $script:SwitchConfigButton.Visibility = 'Visible' }
 $script:SwitchSubButton = $window.FindName("SwitchSubButton")
 $script:SettingsButton = $window.FindName("SettingsButton")
 # config.psd1 HideSettingsButton option hides the button entirely (no registry equivalent)
@@ -2110,12 +2408,14 @@ $script:RegionGrid        = $window.FindName("RegionGrid")
 $script:MainTabControl     = $window.FindName("MainTabControl")
 $script:DarkToggle         = $window.FindName("DarkToggle")
 $script:DarkToggle.IsChecked = $script:DarkTheme
+# Dark mode toggle - written to the global root key so the preference applies
+# across all configs. The per-config subkey ($script:RegPath) is not used here.
 $script:DarkToggle.Add_Checked({
-    try { Set-ItemProperty -Path $script:RegPath -Name 'DarkTheme' -Value 1 } catch {}
+    try { Set-ItemProperty -Path $script:GlobalRegPath -Name 'DarkTheme' -Value 1 } catch {}
     Switch-DashboardTheme $true
 })
 $script:DarkToggle.Add_Unchecked({
-    try { Set-ItemProperty -Path $script:RegPath -Name 'DarkTheme' -Value 0 } catch {}
+    try { Set-ItemProperty -Path $script:GlobalRegPath -Name 'DarkTheme' -Value 0 } catch {}
     Switch-DashboardTheme $false
 })
 
@@ -2222,53 +2522,20 @@ $script:PoolGrid.Add_AutoGeneratingColumn({
     }
 })
 
-# Build row style: secondary-region tint for rows with sessions, standard hover/select otherwise
-$_rowSecBg   = if ($script:DarkTheme) { [System.Windows.Media.Color]::FromRgb(0x4A,0x1A,0x1A) } else { [System.Windows.Media.Color]::FromRgb(0xFF,0xD7,0xD7) }
-$_rowHoverBg = if ($script:DarkTheme) { [System.Windows.Media.Color]::FromRgb(0x2A,0x2D,0x2E) } else { [System.Windows.Media.Color]::FromRgb(0xEE,0xF4,0xFC) }
-$_rowSelBg   = if ($script:DarkTheme) { [System.Windows.Media.Color]::FromRgb(0x09,0x47,0x71) } else { [System.Windows.Media.Color]::FromRgb(0xD0,0xE7,0xFA) }
-$_rowSelFg   = if ($script:DarkTheme) { [System.Windows.Media.Color]::FromRgb(0xCC,0xCC,0xCC) } else { [System.Windows.Media.Color]::FromRgb(0x1F,0x29,0x37) }
-
+# Build row style: BasedOn theme (hover/select) + _IsSecondary tint trigger
 $poolRowStyle = New-Object System.Windows.Style([System.Windows.Controls.DataGridRow])
-
+$_poolBase = $script:MainWindow.TryFindResource('Avd.DataGridRow.Style')
+if ($_poolBase) { $poolRowStyle.BasedOn = $_poolBase }
 $secondaryTrigger = New-Object System.Windows.DataTrigger
 $secondaryTrigger.Binding = New-Object System.Windows.Data.Binding('[_IsSecondary]')
 $secondaryTrigger.Value   = 'True'
 [void]$secondaryTrigger.Setters.Add(
     (New-Object System.Windows.Setter(
         [System.Windows.Controls.DataGridRow]::BackgroundProperty,
-        [System.Windows.Media.SolidColorBrush]($_rowSecBg)
+        $script:MainWindow.TryFindResource('Avd.Secondary.Bg')
     ))
 )
-
-$hoverTrigger = New-Object System.Windows.Trigger
-$hoverTrigger.Property = [System.Windows.Controls.DataGridRow]::IsMouseOverProperty
-$hoverTrigger.Value    = $true
-[void]$hoverTrigger.Setters.Add(
-    (New-Object System.Windows.Setter(
-        [System.Windows.Controls.DataGridRow]::BackgroundProperty,
-        [System.Windows.Media.SolidColorBrush]($_rowHoverBg)
-    ))
-)
-
-$selectedTrigger = New-Object System.Windows.Trigger
-$selectedTrigger.Property = [System.Windows.Controls.DataGridRow]::IsSelectedProperty
-$selectedTrigger.Value    = $true
-[void]$selectedTrigger.Setters.Add(
-    (New-Object System.Windows.Setter(
-        [System.Windows.Controls.DataGridRow]::BackgroundProperty,
-        [System.Windows.Media.SolidColorBrush]($_rowSelBg)
-    ))
-)
-[void]$selectedTrigger.Setters.Add(
-    (New-Object System.Windows.Setter(
-        [System.Windows.Controls.DataGridRow]::ForegroundProperty,
-        [System.Windows.Media.SolidColorBrush]($_rowSelFg)
-    ))
-)
-
 [void]$poolRowStyle.Triggers.Add($secondaryTrigger)
-[void]$poolRowStyle.Triggers.Add($hoverTrigger)
-[void]$poolRowStyle.Triggers.Add($selectedTrigger)
 $script:PoolGrid.RowStyle = $poolRowStyle
 
 # =============================================================================
@@ -2859,6 +3126,16 @@ function Update-UI {
         $row['_IsSecondary'] = ($inSecondary -and $hasSessions).ToString()
     }
     $script:PoolGrid.ItemsSource = $poolDt.DefaultView
+
+    # AutoGeneratingColumn cancels the RG VMs column when ShowRGVMCount is $false,
+    # but only works on the first ItemsSource assignment. On subsequent refreshes the
+    # column already exists, so visibility must be set directly on the column object.
+    foreach ($col in $script:PoolGrid.Columns) {
+        if ($col.Header -eq 'RG VMs') {
+            $col.Visibility = if ($script:ShowRGVMCount) { 'Visible' } else { 'Collapsed' }
+            break
+        }
+    }
 
     $script:RegionGrid.ItemsSource = (ConvertTo-DataTable -Objects @($Data.RegionSummary)).DefaultView
 
@@ -3873,6 +4150,9 @@ function Show-Settings {
     foreach ($entry in $hcolMap.GetEnumerator()) {
         $entry.Value.IsChecked = ($entry.Key -in $script:HiddenColumns)
     }
+    # Hide the "RG VMs" hidden-column checkbox when the RG VM count feature is disabled
+    # in config - the column doesn't exist so there's nothing to hide.
+    if (-not $script:ShowRGVMCount) { $hcolMap['RG VMs'].Visibility = 'Collapsed' }
     # Pre-populate text fields
     $sLowPriority.Text  = ($script:LowPriorityHostPoolPatterns -join "`r`n")
     $sSecRegions.Text   = ($script:SecondaryRegions -join "`r`n")
@@ -4071,6 +4351,15 @@ function Show-Settings {
         $script:InfraExcludePatterns         = $infraExcPats
         $script:DrainSetScalingTag          = $drainSetScalingTag
         $script:ShowRGVMCount               = $showRgVmCount
+        # RG VMs column: AutoGeneratingColumn only runs once at grid build time, so the
+        # column must be shown/hidden directly on the live Columns collection when the
+        # setting changes in Settings without restarting.
+        foreach ($col in $script:PoolGrid.Columns) {
+            if ($col.Header -eq 'RG VMs') {
+                $col.Visibility = if ($script:ShowRGVMCount) { 'Visible' } else { 'Collapsed' }
+                break
+            }
+        }
         # Re-apply Hidden Tabs: show/collapse tabs based on new list
         foreach ($tab in $script:MainTabControl.Items) {
             if ($tab.Header -is [string]) {
@@ -4341,12 +4630,42 @@ function Show-SwitchSubscription {
     Reset-InfrastructureTab
 }
 
+function Show-SwitchConfig {
+    if ($script:_availableConfigs.Count -lt 2) { return }
+    $_p = Show-ConfigPicker -Configs $script:_availableConfigs -AllowCancel $true
+    if (-not $_p) { return }
+    $_rootReg = 'HKCU:\Software\AVDDashboard'
+    if ($_p.ClearDefault) {
+        try { Remove-ItemProperty -Path $_rootReg -Name 'DefaultConfig' -ErrorAction SilentlyContinue } catch {}
+        $script:StatusText.Text = 'Default configuration cleared - you will be prompted on next launch.'
+        return
+    }
+    if (-not $_p.Config) { return }
+    if ($_p.SetDefault) {
+        if (-not (Test-Path $_rootReg)) { try { New-Item -Path $_rootReg -Force | Out-Null } catch {} }
+        try { Set-ItemProperty -Path $_rootReg -Name 'DefaultConfig' -Value $_p.Config.Slug } catch {}
+    }
+    if ($_p.Config.Path -eq $script:_configFile) { return }
+    $script:RegPath      = "$_rootReg\$($_p.Config.Slug)"
+    $script:_configFile  = $_p.Config.Path
+    try { Invoke-ConfigReload } catch {
+        $script:StatusText.Text = "Config switch failed: $_"
+        return
+    }
+    if ($script:monRunspace) {
+        try { $script:monRunspace.SessionStateProxy.SetVariable('workspaceId', $script:LawWorkspaceResourceId) } catch {}
+    }
+    $script:nextRefreshAt   = [DateTime]::Now
+    $script:StatusText.Text = "Switched to '$($_p.Config.DisplayName)' - refreshing..."
+}
+
 # =============================================================================
 # Button Handlers
 # =============================================================================
 
 $script:SettingsButton.Add_Click({ Show-Settings })
 $script:AboutButton.Add_Click({ Show-About })
+$script:SwitchConfigButton.Add_Click({ Show-SwitchConfig })
 $script:SwitchSubButton.Add_Click({ Show-SwitchSubscription })
 
 # Resolve script directory at script scope (used by tab-azurefiles.ps1 ToolsLaunchButton handler)
@@ -4432,20 +4751,6 @@ $window.Add_ContentRendered({
     }
 })
 
-try {
-    Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public class DwmApiHelper {
-    [DllImport("dwmapi.dll")]
-    public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
-}
-public class ConsoleHelper {
-    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
-    [DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-}
-'@ -ErrorAction Stop
-} catch {}
 if ($script:DarkTheme) {
     $window.Add_SourceInitialized({
         $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle

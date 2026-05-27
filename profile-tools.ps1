@@ -20,7 +20,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-04-29
+    Version       : 2026-05-26
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -104,7 +104,7 @@ param(
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-04-29"
+$ScriptVersion = "2026-05-26"
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
@@ -646,6 +646,10 @@ $_ptXamlRaw = @'
                                            Margin="0,0,0,4"/>
                                 <TextBlock Text="Enter the profile folder name exactly as it appears on the file share (e.g. JSmith_S-1-5-21-1234567890-...)."
                                            FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" TextWrapping="Wrap"/>
+                                <TextBlock Text="Connection: Azure Files REST API  (Entra ID OAuth token - no SMB or VPN required)"
+                                           FontSize="10" FontStyle="Italic"
+                                           Foreground="{DynamicResource Avd.Fg.Muted}"
+                                           Margin="0,4,0,0"/>
                             </StackPanel>
 
                             <Grid Grid.Row="2">
@@ -746,6 +750,10 @@ $_ptXamlRaw = @'
                                            Margin="0,0,0,4"/>
                                 <TextBlock Text="Check for and remove FSLogix lock files and open file handles without deleting the profile folder. Use this to unlock a stuck profile."
                                            FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" TextWrapping="Wrap"/>
+                                <TextBlock Text="Connection: Azure Files REST API  (Entra ID OAuth token - no SMB or VPN required)"
+                                           FontSize="10" FontStyle="Italic"
+                                           Foreground="{DynamicResource Avd.Fg.Muted}"
+                                           Margin="0,4,0,0"/>
                             </StackPanel>
 
                             <Grid Grid.Row="2">
@@ -836,6 +844,10 @@ $_ptXamlRaw = @'
                                 <Bold>Copy Path</Bold> to copy the UNC path to your clipboard.
                                 Ensure you are connected to the corporate network or VPN before opening.
                             </TextBlock>
+                            <TextBlock Text="Connection: SMB / UNC path  (Windows credentials - corporate network or VPN required)"
+                                       FontSize="10" FontStyle="Italic"
+                                       Foreground="{DynamicResource Avd.Fg.Muted}"
+                                       Margin="0,4,0,0"/>
                         </StackPanel>
                     </Border>
 
@@ -876,6 +888,10 @@ $_ptXamlRaw = @'
                                            Margin="0,0,0,4"/>
                                 <TextBlock Text="Select the storage accounts to scan then click Scan. Double-click any row to open that folder in Explorer."
                                            FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" TextWrapping="Wrap"/>
+                                <TextBlock Text="Connection: SMB / UNC path  (Windows credentials - corporate network or VPN required)"
+                                           FontSize="10" FontStyle="Italic"
+                                           Foreground="{DynamicResource Avd.Fg.Muted}"
+                                           Margin="0,4,0,0"/>
                             </StackPanel>
 
                             <Grid Grid.Row="2">
@@ -1099,6 +1115,10 @@ $_ptXamlRaw = @'
                                            Margin="0,0,0,4"/>
                                 <TextBlock Text="Scans for profile folders with no file activity within the threshold. Review results carefully before removing any folders."
                                            FontSize="11" Foreground="{DynamicResource Avd.Fg.Muted}" TextWrapping="Wrap"/>
+                                <TextBlock Text="Connection: SMB / UNC path  (Windows credentials - corporate network or VPN required)"
+                                           FontSize="10" FontStyle="Italic"
+                                           Foreground="{DynamicResource Avd.Fg.Muted}"
+                                           Margin="0,4,0,0"/>
                             </StackPanel>
 
                             <Grid Grid.Row="2">

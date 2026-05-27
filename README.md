@@ -141,12 +141,23 @@ The following outbound FQDN must be reachable from the machine running the dashb
 
 ## Deployment
 
-For each new customer or environment:
+### Single Environment
 
 1. Copy all files (`avd-live-dashboard.ps1`, `profile-tools.ps1`, the `.cmd` launcher files, and the `config/`, `scripts/`, and `data/` subfolders) to a folder on the admin machine.
 2. Copy `config/EXAMPLE-config.psd1` to `config/config.psd1` and update the values for the target environment (see [Configuration](#configuration) below). Use `Edit-AVD-Config.cmd` to open the WPF editor, or edit the file directly.
 3. Optionally run `Check-AVD-Permissions.cmd` to verify the signed-in account holds the required Azure RBAC roles before launching the dashboard.
 4. Run the dashboard — the scripts themselves never need to be modified.
+
+### Multiple Environments (Multi-Config)
+
+If you manage more than one customer or environment from the same machine, you can place multiple config files in the `config/` folder — no other setup required:
+
+1. Copy all files to a single shared folder on the admin machine (one copy of the scripts for all environments).
+2. For each environment, copy `config/EXAMPLE-config.psd1` to a descriptively named file, e.g. `config/customer-a.psd1`, `config/customer-b.psd1`. Use `Edit-AVD-Config.cmd` to edit each file.
+3. Optionally add a `Name` key to each config file so the picker shows a friendly label instead of the filename.
+4. Launch the dashboard — a config picker appears automatically at startup when 2+ config files are present.
+
+See [Multi-Config Support](#multi-config-support) for full details.
 
 ---
 
@@ -268,9 +279,71 @@ When launched from the dashboard's **Profile Tools** button, Profile Tools inher
 
 ---
 
+## Multi-Config Support
+
+The dashboard supports multiple configuration files in the `config/` folder — useful when you manage several customers or environments from the same machine.
+
+### How It Works
+
+Drop any number of `.psd1` files into the `config/` folder (e.g. `config\customer-a.psd1`, `config\customer-b.psd1`). At startup, the dashboard scans `config\*.psd1` (excluding `EXAMPLE-config.psd1`) and:
+
+- **1 file found** — loads it silently (existing single-config behaviour, unchanged).
+- **2+ files found** — shows a **config picker** dialog before sign-in, listing all available configs. Select one and click **Load**.
+
+Once inside the dashboard, a **Switch Config** button appears in the status bar. Click it to switch to a different config file without restarting — the dashboard re-authenticates to the new environment and refreshes all data.
+
+### Giving Configs a Display Name
+
+By default the picker shows the filename without the `.psd1` extension. Add an optional `Name` key as the first entry in a config file to display a friendlier label instead:
+
+```powershell
+@{
+    Name = 'Contoso - Production'
+
+    Azure = @{ ... }
+    ...
+}
+```
+
+If `Name` is absent or empty, the filename (without extension) is used as the label.
+
+### Remember This Choice
+
+Tick **Remember this choice** in the config picker to save the selection to the registry. On subsequent launches the saved config loads silently without showing the picker. Use **Clear saved default** (shown in the picker when a default is set) to reset back to prompting.
+
+The saved default is stored at `HKCU:\Software\AVDDashboard` → `DefaultConfig` (the config filename without extension).
+
+### Per-Config Registry Isolation
+
+Each config file gets its own registry subkey so settings (refresh interval, excluded host pools, etc.) are completely independent between environments:
+
+```
+HKCU:\Software\AVDDashboard\
+    DarkTheme       = 1           ← global (applies to all configs)
+    DefaultConfig   = "prod"      ← which config to auto-load at startup
+    prod\
+        RefreshInterval = 30
+        ExcludedPools   = ...
+    staging\
+        RefreshInterval = 60
+        ExcludedPools   = ...
+```
+
+Dark mode is **global** — it applies across all configs and is not reset when switching.
+
+Single-config installs continue to use the flat `HKCU:\Software\AVDDashboard` key — no migration or behaviour change.
+
+### File Naming
+
+Config files follow a simple convention — name them anything you like (e.g. `prod.psd1`, `customer-a.psd1`). All files in `config\*.psd1` are picked up automatically; `EXAMPLE-config.psd1` is always excluded.
+
+> **Git / source control:** All `config\*.psd1` files (except `EXAMPLE-config.psd1`) are excluded from the repository via `.gitignore`. This prevents environment-specific settings, tenant IDs, and subscription IDs from being committed.
+
+---
+
 ## Configuration
 
-All customer and environment-specific settings live in `config/config.psd1` — a PowerShell Data File. It supports full `#` comments, native arrays and hashtables, and UNC paths written without any escaping. The annotated `config/EXAMPLE-config.psd1` documents every available setting with inline comments and example values. Use `Edit-AVD-Config.cmd` to edit the file via the WPF GUI editor.
+All customer and environment-specific settings live in `config/config.psd1` (or whichever config file is active) — a PowerShell Data File. It supports full `#` comments, native arrays and hashtables, and UNC paths written without any escaping. The annotated `config/EXAMPLE-config.psd1` documents every available setting with inline comments and example values. Use `Edit-AVD-Config.cmd` to edit the file via the WPF GUI editor.
 
 The file is divided into the following sections:
 

@@ -277,6 +277,26 @@ $sessionXaml = @'
     FontFamily="Segoe UI">
     <Window.Resources>
         <!-- THEME_SLOT -->
+        <Style TargetType="DataGridCell">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridCell">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Setter Property="BorderBrush" Value="Transparent"/>
+                    <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Selected}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
     <DockPanel>
 
@@ -534,18 +554,6 @@ $sessionXaml = @'
                             </ControlTemplate>
                         </Setter.Value>
                     </Setter>
-                </Style>
-                <Style TargetType="DataGridRow">
-                    <Setter Property="Foreground" Value="{DynamicResource Avd.Window.Fg}"/>
-                    <Style.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True">
-                            <Setter Property="Background" Value="{DynamicResource Avd.Hover.Bg}"/>
-                        </Trigger>
-                        <Trigger Property="IsSelected" Value="True">
-                            <Setter Property="Background" Value="{DynamicResource Avd.Selected.Bg}"/>
-                            <Setter Property="Foreground" Value="{DynamicResource Avd.Fg.Selected}"/>
-                        </Trigger>
-                    </Style.Triggers>
                 </Style>
             </DataGrid.Resources>
         </DataGrid>
@@ -1890,6 +1898,7 @@ function script:Update-GlobalSessionView {
                         $colorCol = switch ($colName) { 'Avg RTT' { '_AvgRTTColor' } 'P95 RTT' { '_P95RTTColor' } }
                         $cellStyle = New-Object System.Windows.Style
                         $cellStyle.TargetType = [System.Windows.Controls.DataGridCell]
+                        $cellStyle.BasedOn    = $s.CellStyle
                         foreach ($band in @(
                             @{ Value = 'Green'; Brush = $window.Resources['Avd.Metric.Green'] }
                             @{ Value = 'Amber'; Brush = $window.Resources['Avd.Metric.Amber'] }
@@ -1906,6 +1915,17 @@ function script:Update-GlobalSessionView {
                             [void]$trigger.Setters.Add($setter)
                             [void]$cellStyle.Triggers.Add($trigger)
                         }
+                        # IsSelected trigger added last so it wins over heat-map colours when the row is selected
+                        $_rttSelTrig = New-Object System.Windows.Trigger
+                        $_rttSelTrig.Property = [System.Windows.Controls.DataGridCell]::IsSelectedProperty
+                        $_rttSelTrig.Value    = $true
+                        [void]$_rttSelTrig.Setters.Add((New-Object System.Windows.Setter(
+                            [System.Windows.Controls.Control]::BackgroundProperty,
+                            $window.Resources['Avd.Selected.Bg'])))
+                        [void]$_rttSelTrig.Setters.Add((New-Object System.Windows.Setter(
+                            [System.Windows.Controls.Control]::ForegroundProperty,
+                            $window.Resources['Avd.Fg.Selected'])))
+                        [void]$cellStyle.Triggers.Add($_rttSelTrig)
                         $e.Column.CellStyle = $cellStyle
                     }
                     # Dropdown filter for filterable columns (Location, State)
@@ -2021,6 +2041,39 @@ function Show-GlobalSessionDetail {
     $script:sdAdvDetail     = $detailWin.FindName("AdvancedDetailButton")
     $script:sdFilterBox     = $detailWin.FindName("SessionFilterBox")
     $script:sdClearFilters  = $detailWin.FindName("SessionClearFiltersButton")
+
+    # DataGrid.RowBackground coerces DataGridRow.Background and wins over RowStyle triggers,
+    # so selection colour must be applied at cell level, not row level.
+    # CellStyle: custom ControlTemplate (TemplateBinding Background) + IsSelected trigger that
+    # sets the theme colour directly on the cell. Assigned as DataGrid.CellStyle (local value)
+    # so it takes precedence over any implicit style.
+    $_sdSelBrush   = $script:MainWindow.Resources['Avd.Selected.Bg']
+    $_sdSelFgBrush = $script:MainWindow.Resources['Avd.Fg.Selected']
+    $_sdWinFgBrush = $script:MainWindow.Resources['Avd.Window.Fg']
+    $_sdSelHex   = '#{0:X2}{1:X2}{2:X2}' -f $_sdSelBrush.Color.R,   $_sdSelBrush.Color.G,   $_sdSelBrush.Color.B
+    $_sdSelFgHex = '#{0:X2}{1:X2}{2:X2}' -f $_sdSelFgBrush.Color.R, $_sdSelFgBrush.Color.G, $_sdSelFgBrush.Color.B
+    $_sdWinFgHex = '#{0:X2}{1:X2}{2:X2}' -f $_sdWinFgBrush.Color.R, $_sdWinFgBrush.Color.G, $_sdWinFgBrush.Color.B
+    $script:sdGrid.CellStyle = [System.Windows.Markup.XamlReader]::Parse(@"
+<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' TargetType='DataGridCell'>
+  <Setter Property='Template'>
+    <Setter.Value>
+      <ControlTemplate TargetType='DataGridCell'>
+        <Border Background='{TemplateBinding Background}' BorderBrush='{TemplateBinding BorderBrush}' BorderThickness='{TemplateBinding BorderThickness}'>
+          <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
+        </Border>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+  <Setter Property='Foreground' Value='$_sdWinFgHex'/>
+  <Style.Triggers>
+    <Trigger Property='IsSelected' Value='True'>
+      <Setter Property='Background' Value='$_sdSelHex'/>
+      <Setter Property='Foreground' Value='$_sdSelFgHex'/>
+      <Setter Property='BorderBrush' Value='$_sdSelHex'/>
+    </Trigger>
+  </Style.Triggers>
+</Style>
+"@)
 
     # Hide Session History button if disabled in config (Dashboard.HideSessionHistory)
     if ($script:HideSessionHistory) {
@@ -2469,6 +2522,7 @@ function script:Update-SessionView {
                         $colorCol = switch ($colName) { 'Avg RTT' { '_AvgRTTColor' } 'P95 RTT' { '_P95RTTColor' } }
                         $cellStyle = New-Object System.Windows.Style
                         $cellStyle.TargetType = [System.Windows.Controls.DataGridCell]
+                        $cellStyle.BasedOn    = $s.CellStyle
                         foreach ($band in @(
                             @{ Value = 'Green'; Brush = $window.Resources['Avd.Metric.Green'] }
                             @{ Value = 'Amber'; Brush = $window.Resources['Avd.Metric.Amber'] }
@@ -2485,6 +2539,17 @@ function script:Update-SessionView {
                             [void]$trigger.Setters.Add($setter)
                             [void]$cellStyle.Triggers.Add($trigger)
                         }
+                        # IsSelected trigger added last so it wins over heat-map colours when the row is selected
+                        $_rttSelTrig = New-Object System.Windows.Trigger
+                        $_rttSelTrig.Property = [System.Windows.Controls.DataGridCell]::IsSelectedProperty
+                        $_rttSelTrig.Value    = $true
+                        [void]$_rttSelTrig.Setters.Add((New-Object System.Windows.Setter(
+                            [System.Windows.Controls.Control]::BackgroundProperty,
+                            $window.Resources['Avd.Selected.Bg'])))
+                        [void]$_rttSelTrig.Setters.Add((New-Object System.Windows.Setter(
+                            [System.Windows.Controls.Control]::ForegroundProperty,
+                            $window.Resources['Avd.Fg.Selected'])))
+                        [void]$cellStyle.Triggers.Add($_rttSelTrig)
                         $e.Column.CellStyle = $cellStyle
                     }
                     # Dropdown filter for filterable columns (Location, State)
@@ -2588,6 +2653,31 @@ function Show-SessionDetail {
     $script:sdAdvDetail       = $detailWin.FindName("AdvancedDetailButton")
     $script:sdFilterBox       = $detailWin.FindName("SessionFilterBox")
     $script:sdClearFilters    = $detailWin.FindName("SessionClearFiltersButton")
+
+    $_sdSelBrush   = $script:MainWindow.Resources['Avd.Selected.Bg']
+    $_sdSelFgBrush = $script:MainWindow.Resources['Avd.Fg.Selected']
+    $_sdSelHex     = '#{0:X2}{1:X2}{2:X2}' -f $_sdSelBrush.Color.R,   $_sdSelBrush.Color.G,   $_sdSelBrush.Color.B
+    $_sdSelFgHex   = '#{0:X2}{1:X2}{2:X2}' -f $_sdSelFgBrush.Color.R, $_sdSelFgBrush.Color.G, $_sdSelFgBrush.Color.B
+    $script:sdGrid.CellStyle = [System.Windows.Markup.XamlReader]::Parse(@"
+<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' TargetType='DataGridCell'>
+  <Setter Property='Template'>
+    <Setter.Value>
+      <ControlTemplate TargetType='DataGridCell'>
+        <Border Background='{TemplateBinding Background}' BorderBrush='{TemplateBinding BorderBrush}' BorderThickness='{TemplateBinding BorderThickness}'>
+          <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
+        </Border>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+  <Style.Triggers>
+    <Trigger Property='IsSelected' Value='True'>
+      <Setter Property='Background' Value='$_sdSelHex'/>
+      <Setter Property='Foreground' Value='$_sdSelFgHex'/>
+      <Setter Property='BorderBrush' Value='$_sdSelHex'/>
+    </Trigger>
+  </Style.Triggers>
+</Style>
+"@)
 
     # Session History is not available from the session hosts tab view
     $script:sdAdvDetail.Visibility = [System.Windows.Visibility]::Collapsed

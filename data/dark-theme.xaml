@@ -317,6 +317,23 @@
         </Setter.Value>
     </Setter>
 </Style>
+<!-- ── Secondary-region row tint (host pool grid, rows with _IsSecondary=True) -->
+<SolidColorBrush x:Key="Avd.Secondary.Bg"    Color="#4A1A1A"/>
+
+<!-- ── DataGridRow selection / hover (applied via DataGrid.RowStyle in code) -->
+<Style x:Key="Avd.DataGridRow.Style" TargetType="{x:Type DataGridRow}">
+    <Setter Property="Foreground" Value="{StaticResource Avd.Window.Fg}"/>
+    <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+            <Setter Property="Background" Value="{StaticResource Avd.Hover.Bg}"/>
+        </Trigger>
+        <Trigger Property="IsSelected" Value="True">
+            <Setter Property="Background" Value="{StaticResource Avd.Selected.Bg}"/>
+            <Setter Property="Foreground" Value="{StaticResource Avd.Fg.Selected}"/>
+        </Trigger>
+    </Style.Triggers>
+</Style>
+
 <Style TargetType="{x:Type DatePicker}">
     <Setter Property="Foreground"      Value="#D4D4D4"/>
     <Setter Property="Background"      Value="#3C3C3C"/>

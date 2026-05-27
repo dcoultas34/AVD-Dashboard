@@ -315,9 +315,9 @@ Write-Host '=========================================='
 # STAGE 2 - BIS-F / Sysprep via Run Command
 # ==========================================
 
-$runExtension = [System.Convert]::ToBoolean($extension)
+# $extension is "true" (BIS-F + Sysprep), "sysprep" (Sysprep only), or "false" (registry keys only)
 
-if ($runExtension) {
+if ($extension -eq 'true') {
     Write-Host
     Write-Host "$(Get-Date -Format HH:mm:ss) Running BIS-F sealing on $PrepVmName"
 
@@ -347,10 +347,11 @@ if ($runExtension) {
     Write-Host "$(Get-Date -Format HH:mm:ss) Running Sysprep on $PrepVmName"
 
     $sysprepScript = @'
+$logPath = 'C:\Windows\System32\Sysprep\Panther\setuperr.log'
+if (Test-Path $logPath) { Clear-Content -Path $logPath -Force; Write-Output "Cleared existing setuperr.log" }
 $sysprep = Start-Process -FilePath 'C:\Windows\System32\Sysprep\sysprep.exe' `
     -ArgumentList '/generalize /oobe /shutdown /quiet' -PassThru
 Write-Output "Sysprep started (PID: $($sysprep.Id))"
-$logPath = 'C:\Windows\System32\Sysprep\Panther\setuperr.log'
 $lastPos = 0
 $waited  = 0
 while (-not (Test-Path $logPath) -and $waited -lt 60) { Start-Sleep 2; $waited += 2 }
@@ -393,8 +394,6 @@ Write-Output "Sysprep exit code: $($sysprep.ExitCode)"
     if (-not $asyncUrl) { $asyncUrl = $v1Resp.Headers['Location'] }
 
     if ($asyncUrl) {
-        # Poll the async operation URL - strips the api-version since Wait-ArmOperation adds none,
-        # so we poll directly with Invoke-WebRequest until status is Succeeded
         $sysSw      = [Diagnostics.Stopwatch]::StartNew()
         $sysTimeout = $SysprepTimeoutMinutes * 60
         $sysState   = 'InProgress'
@@ -410,7 +409,6 @@ Write-Output "Sysprep exit code: $($sysprep.ExitCode)"
 
         if ($sysState -ne 'Succeeded') { throw "Sysprep Run Command $sysState`: $($sysResult.error.message)" }
 
-        # Output is in the operation result value
         $sysOutput = if ($sysResult.properties.output.value) {
             ($sysResult.properties.output.value | ForEach-Object { $_.message }) -join "`n"
         } else { '' }
@@ -419,9 +417,81 @@ Write-Output "Sysprep exit code: $($sysprep.ExitCode)"
         Write-Host "Warning: No async URL returned from runCommand POST - cannot poll status"
     }
     Write-Host "$(Get-Date -Format HH:mm:ss) Sysprep complete - VM has shut down"
-}
 
-if (-not $runExtension) {
+} elseif ($extension -eq 'sysprep') {
+    Write-Host
+    Write-Host "$(Get-Date -Format HH:mm:ss) Running Sysprep on $PrepVmName (BIS-F skipped)"
+
+    $sysprepScript = @'
+$logPath = 'C:\Windows\System32\Sysprep\Panther\setuperr.log'
+if (Test-Path $logPath) { Clear-Content -Path $logPath -Force; Write-Output "Cleared existing setuperr.log" }
+$sysprep = Start-Process -FilePath 'C:\Windows\System32\Sysprep\sysprep.exe' `
+    -ArgumentList '/generalize /oobe /shutdown /quiet' -PassThru
+Write-Output "Sysprep started (PID: $($sysprep.Id))"
+$lastPos = 0
+$waited  = 0
+while (-not (Test-Path $logPath) -and $waited -lt 60) { Start-Sleep 2; $waited += 2 }
+while (-not $sysprep.HasExited) {
+    if (Test-Path $logPath) {
+        $fs = [System.IO.File]::Open($logPath,'Open','Read','ReadWrite')
+        $fs.Seek($lastPos,'Begin') | Out-Null
+        $sr = New-Object System.IO.StreamReader($fs)
+        $new = $sr.ReadToEnd(); $lastPos = $fs.Position
+        $sr.Close(); $fs.Close()
+        if ($new) { Write-Output $new }
+    }
+    Start-Sleep 5
+}
+if (Test-Path $logPath) {
+    $fs = [System.IO.File]::Open($logPath,'Open','Read','ReadWrite')
+    $fs.Seek($lastPos,'Begin') | Out-Null
+    $sr = New-Object System.IO.StreamReader($fs)
+    $new = $sr.ReadToEnd(); $sr.Close(); $fs.Close()
+    if ($new) { Write-Output $new }
+}
+Write-Output "Sysprep exit code: $($sysprep.ExitCode)"
+'@
+
+    $sysprepV1Body = @{
+        commandId = 'RunPowerShellScript'
+        script    = @($sysprepScript -split "`n")
+    }
+    Write-Host "$(Get-Date -Format HH:mm:ss) Sysprep running (waiting up to $SysprepTimeoutMinutes min for VM to shut down)..."
+
+    $armBase  = 'https://management.azure.com'
+    $v1Path   = "$armBase$vmBase/$PrepVmName/runCommand?api-version=$computeApi"
+    $v1Json   = $sysprepV1Body | ConvertTo-Json -Depth 5
+    $v1Resp   = Invoke-WebRequest -Uri $v1Path -Method POST -Headers @{ Authorization = "Bearer $Token"; 'Content-Type' = 'application/json' } -Body $v1Json -UseBasicParsing
+    $asyncUrl = $v1Resp.Headers['Azure-AsyncOperation']
+    if (-not $asyncUrl) { $asyncUrl = $v1Resp.Headers['Location'] }
+
+    if ($asyncUrl) {
+        $sysSw      = [Diagnostics.Stopwatch]::StartNew()
+        $sysTimeout = $SysprepTimeoutMinutes * 60
+        $sysState   = 'InProgress'
+        $sysResult  = $null
+        do {
+            Start-Sleep -Seconds 60
+            $pollResp  = Invoke-WebRequest -Uri $asyncUrl -Method GET -Headers @{ Authorization = "Bearer $Token" } -UseBasicParsing
+            $sysResult = $pollResp.Content | ConvertFrom-Json
+            $sysState  = $sysResult.status
+            Write-Host "$(Get-Date -Format HH:mm:ss) Sysprep state: $sysState ($([math]::Round($sysSw.Elapsed.TotalMinutes, 1)) min / $SysprepTimeoutMinutes min timeout)"
+            if ($sysSw.Elapsed.TotalSeconds -gt $sysTimeout) { throw "Sysprep timed out after $SysprepTimeoutMinutes minutes" }
+        } while ($sysState -notin @('Succeeded', 'Failed', 'Canceled'))
+
+        if ($sysState -ne 'Succeeded') { throw "Sysprep Run Command $sysState`: $($sysResult.error.message)" }
+
+        $sysOutput = if ($sysResult.properties.output.value) {
+            ($sysResult.properties.output.value | ForEach-Object { $_.message }) -join "`n"
+        } else { '' }
+        if ($sysOutput) { Write-Host '--- Sysprep output ---'; Write-Host $sysOutput }
+    } else {
+        Write-Host "Warning: No async URL returned from runCommand POST - cannot poll status"
+    }
+    Write-Host "$(Get-Date -Format HH:mm:ss) Sysprep complete - VM has shut down"
+
+} else {
+    # extension -eq 'false': set BIS-F registry keys only, then wait for manual Sysprep
     Write-Host
     Write-Host "$(Get-Date -Format HH:mm:ss) Setting BIS-F registry keys on $PrepVmName (no extension mode)"
 
@@ -461,11 +531,7 @@ Write-Host "Done"
     if ($regState -eq 'Failed') { throw "BIS-F registry key command failed on $PrepVmName" }
 
     Write-Host "$(Get-Date -Format HH:mm:ss) BIS-F registry keys set successfully"
-}
 
-# In registry-only mode (no BIS-F extension), Sysprep is run manually so we wait here.
-# In extension mode the Sysprep polling loop above already confirmed the VM stopped.
-if (-not $runExtension) {
     Write-Host "$(Get-Date -Format HH:mm:ss) Waiting for VM to stop (Sysprep running manually)..."
     $sw      = [Diagnostics.Stopwatch]::StartNew()
     $timeout = New-TimeSpan -Minutes $SysprepTimeoutMinutes

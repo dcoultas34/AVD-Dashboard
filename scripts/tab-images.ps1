@@ -661,33 +661,25 @@ function Initialize-ImagesTab {
     })
 
     # Row hover / selected highlight style
+    # Row highlighting uses the same theme resource keys as the Session Hosts tab so
+    # hover and selection colours adapt correctly to dark and light mode.
     $imgRowStyle = New-Object System.Windows.Style([System.Windows.Controls.DataGridRow])
+    [void]$imgRowStyle.Setters.Add((New-Object System.Windows.Setter(
+        [System.Windows.Controls.DataGridRow]::ForegroundProperty, $Window.Resources['Avd.Window.Fg'])))
 
     $imgHoverTrigger = New-Object System.Windows.Trigger
     $imgHoverTrigger.Property = [System.Windows.Controls.DataGridRow]::IsMouseOverProperty
     $imgHoverTrigger.Value    = $true
-    [void]$imgHoverTrigger.Setters.Add(
-        (New-Object System.Windows.Setter(
-            [System.Windows.Controls.DataGridRow]::BackgroundProperty,
-            [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xEE, 0xF4, 0xFC))
-        ))
-    )
+    [void]$imgHoverTrigger.Setters.Add((New-Object System.Windows.Setter(
+        [System.Windows.Controls.DataGridRow]::BackgroundProperty, $Window.Resources['Avd.Hover.Bg'])))
 
     $imgSelTrigger = New-Object System.Windows.Trigger
     $imgSelTrigger.Property = [System.Windows.Controls.DataGridRow]::IsSelectedProperty
     $imgSelTrigger.Value    = $true
-    [void]$imgSelTrigger.Setters.Add(
-        (New-Object System.Windows.Setter(
-            [System.Windows.Controls.DataGridRow]::BackgroundProperty,
-            [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0xD0, 0xE7, 0xFA))
-        ))
-    )
-    [void]$imgSelTrigger.Setters.Add(
-        (New-Object System.Windows.Setter(
-            [System.Windows.Controls.DataGridRow]::ForegroundProperty,
-            [System.Windows.Media.SolidColorBrush]([System.Windows.Media.Color]::FromRgb(0x1F, 0x29, 0x37))
-        ))
-    )
+    [void]$imgSelTrigger.Setters.Add((New-Object System.Windows.Setter(
+        [System.Windows.Controls.DataGridRow]::BackgroundProperty, $Window.Resources['Avd.Selected.Bg'])))
+    [void]$imgSelTrigger.Setters.Add((New-Object System.Windows.Setter(
+        [System.Windows.Controls.DataGridRow]::ForegroundProperty, $Window.Resources['Avd.Fg.Selected'])))
 
     [void]$imgRowStyle.Triggers.Add($imgHoverTrigger)
     [void]$imgRowStyle.Triggers.Add($imgSelTrigger)
@@ -1369,6 +1361,7 @@ $script:imgCachedSubnets     = @{}     # key = "RG/VNetName", value = string[]
 function Invoke-ImagesCreateImageDialog {
     param([string]$VMName, [string]$VMRG, [string]$VMRegion)
 
+    Write-Log "INFO [Images/CreateImage] Dialog opened - VM='$VMName' RG='$VMRG' Region='$VMRegion'"
     Add-Type -AssemblyName PresentationFramework -ErrorAction SilentlyContinue
     [xml]$dlgXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -1410,8 +1403,9 @@ function Invoke-ImagesCreateImageDialog {
             <StackPanel Grid.Column="0">
                 <TextBlock Text="BIS-F / Sysprep Extension" FontSize="12" FontWeight="SemiBold" Foreground="#333" Margin="0,0,0,4"/>
                 <ComboBox x:Name="ExtensionCombo" Height="30" FontSize="12" IsEditable="False">
-                    <ComboBoxItem Content="true  (run BIS-F + Sysprep)"  Tag="true"/>
-                    <ComboBoxItem Content="false (registry keys only)"   Tag="false"/>
+                    <ComboBoxItem Content="true   (run BIS-F + Sysprep)"     Tag="true"/>
+                    <ComboBoxItem Content="sysprep (skip BIS-F, Sysprep only)" Tag="sysprep"/>
+                    <ComboBoxItem Content="false  (registry keys only)"      Tag="false"/>
                 </ComboBox>
             </StackPanel>
             <StackPanel Grid.Column="2">
@@ -1510,7 +1504,6 @@ function Invoke-ImagesCreateImageDialog {
         Galleries     = @()    # PSCustomObject[] populated in Add_Loaded
         FilteredVNets = @()    # region-filtered VNet PSCustomObject[] populated in Add_Loaded
         DefCache      = $script:imgCachedDefs     # shared hashtable: "RG/Gallery" -> string[]
-        SubnetCache   = $script:imgCachedSubnets  # shared hashtable: "RG/VNet"    -> string[]
     }
 
     # Helper: enable OK when all required fields are selected
@@ -1536,31 +1529,40 @@ function Invoke-ImagesCreateImageDialog {
             . ([scriptblock]::Create($restHelperDef))
             $tok   = Get-ArmToken
             $subId = $imgSubId
+            Write-Log "INFO [Images/CreateImage] Loaded handler - subId='$subId' region='$vmRegion'"
 
             # ---- Galleries: search across all configured Gallery RGs ----
             if (-not $script:imgCachedGalleries) {
                 $found = [System.Collections.Generic.List[PSCustomObject]]::new()
                 $galleryRGs = $script:ImgGalleryRGs
                 if ($galleryRGs -and $galleryRGs.Count -gt 0) {
+                    Write-Log "INFO [Images/CreateImage] Fetching galleries from $($galleryRGs.Count) configured RG(s): $($galleryRGs -join ', ')"
                     foreach ($rg in $galleryRGs) {
                         $gals = @(Invoke-Arm -Path "/subscriptions/$subId/resourceGroups/$rg/providers/Microsoft.Compute/galleries" `
                                              -Token $tok -ApiVersion '2022-03-03')
+                        Write-Log "INFO [Images/CreateImage] Gallery RG '$rg': $($gals.Count) gallery/galleries found"
                         foreach ($g in $gals) { $found.Add([PSCustomObject]@{ RG = $rg; Name = [string]$g.name }) }
                     }
                 } else {
+                    Write-Log "INFO [Images/CreateImage] No gallery RGs configured - fetching all galleries subscription-wide"
                     $allGals = @(Invoke-Arm -Path "/subscriptions/$subId/providers/Microsoft.Compute/galleries" `
                                              -Token $tok -ApiVersion '2022-03-03')
+                    Write-Log "INFO [Images/CreateImage] Subscription-wide gallery fetch returned $($allGals.Count) result(s)"
                     foreach ($g in $allGals) {
                         $gRG = ($g.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
                         $found.Add([PSCustomObject]@{ RG = $gRG; Name = [string]$g.name })
                     }
                 }
                 $script:imgCachedGalleries = @($found | Sort-Object Name)
+            } else {
+                Write-Log "INFO [Images/CreateImage] Using cached galleries ($($script:imgCachedGalleries.Count))"
             }
             # Store in dialog state so SelectionChanged closures can read it without $script: scope issues
             $dlg_state.Galleries = $script:imgCachedGalleries
+            Write-Log "INFO [Images/CreateImage] Galleries available: $($dlg_state.Galleries.Count) - $($dlg_state.Galleries.Name -join ', ')"
 
             if ($dlg_state.Galleries.Count -eq 0) {
+                Write-Log "WARN [Images/CreateImage] No galleries found - dialog will show error"
                 $dlgStatus.Text = 'No Shared Image Galleries found in the subscription.'
             } else {
                 $galleryCombo.ItemsSource = @($dlg_state.Galleries | ForEach-Object { "$($_.Name)  [$($_.RG)]" })
@@ -1570,12 +1572,17 @@ function Invoke-ImagesCreateImageDialog {
 
             # ---- VNets: subscription-wide, filtered to the VM's region ----
             if (-not $script:imgCachedVNets) {
+                Write-Log "INFO [Images/CreateImage] Fetching VNets subscription-wide"
                 $vnets = @(Invoke-Arm -Path "/subscriptions/$subId/providers/Microsoft.Network/virtualNetworks" `
                                        -Token $tok -ApiVersion '2023-05-01')
+                Write-Log "INFO [Images/CreateImage] VNet list returned $($vnets.Count) VNet(s)"
                 $script:imgCachedVNets = @($vnets | ForEach-Object {
-                    $vRG = ($_.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
-                    [PSCustomObject]@{ RG = $vRG; Name = [string]$_.name; Location = [string]$_.location }
+                    $vRG      = ($_.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
+                    $vSubnets = @($_.properties.subnets | ForEach-Object { [string]$_.name } | Sort-Object)
+                    [PSCustomObject]@{ RG = $vRG; Name = [string]$_.name; Location = [string]$_.location; Subnets = $vSubnets }
                 } | Sort-Object Name)
+            } else {
+                Write-Log "INFO [Images/CreateImage] Using cached VNets ($($script:imgCachedVNets.Count))"
             }
 
             $filteredVNets = if ($vmRegion) {
@@ -1584,18 +1591,37 @@ function Invoke-ImagesCreateImageDialog {
                 @($script:imgCachedVNets)
             }
             $dlg_state.FilteredVNets = $filteredVNets
+            Write-Log "INFO [Images/CreateImage] VNets after region filter ('$vmRegion'): $($filteredVNets.Count) - $($filteredVNets.Name -join ', ')"
 
             if ($filteredVNets.Count -eq 0) {
                 $regionNote = if ($vmRegion) { " in region '$vmRegion'" } else { '' }
+                Write-Log "WARN [Images/CreateImage] No VNets found${regionNote}"
                 $dlgStatus.Text = "No virtual networks found${regionNote}."
             } else {
                 $vnetCombo.ItemsSource = @($filteredVNets | ForEach-Object { "$($_.Name)  [$($_.RG)]" })
                 $vnetCombo.IsEnabled = $true
                 $vnetCombo.SelectedIndex = 0
+
+                # Populate subnets for the default VNet here (in Loaded scope where
+                # ARM functions are already dot-sourced and tok/subId are in scope).
+                $firstVNet = $filteredVNets[0]
+                Write-Log "INFO [Images/CreateImage] Fetching subnets for initial VNet '$($firstVNet.Name)' RG='$($firstVNet.RG)'"
+                $vnetDetail = Invoke-Arm -Path "/subscriptions/$subId/resourceGroups/$($firstVNet.RG)/providers/Microsoft.Network/virtualNetworks/$($firstVNet.Name)" `
+                                          -Token $tok -ApiVersion '2023-05-01' -FullResponse
+                $initSubnets = @($vnetDetail.properties.subnets | ForEach-Object { [string]$_.name } | Sort-Object)
+                Write-Log "INFO [Images/CreateImage] Initial subnet fetch returned $($initSubnets.Count) subnet(s): $($initSubnets -join ', ')"
+                if ($initSubnets.Count -gt 0) {
+                    $subnetCombo.ItemsSource   = $initSubnets
+                    $subnetCombo.SelectedIndex = 0
+                    $subnetCombo.IsEnabled     = $true
+                } else {
+                    Write-Log "WARN [Images/CreateImage] No subnets returned for VNet '$($firstVNet.Name)' - subnet combo will remain disabled"
+                }
             }
 
             if ($dlgStatus.Text -notlike 'No *') { $dlgStatus.Text = '' }
         } catch {
+            Write-Log "ERROR [Images/CreateImage] Loaded handler exception: $_"
             $dlgStatus.Text = "Failed to load resources: $_"
         }
     }.GetNewClosure())
@@ -1607,6 +1633,7 @@ function Invoke-ImagesCreateImageDialog {
         if ($idx -lt 0 -or -not $galleries -or $idx -ge $galleries.Count) { return }
         $selGal   = $galleries[$idx]
         $cacheKey = "$($selGal.RG)/$($selGal.Name)"
+        Write-Log "INFO [Images/CreateImage] Gallery selected: '$($selGal.Name)' RG='$($selGal.RG)'"
 
         $defCombo.ItemsSource = $null
         $defCombo.IsEnabled   = $false
@@ -1614,24 +1641,29 @@ function Invoke-ImagesCreateImageDialog {
 
         if ($dlg_state.DefCache.ContainsKey($cacheKey)) {
             $defNames = $dlg_state.DefCache[$cacheKey]
+            Write-Log "INFO [Images/CreateImage] Image definitions from cache: $($defNames.Count)"
         } else {
             $dlgStatus.Text = 'Fetching image definitions...'
             try {
                 . ([scriptblock]::Create($restHelperDef))
                 $tok   = Get-ArmToken
                 $subId = $imgSubId
+                Write-Log "INFO [Images/CreateImage] Fetching image definitions for gallery '$($selGal.Name)'"
                 $defs  = @(Invoke-Arm -Path "/subscriptions/$subId/resourceGroups/$($selGal.RG)/providers/Microsoft.Compute/galleries/$($selGal.Name)/images" `
                                        -Token $tok -ApiVersion '2022-03-03')
                 $defNames = @($defs | ForEach-Object { [string]$_.name } | Sort-Object)
+                Write-Log "INFO [Images/CreateImage] Image definitions fetched: $($defNames.Count) - $($defNames -join ', ')"
                 $dlg_state.DefCache[$cacheKey] = $defNames
                 $dlgStatus.Text = ''
             } catch {
+                Write-Log "ERROR [Images/CreateImage] Failed to fetch image definitions: $_"
                 $dlgStatus.Text = "Failed to load image definitions: $_"
                 return
             }
         }
 
         if ($defNames.Count -eq 0) {
+            Write-Log "WARN [Images/CreateImage] No image definitions found in gallery '$($selGal.Name)'"
             $dlgStatus.Text = "No image definitions found in gallery '$($selGal.Name)'."
         } else {
             $defCombo.ItemsSource   = $defNames
@@ -1647,37 +1679,36 @@ function Invoke-ImagesCreateImageDialog {
         $vnets    = $dlg_state.FilteredVNets
         if ($idx -lt 0 -or -not $vnets -or $idx -ge $vnets.Count) { return }
         $selVNet  = $vnets[$idx]
-        $cacheKey = "$($selVNet.RG)/$($selVNet.Name)"
+        Write-Log "INFO [Images/CreateImage] VNet selected: '$($selVNet.Name)' RG='$($selVNet.RG)' Location='$($selVNet.Location)'"
 
         $subnetCombo.ItemsSource = $null
         $subnetCombo.IsEnabled   = $false
         & $checkReady
 
-        if ($dlg_state.SubnetCache.ContainsKey($cacheKey)) {
-            $subnetNames = $dlg_state.SubnetCache[$cacheKey]
-        } else {
-            $dlgStatus.Text = 'Fetching subnets...'
-            try {
-                . ([scriptblock]::Create($restHelperDef))
-                $tok   = Get-ArmToken
-                $subId = $imgSubId
-                $vnetDetail = Invoke-Arm -Path "/subscriptions/$subId/resourceGroups/$($selVNet.RG)/providers/Microsoft.Network/virtualNetworks/$($selVNet.Name)" `
-                                          -Token $tok -ApiVersion '2023-05-01' -FullResponse
-                $subnetNames = @($vnetDetail.properties.subnets | ForEach-Object { [string]$_.name } | Sort-Object)
-                $dlg_state.SubnetCache[$cacheKey] = $subnetNames
-                $dlgStatus.Text = ''
-            } catch {
-                $dlgStatus.Text = "Failed to load subnets: $_"
-                return
-            }
+        try {
+            . ([scriptblock]::Create($restHelperDef))
+            $tok     = Get-ArmToken
+            $subId   = $imgSubId
+            Write-Log "INFO [Images/CreateImage] Fetching subnets for VNet '$($selVNet.Name)' (subId='$subId')"
+            $vnetDet = Invoke-Arm -Path "/subscriptions/$subId/resourceGroups/$($selVNet.RG)/providers/Microsoft.Network/virtualNetworks/$($selVNet.Name)" `
+                                   -Token $tok -ApiVersion '2023-05-01' -FullResponse
+            $subnetNames = @($vnetDet.properties.subnets | ForEach-Object { [string]$_.name } | Sort-Object)
+            Write-Log "INFO [Images/CreateImage] Subnet fetch returned $($subnetNames.Count) subnet(s): $($subnetNames -join ', ')"
+        } catch {
+            Write-Log "ERROR [Images/CreateImage] Subnet fetch failed for VNet '$($selVNet.Name)': $_"
+            $dlgStatus.Text = "Failed to load subnets: $_"
+            & $checkReady
+            return
         }
 
         if ($subnetNames.Count -eq 0) {
+            Write-Log "WARN [Images/CreateImage] No subnets found in VNet '$($selVNet.Name)'"
             $dlgStatus.Text = "No subnets found in VNet '$($selVNet.Name)'."
         } else {
             $subnetCombo.ItemsSource   = $subnetNames
             $subnetCombo.SelectedIndex = 0
             $subnetCombo.IsEnabled     = $true
+            $dlgStatus.Text            = ''
         }
         & $checkReady
     }.GetNewClosure())
@@ -1706,6 +1737,7 @@ function Invoke-ImagesCreateImageDialog {
         [int]::TryParse($timeoutBox.Text.Trim(), [ref]$timeout) | Out-Null
         if ($timeout -le 0) { $timeout = 35 }
 
+        Write-Log "INFO [Images/CreateImage] User confirmed - Gallery='$($selGal.Name)' Def='$selDef' VNet='$($selVNet.Name)' Subnet='$selSubnet' Size='$selSize' Extension='$extTag' Timeout=${timeout}m"
         $dlg.Tag = [PSCustomObject]@{
             GalleryRG    = $selGal.RG
             GalleryName  = $selGal.Name
@@ -2030,7 +2062,7 @@ function _IMG_UpdateGrid {
         $view   = $script:imgDataTable.DefaultView
         $fTotal = $view.Count
         $fRun   = @($view | Where-Object { $_['Power State'] -eq 'Running' }).Count
-        $script:imgFilteredCountText = "$fTotal VM(s)   Running: $fRun   Other: $($fTotal - $fRun)"
+        $script:imgFilteredCountText = "$fTotal VM(s)   Running: $fRun   Other: $([Math]::Max(0, $fTotal - $fRun))"
     } else {
         $script:imgFilteredCountText = $null
     }
@@ -2039,6 +2071,6 @@ function _IMG_UpdateGrid {
     $script:IMGExportButton.IsEnabled  = $true
 
     $runCount              = @($VmRows | Where-Object { $_.'Power State' -eq 'Running' }).Count
-    $script:imgCountText   = "$($VmRows.Count) VM(s)   Running: $runCount   Other: $($VmRows.Count - $runCount)"
+    $script:imgCountText   = "$($VmRows.Count) VM(s)   Running: $runCount   Other: $([Math]::Max(0, $VmRows.Count - $runCount))"
     $script:imgLastRefreshTime = $Timestamp
 }

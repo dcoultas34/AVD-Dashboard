@@ -656,16 +656,14 @@ $script:vmCoreScript = {
         } else { '' }
 
         # Build User display from the userSessions lookup (Phase 1b)
-        # Multi-user display: up to 3 usernames are shown stacked vertically
-        # (newline-separated) in the grid cell. 4+ users show the first 3 plus
-        # a "(+N more)" suffix. The TextBlock style uses TextWrapping="Wrap" so
-        # the newlines render as line breaks and the row auto-heights to fit.
-        # _UserTooltip holds the full user list for hover; empty for 0-1 users.
+        # Multi-user display: up to 3 usernames shown stacked vertically. If there
+        # are more than 3, the 3rd name gets "..." appended and the rest are hidden.
+        # Hover tooltip (_UserTooltip) always shows the full list for 2+ users.
         $shFqdn  = $sh.name.Split('/')[-1].ToLower()
         $users   = @(if ($userMap.ContainsKey($shFqdn)) { $userMap[$shFqdn] } else { @() })
         $userTxt = if ($users.Count -eq 0) { '-' }
                    elseif ($users.Count -le 3) { $users -join "`n" }
-                   else { ($users[0..2] -join "`n") + "`n(+$($users.Count - 3) more)" }
+                   else { ($users[0..1] -join "`n") + "`n$($users[2])..." }
         $userTip = if ($users.Count -gt 1) { $users -join "`n" } else { '' }
 
         # Fields from AVD Session Host REST API (DesktopVirtualization provider)
@@ -4119,16 +4117,29 @@ function Initialize-SessionHostsTab {
                 'xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">' +
                 '<Setter Property="TextAlignment" Value="Center"/>' +
                 '<Setter Property="VerticalAlignment" Value="Center"/>' +
-                '<Setter Property="TextWrapping" Value="Wrap"/>' +
-                '<Setter Property="FontSize" Value="11"/>' +
+                '<Setter Property="TextWrapping" Value="NoWrap"/>' +
+                '<Setter Property="FontSize" Value="9"/>' +
+                '<Setter Property="LineHeight" Value="11"/>' +
+                '<Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>' +
                 '<Setter Property="ToolTip" Value="{Binding [_UserTooltip]}"/>' +
                 '<Style.Triggers>' +
                 '<DataTrigger Binding="{Binding [_UserTooltip]}" Value="">' +
                 '<Setter Property="FontSize" Value="13"/>' +
+                '<Setter Property="LineHeight" Value="17"/>' +
                 '<Setter Property="ToolTip" Value="{x:Null}"/>' +
                 '</DataTrigger>' +
                 '</Style.Triggers></Style>'
             $e.Column.ElementStyle = [System.Windows.Markup.XamlReader]::Parse($ttXaml)
+
+            # Remove vertical cell padding so 3 stacked names fit without clipping.
+            # BasedOn the global DataGridCell style to inherit the IsSelected highlight.
+            $userBaseStyle = $script:SHGrid.TryFindResource([System.Windows.Controls.DataGridCell])
+            $userCellStyle = New-Object System.Windows.Style([System.Windows.Controls.DataGridCell])
+            if ($null -ne $userBaseStyle) { $userCellStyle.BasedOn = $userBaseStyle }
+            [void]$userCellStyle.Setters.Add((New-Object System.Windows.Setter(
+                [System.Windows.Controls.Control]::PaddingProperty,
+                [System.Windows.Thickness]::new(2, 0, 2, 0))))
+            $e.Column.CellStyle = $userCellStyle
         }
 
         # Health State tooltip: shows the failed check names when a host is unhealthy.
