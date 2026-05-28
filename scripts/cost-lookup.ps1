@@ -58,13 +58,16 @@
 #                    returned price includes the Windows Server licence cost.
 #                    Use this if your VMs do NOT have AHB enabled.
 #
-#                    $true - Azure Hybrid Benefit pricing.
+#                    $true - Azure Hybrid Benefit / Windows 10/11 multisession pricing.
 #                    AHB lets you use existing Windows Server licences covered by
 #                    Software Assurance, so Microsoft only charges the base compute
 #                    rate (no Windows licence fee on top). The API filter excludes
 #                    the Windows product name and returns the base/Linux compute
-#                    rate, which is what Microsoft bills for AHB VMs.
-#                    Use this if your VMs DO have AHB enabled in Azure.
+#                    rate, which is what Microsoft bills for AHB and Windows 10/11
+#                    multisession AVD VMs (Windows licence is covered by M365).
+#                    Use this for AHB VMs or Windows 10/11 multisession session hosts.
+#
+# This default is overridden by Costs.PricingWindowsLicence in config.psd1 at startup.
 $script:PricingCurrency    = 'GBP'
 $script:PricingCountryCode = 'GB'
 $script:HoursPerMonth         = 730   # Full month (365 days x 24 hrs / 12 months) - used for column cost calculation
@@ -116,7 +119,7 @@ $script:shCostTimer.Add_Tick({
     try {
         # EndInvoke retrieves the return value from the background runspace.
         # The runspace returns a single PSCustomObject with three hashtables:
-        #   ComputeMap  - keyed by "VmSku|Region",              value = hourly rate
+        #   ComputeMap  - keyed by "VmSku|Region|OsType",         value = hourly rate
         #   DiskMap     - keyed by "DiskTier|DiskSku|Region",   value = monthly rate
         #   TxnMap      - keyed by "DiskTier|DiskSku|Region",   value = per-10K rate
         $result = $script:shCostPS.EndInvoke($script:shCostHandle)
@@ -151,7 +154,10 @@ $script:shCostTimer.Add_Tick({
             #     (i.e. Premium SSD), which the grid displays as '-'.
             $script:shCostCache = @{}
             foreach ($r in $script:shCostRowSnap) {
-                $vmKey   = "$($r.VmSku)|$($r.Region)"
+                # vmKey must include OsType to match the key used when the price was fetched.
+                # Two VMs with the same SKU and region but different OS types have separate
+                # entries in computeMap (e.g. 'Standard_D8as_v5|swedencentral|Linux' vs '...Windows').
+                $vmKey   = "$($r.VmSku)|$($r.Region)|$($r.OsType)"
                 $diskKey = "$($r.DiskTier)|$($r.DiskSku)|$($r.Region)"
 
                 # Store the raw per-hour rate alongside the monthly cost so _SH_UpdateGrid can
@@ -438,7 +444,7 @@ function Invoke-SessionHostsCostFetch {
     # We build two HashSets of unique key strings so that multiple VMs sharing
     # the same SKU and region result in only ONE API call.
     #
-    # vmCombos   format: "VmSku|Region"           e.g. "Standard_B2s_v2|uksouth"
+    # vmCombos   format: "VmSku|Region|OsType"     e.g. "Standard_B2s_v2|uksouth|Linux"
     # diskCombos format: "DiskTier|DiskSku|Region" e.g. "E10|StandardSSD_LRS|uksouth"
     #
     # We also save a full row snapshot ($shCostRowSnap) so the tick handler can
@@ -457,10 +463,19 @@ function Invoke-SessionHostsCostFetch {
             DiskTier         = [string]$dr['_DiskTier']         # e.g. 'E10', 'P10', 'S10' - hidden column
             DiskSku          = [string]$dr['_DiskSkuRaw']       # e.g. 'StandardSSD_LRS'   - hidden column
             OsDiskResourceId = [string]$dr['_OsDiskResourceId'] # for Cost Management txn cost query
+            # Per-VM OS type detected from the VM's marketplace image offer in Phase 3.
+            # 'Linux'   = fetch Linux/base rate  (W10/W11 multisession, AHB)
+            # 'Windows' = fetch Windows PAYG rate (Windows Server without AHB)
+            # Embedded in the vmCombos key so two VMs with the same SKU and region
+            # but different OS types each get the right price with one API call each.
+            OsType           = [string]$dr['_PricingOsType']
         }
     })
     foreach ($r in $script:shCostRowSnap) {
-        if ($r.VmSku    -and $r.VmSku    -ne '-') { [void]$vmCombos.Add("$($r.VmSku)|$($r.Region)") }
+        # vmCombos key format: "VmSku|Region|OsType"
+        # The third segment drives which Azure Retail Prices API filter is used — see fetchScript.
+        # Disk combos are OS-neutral (managed disk price is the same regardless of guest OS).
+        if ($r.VmSku    -and $r.VmSku    -ne '-') { [void]$vmCombos.Add("$($r.VmSku)|$($r.Region)|$($r.OsType)") }
         if ($r.DiskTier -and $r.DiskTier -ne '')  { [void]$diskCombos.Add("$($r.DiskTier)|$($r.DiskSku)|$($r.Region)") }
     }
 
@@ -470,13 +485,12 @@ function Invoke-SessionHostsCostFetch {
     # in via AddArgument() and received via the param() block.
     $fetchScript = {
         param(
-            [string[]]$VmCombos,      # Unique "VmSku|Region" strings to price
+            [string[]]$VmCombos,      # Unique "VmSku|Region|OsType" strings to price (OsType = 'Windows' or 'Linux')
             [string[]]$DiskCombos,    # Unique "DiskTier|DiskSku|Region" strings to price
             [string]$CurrencyCode,    # ISO 4217 currency code (e.g. 'GBP')
             [string]$CountryCode,     # ISO 3166 country code (e.g. 'GB') - unused in filter but available
             [int]$HoursPerMonth,      # Hours per month for compute cost calculation
-            [string]$LogFile,         # Path to log file, or empty string if logging is disabled
-            [bool]$UseAHB             # Whether to fetch AHB (base/Linux) or Windows PAYG rates
+            [string]$LogFile          # Path to log file, or empty string if logging is disabled
         )
 
         # Helper so log writes don't clutter the fetch logic
@@ -488,51 +502,68 @@ function Invoke-SessionHostsCostFetch {
 
         # Result hashtables - populated by the loops below and returned as a
         # single object at the end so EndInvoke only has one item to collect.
-        $computeMap = @{}  # "VmSku|Region"           -> hourly rate (double)
+        $computeMap = @{}  # "VmSku|Region|OsType"    -> hourly rate (double)
         $diskMap    = @{}  # "DiskTier|DiskSku|Region" -> monthly rate (double)
         $txnMap     = @{}  # "DiskTier|DiskSku|Region" -> per-10K rate (double)
 
         # The base URL includes the currency code as a query parameter. The OData
         # $filter is appended (URL-encoded) for each individual request.
         $baseUrl = "https://prices.azure.com/api/retail/prices?currencyCode=$CurrencyCode&`$filter="
-        Write-CostLog "TLS set to 1.2. VmCombos: $($VmCombos.Count) DiskCombos: $($DiskCombos.Count) Currency: $CurrencyCode Hours/mo: $HoursPerMonth AHB: $UseAHB"
+        Write-CostLog "TLS set to 1.2. VmCombos: $($VmCombos.Count) DiskCombos: $($DiskCombos.Count) Currency: $CurrencyCode Hours/mo: $HoursPerMonth"
 
         # ── VM compute prices (per-hour rate) ─────────────────────────────────
-        # One API call per unique SKU+Region pair.
+        # One API call per unique SKU+Region+OsType combination.
         #
-        # Filter logic:
-        #   UseAHB=$false  Filters for products with 'Windows' in the name.
-        #                  These items include the Windows Server licence cost in
-        #                  the hourly rate - standard PAYG billing.
+        # The OsType segment in each combo key selects the correct price tier:
         #
-        #   UseAHB=$true   Excludes products with 'Windows' in the name.
-        #                  Returns the base/Linux compute rate for the same SKU,
-        #                  which is what Azure charges when the customer brings
-        #                  their own Windows licence via Software Assurance (AHB).
+        #   OsType='Linux'   - Selects products WITHOUT 'Windows' in the productName.
+        #                      Returns the base/Linux compute rate for the SKU.
+        #                      Use for: Windows 10/11 multisession AVD hosts (Windows
+        #                      licence is covered by M365, not billed per-VM), and
+        #                      VMs with Azure Hybrid Benefit (own Windows SA licence).
         #
-        # The API can return multiple items (e.g. Spot, Low Priority). We take
-        # only the first item with unitOfMeasure '1 Hour' which is the standard
-        # on-demand (Consumption) rate.
+        #   OsType='Windows' - Selects products WITH 'Windows' in the productName.
+        #                      Returns the full Windows Server PAYG rate (compute +
+        #                      Windows Server licence bundled in the hourly rate).
+        #                      Use for: Windows Server session hosts without AHB.
+        #
+        # 'contains(productName, Virtual Machines)' ensures we only match VM compute
+        # entries and not other Windows-related products (e.g. Windows Server licencing
+        # items) that share the same armSkuName in some regions.
+        #
+        # IMPORTANT: The Windows/Linux split is done CLIENT-SIDE (not in the API filter)
+        # because the OData 'not' operator is not reliably supported by prices.azure.com.
+        # A single API call returns all VM items for the SKU+Region; the productName check
+        # below selects either the Linux (base) or Windows (PAYG) item from the response.
+        #
+        # The API can return multiple items (e.g. Spot, Low Priority). We take only
+        # the standard on-demand (Consumption) item with unitOfMeasure '1 Hour'.
         foreach ($combo in $VmCombos) {
-            $parts = $combo.Split('|'); $vmSku = $parts[0]; $region = $parts[1]
+            # combo format: "VmSku|Region|OsType"
+            $parts = $combo.Split('|'); $vmSku = $parts[0]; $region = $parts[1]; $osType = $parts[2]
+            # Use the Linux/base rate for Windows 10/11 multisession and AHB VMs;
+            # use the Windows PAYG rate (with OS licence) for Windows Server PAYG VMs.
+            $useLinuxRate = ($osType -ne 'Windows')
             try {
-                # 'contains(productName, Virtual Machines)' ensures we only match VM compute
-                # entries and not other Windows-related products (e.g. Windows Server licencing
-                # items) that also match the same armSkuName in some regions.
-                $filter = if ($UseAHB) {
-                    "armSkuName eq '$vmSku' and armRegionName eq '$region' and priceType eq 'Consumption' and serviceFamily eq 'Compute' and contains(productName, 'Virtual Machines') and not contains(productName, 'Windows')"
-                } else {
-                    "armSkuName eq '$vmSku' and armRegionName eq '$region' and priceType eq 'Consumption' and contains(productName, 'Windows') and contains(productName, 'Virtual Machines') and serviceFamily eq 'Compute'"
-                }
+                # One API call per SKU+Region - fetch ALL Virtual Machines compute items for this
+                # combination. Windows/Linux selection is done client-side from the response.
+                $filter = "armSkuName eq '$vmSku' and armRegionName eq '$region' and priceType eq 'Consumption' and serviceFamily eq 'Compute' and contains(productName, 'Virtual Machines')"
                 $url  = "$baseUrl$([Uri]::EscapeDataString($filter))"
-                Write-CostLog "Compute GET (AHB=$UseAHB): $url"
+                Write-CostLog "Compute GET (OsType=$osType useLinux=$useLinuxRate): $url"
                 $resp = Invoke-RestMethod -Uri $url -Method GET -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
                 Write-CostLog "Compute response: $($resp.Count) item(s) - items: $(($resp.Items | ForEach-Object { "$($_.skuName) $($_.unitOfMeasure) $($_.retailPrice)" }) -join ' | ')"
-                # Exclude Spot and Low Priority - item order varies by region so we cannot rely
-                # on Select-Object -First 1 alone; we must filter to the standard on-demand rate.
-                $item = $resp.Items | Where-Object { $_.unitOfMeasure -eq '1 Hour' -and $_.skuName -notlike '*Spot*' -and $_.skuName -notlike '*Low Priority*' } | Select-Object -First 1
-                if ($item) { $computeMap[$combo] = [double]$item.retailPrice; Write-CostLog "Compute price for $combo = $($item.retailPrice)/hr (skuName='$($item.skuName)') -> $([math]::Round($item.retailPrice * $HoursPerMonth,4))/mo" }
-                else        { Write-CostLog "Compute WARN: no standard '1 Hour' item found for $combo" }
+                # Select the correct item client-side:
+                #   - Exclude Spot and Low Priority (item order varies by region)
+                #   - Exclude 'Windows' from productName for Linux rate; require it for Windows rate
+                #   - Take the standard on-demand (Consumption) entry with unitOfMeasure '1 Hour'
+                $candidates = @($resp.Items | Where-Object { $_.unitOfMeasure -eq '1 Hour' -and $_.skuName -notlike '*Spot*' -and $_.skuName -notlike '*Low Priority*' })
+                $item = if ($useLinuxRate) {
+                    $candidates | Where-Object { $_.productName -notlike '*Windows*' } | Select-Object -First 1
+                } else {
+                    $candidates | Where-Object { $_.productName -like '*Windows*' } | Select-Object -First 1
+                }
+                if ($item) { $computeMap[$combo] = [double]$item.retailPrice; Write-CostLog "Compute price for $combo = $($item.retailPrice)/hr (skuName='$($item.skuName)' productName='$($item.productName)') -> $([math]::Round($item.retailPrice * $HoursPerMonth,4))/mo" }
+                else        { Write-CostLog "Compute WARN: no standard '1 Hour' item found for $combo (useLinux=$useLinuxRate candidates=$($candidates.Count))" }
             } catch { Write-CostLog "Compute ERROR for $combo : $_" }
         }
 
@@ -604,7 +635,9 @@ function Invoke-SessionHostsCostFetch {
     # Arguments are positional and must match the param() block order exactly.
     $script:shCostPS = [System.Management.Automation.PowerShell]::Create()
     $script:shCostPS.Runspace = $rs
-    [void]$script:shCostPS.AddScript($fetchScript).AddArgument(@($vmCombos)).AddArgument(@($diskCombos)).AddArgument($script:PricingCurrency).AddArgument($script:PricingCountryCode).AddArgument($script:HoursPerMonth).AddArgument([string]$script:LogFile).AddArgument([bool]$script:UseAHBPricing)
+    # OsType is now embedded in each vmCombo key ("VmSku|Region|OsType") so the
+    # fetchScript no longer needs a global UseAHB flag - it reads the type per combo.
+    [void]$script:shCostPS.AddScript($fetchScript).AddArgument(@($vmCombos)).AddArgument(@($diskCombos)).AddArgument($script:PricingCurrency).AddArgument($script:PricingCountryCode).AddArgument($script:HoursPerMonth).AddArgument([string]$script:LogFile)
 
     # ── Step 4: Launch the runspace asynchronously and start the poll timer ───
     # BeginInvoke starts execution immediately on a background thread and returns
@@ -909,7 +942,8 @@ $script:isCostTimer.Add_Tick({
 
             $script:isCostCache = @{}
             foreach ($r in $script:isCostRowSnap) {
-                $vmKey   = "$($r.VmSku)|$($r.Region)"
+                # vmKey includes OsType to match the key format used when the price was fetched.
+                $vmKey   = "$($r.VmSku)|$($r.Region)|$($r.OsType)"
                 $diskKey = "$($r.DiskTier)|$($r.DiskSku)|$($r.Region)"
                 $cMo = if ($r.State -eq 'Running' -and $computeMap.ContainsKey($vmKey)) { $computeMap[$vmKey] * $script:HoursPerMonth } else { [double]0 }
                 $dMo = if ($diskMap.ContainsKey($diskKey)) { $diskMap[$diskKey] } else { [double]0 }
@@ -1138,25 +1172,34 @@ function Invoke-InfrastructureCostFetch {
 
     $vmCombos   = [System.Collections.Generic.HashSet[string]]::new()
     $diskCombos = [System.Collections.Generic.HashSet[string]]::new()
+    # Infrastructure VMs don't have per-VM OS detection (no imageOffer in infra grid).
+    # Use the global config flag to determine OS type for all infra VMs uniformly.
+    # $script:UseAHBPricing=$true (Linux rate) when PricingWindowsLicence=$false in config.
+    $_infraOsType = if ($script:UseAHBPricing) { 'Linux' } else { 'Windows' }
+
     $script:isCostRowSnap = @(foreach ($dr in $script:infraDataTable.Rows) {
         [PSCustomObject]@{
-            VmName          = [string]$dr['VM Name']
-            State           = [string]$dr['Power State']
-            VmSku           = [string]$dr['VM SKU']
-            Region          = [string]$dr['Region']
-            DiskTier        = [string]$dr['_DiskTier']
-            DiskSku         = [string]$dr['_DiskSkuRaw']
+            VmName           = [string]$dr['VM Name']
+            State            = [string]$dr['Power State']
+            VmSku            = [string]$dr['VM SKU']
+            Region           = [string]$dr['Region']
+            DiskTier         = [string]$dr['_DiskTier']
+            DiskSku          = [string]$dr['_DiskSkuRaw']
             OsDiskResourceId = [string]$dr['_OsDiskResourceId']
+            # Infrastructure tab uses the same global OS type for all VMs.
+            OsType           = $_infraOsType
         }
     })
     foreach ($r in $script:isCostRowSnap) {
-        if ($r.VmSku    -and $r.VmSku    -ne '-') { [void]$vmCombos.Add("$($r.VmSku)|$($r.Region)") }
+        # vmCombos key format mirrors Session Hosts: "VmSku|Region|OsType"
+        if ($r.VmSku    -and $r.VmSku    -ne '-') { [void]$vmCombos.Add("$($r.VmSku)|$($r.Region)|$($r.OsType)") }
         if ($r.DiskTier -and $r.DiskTier -ne '')  { [void]$diskCombos.Add("$($r.DiskTier)|$($r.DiskSku)|$($r.Region)") }
     }
 
-    # Reuse the same fetch scriptblock as Session Hosts - same API, same params
+    # Infrastructure fetch scriptblock — same logic as Session Hosts.
+    # vmCombos key format: "VmSku|Region|OsType" (OsType derived from global config for infra VMs).
     $fetchScript = {
-        param([string[]]$VmCombos, [string[]]$DiskCombos, [string]$CurrencyCode, [string]$CountryCode, [int]$HoursPerMonth, [string]$LogFile, [bool]$UseAHB)
+        param([string[]]$VmCombos, [string[]]$DiskCombos, [string]$CurrencyCode, [string]$CountryCode, [int]$HoursPerMonth, [string]$LogFile)
 
         function Write-CostLog { param($Msg) if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [CostLookup-Infra] $Msg`r`n") } catch {} } }
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -1165,19 +1208,26 @@ function Invoke-InfrastructureCostFetch {
         $baseUrl = "https://prices.azure.com/api/retail/prices?currencyCode=$CurrencyCode&`$filter="
 
         foreach ($combo in $VmCombos) {
-            $parts = $combo.Split('|'); $vmSku = $parts[0]; $region = $parts[1]
+            # combo format: "VmSku|Region|OsType" — OsType drives the pricing tier selection.
+            # 'Linux' = base/Linux rate (no OS licence); 'Windows' = Windows Server PAYG rate.
+            $parts = $combo.Split('|'); $vmSku = $parts[0]; $region = $parts[1]; $osType = $parts[2]
+            $useLinuxRate = ($osType -ne 'Windows')
             try {
-                $filter = if ($UseAHB) {
-                    "armSkuName eq '$vmSku' and armRegionName eq '$region' and priceType eq 'Consumption' and serviceFamily eq 'Compute' and contains(productName, 'Virtual Machines') and not contains(productName, 'Windows')"
-                } else {
-                    "armSkuName eq '$vmSku' and armRegionName eq '$region' and priceType eq 'Consumption' and contains(productName, 'Windows') and contains(productName, 'Virtual Machines') and serviceFamily eq 'Compute'"
-                }
+                # Fetch all VM compute items for this SKU+Region in one call.
+                # Windows/Linux selection is done client-side to avoid relying on the 'not' OData
+                # operator which is not reliably supported by prices.azure.com.
+                $filter = "armSkuName eq '$vmSku' and armRegionName eq '$region' and priceType eq 'Consumption' and serviceFamily eq 'Compute' and contains(productName, 'Virtual Machines')"
                 $url  = "$baseUrl$([Uri]::EscapeDataString($filter))"
-                Write-CostLog "Compute GET: $url"
+                Write-CostLog "Compute GET (OsType=$osType): $url"
                 $resp = Invoke-RestMethod -Uri $url -Method GET -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
-                $item = $resp.Items | Where-Object { $_.unitOfMeasure -eq '1 Hour' -and $_.skuName -notlike '*Spot*' -and $_.skuName -notlike '*Low Priority*' } | Select-Object -First 1
-                if ($item) { $computeMap[$combo] = [double]$item.retailPrice; Write-CostLog "Compute $combo = $($item.retailPrice)/hr" }
-                else        { Write-CostLog "Compute WARN: no '1 Hour' item for $combo" }
+                $candidates = @($resp.Items | Where-Object { $_.unitOfMeasure -eq '1 Hour' -and $_.skuName -notlike '*Spot*' -and $_.skuName -notlike '*Low Priority*' })
+                $item = if ($useLinuxRate) {
+                    $candidates | Where-Object { $_.productName -notlike '*Windows*' } | Select-Object -First 1
+                } else {
+                    $candidates | Where-Object { $_.productName -like '*Windows*' } | Select-Object -First 1
+                }
+                if ($item) { $computeMap[$combo] = [double]$item.retailPrice; Write-CostLog "Compute $combo = $($item.retailPrice)/hr (productName='$($item.productName)')" }
+                else        { Write-CostLog "Compute WARN: no '1 Hour' item for $combo (useLinux=$useLinuxRate candidates=$($candidates.Count))" }
             } catch { Write-CostLog "Compute ERROR $combo : $_" }
         }
 
@@ -1211,7 +1261,8 @@ function Invoke-InfrastructureCostFetch {
 
     $script:isCostPS = [System.Management.Automation.PowerShell]::Create()
     $script:isCostPS.Runspace = $rs
-    [void]$script:isCostPS.AddScript($fetchScript).AddArgument(@($vmCombos)).AddArgument(@($diskCombos)).AddArgument($script:PricingCurrency).AddArgument($script:PricingCountryCode).AddArgument($script:HoursPerMonth).AddArgument([string]$script:LogFile).AddArgument([bool]$script:UseAHBPricing)
+    # OsType is embedded in each vmCombo key so no global UseAHB flag is needed.
+    [void]$script:isCostPS.AddScript($fetchScript).AddArgument(@($vmCombos)).AddArgument(@($diskCombos)).AddArgument($script:PricingCurrency).AddArgument($script:PricingCountryCode).AddArgument($script:HoursPerMonth).AddArgument([string]$script:LogFile)
 
     $script:isCostHandle    = $script:isCostPS.BeginInvoke()
     $script:isCostStartTime = [DateTime]::Now

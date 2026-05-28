@@ -174,7 +174,7 @@ param(
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-05-26"
+$ScriptVersion = "2026-05-27"
 
 # All native type definitions and assembly loads are done here, before any WPF windows
 # are created. Show-ConfigPicker (the startup config picker) runs before the main
@@ -1864,6 +1864,10 @@ if ($savedSettings.AdoRefreshInterval -gt 0) { $script:AdoRefreshIntervalSeconds
 
 . "$PSScriptRoot\scripts\tab-sessionhosts.ps1"
 . "$PSScriptRoot\scripts\cost-lookup.ps1"
+# Apply config override for pricing mode.
+# PricingWindowsLicence=$true  → Windows Server PAYG (licence bundled in rate)
+# PricingWindowsLicence=$false → Linux/base rate (correct for W10/11 multisession and AHB)
+if ($null -ne $_cfg.Costs) { $script:UseAHBPricing = -not [bool]$_cfg.Costs.PricingWindowsLicence }
 . "$PSScriptRoot\scripts\tab-sessioninfo.ps1"
 . "$PSScriptRoot\scripts\tab-azurefiles.ps1"
 . "$PSScriptRoot\scripts\tab-monitoring.ps1"

@@ -521,7 +521,7 @@ $script:ShowFullUPN = $false
 # Variables injected via SessionStateProxy.SetVariable() before each BeginInvoke():
 #   $ArmToken, $SubId, $AvdIncludeRGsCsv, $AvdExcludeRGsCsv, $ExcludedPoolsCsv,
 #   $RgLocationCache, $HpPool, $RestHelperDef, $LogFile, $ScalingExcludeTag,
-#   $ShowFullUPN
+#   $ShowFullUPN, $PricingWindowsFallback
 #
 # Return: [PSCustomObject]@{ Pass='Core'; VmRows=...; Timestamp=...; Phase3Error=... }
 # =============================================================================
@@ -730,6 +730,12 @@ $script:vmCoreScript = {
             'Txn GBP/mo'      = '-'                                                        # Cost Management: actual billed disk operation charge (load costs)
             '_TxnMoCostSort'  = [double]-1                                                 # Numeric sort key for Txn GBP/mo column
             '_OsDiskResourceId' = ''                                                       # Internal: OS disk ARM resource ID for Cost Management query
+            # Internal: populated in Phase 3 from the VM's marketplace image offer.
+            # Values: 'Linux' = fetch base/AHB compute rate (W10/W11 multisession, AHB VMs)
+            #         'Windows' = fetch Windows Server PAYG rate (OS licence bundled in price)
+            # Used by Invoke-SessionHostsCostFetch in cost-lookup.ps1 to select the correct
+            # price tier from the Azure Retail Prices API.  Not shown in the grid.
+            '_PricingOsType'    = ''
         })
     }
 
@@ -852,7 +858,8 @@ Resources
     zone           = iff(array_length(zones) > 0, tostring(zones[0]), '-'),
     vmNicId        = tolower(tostring(properties.networkProfile.networkInterfaces[0].id)),
     scalingExclude = iff(isnotnull(tags['$ScalingExcludeTag']), 'Yes', ''),
-    powerState     = tostring(properties.extended.instanceView.powerState.code)
+    powerState     = tostring(properties.extended.instanceView.powerState.code),
+    imageOffer     = tostring(properties.storageProfile.imageReference.offer)
 | join kind=leftouter (
     Resources
     | where type =~ 'microsoft.network/networkinterfaces'
@@ -907,6 +914,10 @@ Resources
                         diskTier       = $tierName         # e.g. "P10", "E10", "S10" - used by Load Costs pricing lookup
                         diskSkuRaw     = $sku              # e.g. "Premium_LRS" - used by Load Costs to skip txn query for Premium
                         powerState     = [string]$item.powerState  # e.g. "PowerState/running"
+                        # Marketplace image offer - used to detect OS family for pricing.
+                        # Examples: 'windows-11-avd', 'WindowsServer', 'Windows-10'.
+                        # Empty for VMs built from custom/gallery images.
+                        imageOffer     = [string]$item.imageOffer
                     }
                 }
             }
@@ -934,6 +945,32 @@ Resources
                     $row.'Avail Zone'        = if ($nfo['zone'] -and $nfo['zone'] -ne '' -and $nfo['zone'] -ne '-') { $nfo['zone'] } else { 'N/A' }
                     $row.'Scaling Exclude'   = if ($nfo['scalingExclude']) { $nfo['scalingExclude'] } else { 'No' }
                     $row.'IP Address'        = if ($nfo['ip']) { $nfo['ip'] } else { '-' }
+
+                    # Populate _PricingOsType — a hidden internal column (not shown in the grid)
+                    # that tells Invoke-SessionHostsCostFetch in cost-lookup.ps1 which Azure
+                    # Retail Prices API tier to use when the user clicks Load Costs.
+                    #
+                    # WHY THIS IS NEEDED:
+                    #   Azure bills two very different compute rates for the same VM size:
+                    #     - Linux/base rate:       no OS licence charge. Used for Windows 10/11
+                    #                              multisession AVD hosts (licence covered by M365)
+                    #                              and VMs with Azure Hybrid Benefit (SA licence).
+                    #     - Windows Server PAYG:   includes the Windows Server licence cost on top
+                    #                              of compute. Used only for Windows Server session
+                    #                              hosts without AHB.
+                    #   Without per-VM detection, a single global setting would mis-price mixed
+                    #   pools containing both W10/W11 multisession and Windows Server hosts.
+                    #
+                    # HOW IT WORKS — imageReference.offer from Resource Graph:
+                    #   'windows-11-avd' / 'windows-10-avd' / 'Windows-10' → 'Linux' (M365 covers licence)
+                    #   'WindowsServer'  / 'WindowsServerHotpatching'       → 'Windows' (PAYG licence)
+                    #   Empty string (custom or Shared Image Gallery image)  → fall back to the
+                    #     config flag: Costs.PricingWindowsLicence in config.psd1 sets
+                    #     $PricingWindowsFallback ($true = Windows PAYG, $false = Linux rate).
+                    $_offer = $nfo['imageOffer']
+                    $row.'_PricingOsType' = if     ($_offer -match 'Server')          { 'Windows' }
+                                           elseif ($_offer -match 'avd|windows-1\d') { 'Linux'   }
+                                           else   { if ($PricingWindowsFallback)      { 'Windows' } else { 'Linux' } }
                     $raw = $nfo['powerState']
                     $row.'Power State' = if ($raw -and $raw -ne 'PowerState/') {
                         $s = $raw -replace '^PowerState/', ''
@@ -1033,7 +1070,15 @@ $script:vmMetricsScript = {
 
     if ($LawWorkspaceResourceId -and $availVmNamesEarly.Count -gt 0 -and
         ($ShowCPU -or $ShowMem -or $ShowDisk -or $ShowInputDelay)) {
-        if ($LogFile) { try { [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4] Pre-launching alongside Phase 5: $($availVmNamesEarly.Count) Available VM(s)`r`n") } catch {} }
+        if ($LogFile) {
+            try {
+                [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4] Pre-launching alongside Phase 5: $($availVmNamesEarly.Count) Running VM(s): $($availVmNamesEarly -join ', ')`r`n")
+                $excludedVms = @($vmRows | Where-Object { $_.'Power State' -ne 'Running' } | ForEach-Object { "$($_.'VM Name')[$($_.'Power State')]" })
+                if ($excludedVms.Count -gt 0) {
+                    [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4] Excluded from LAW query (not Running): $($excludedVms -join ', ')`r`n")
+                }
+            } catch {}
+        }
 
         # Build the VM name list as a KQL dynamic([...]) literal.
         # Names are single-quoted inside the array so KQL treats them as strings.
@@ -1253,6 +1298,22 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
         try {
             $lawResult = $phase4PS.EndInvoke($phase4Handle)
             $bgLawMap  = if ($lawResult -and $lawResult[0]) { $lawResult[0].LawMap } else { @{} }
+            if ($LogFile) {
+                try {
+                    $bgErr = if ($lawResult -and $lawResult[0]) { [string]$lawResult[0].Error } else { '(no result)' }
+                    [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4] EndInvoke: mapCount=$($bgLawMap.Count) error='$bgErr'`r`n")
+                    foreach ($vmKey in ($bgLawMap.Keys | Sort-Object)) {
+                        $m    = $bgLawMap[$vmKey]
+                        $vals = @()
+                        if ($m -and $m['CPU'])          { $vals += "CPU=$($m['CPU'])%" }          else { $vals += 'CPU=-' }
+                        if ($m -and $m['Mem'])          { $vals += "Mem=$($m['Mem'])%" }          else { $vals += 'Mem=-' }
+                        if ($m -and $m['Disk'])         { $vals += "Disk=$($m['Disk'])%" }        else { $vals += 'Disk=-' }
+                        if ($m -and $m['InputDelay'])   { $vals += "ID=$($m['InputDelay'])ms" }   else { $vals += 'ID=-' }
+                        if ($m -and $m['InputDelayP95']){ $vals += "P95=$($m['InputDelayP95'])ms"} else { $vals += 'P95=-' }
+                        [IO.File]::AppendAllText($LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Phase4]   ${vmKey}: $($vals -join ' ')`r`n")
+                    }
+                } catch {}
+            }
 
             # Surface any error reported by the background job (e.g. HTTP 403, bad workspace ID)
             if ($lawResult -and $lawResult[0].Error) {
@@ -3955,7 +4016,7 @@ function Initialize-SessionHostsTab {
         param($s, $e)
 
         # Hide internal helper columns (including heat map colour hints)
-        if ($e.Column.Header -in @('_RG', '_HpRG', '_SHName', '_CPUSort', '_MemSort', '_DiskSort', '_CPUColor', '_MemColor', '_DiskColor', '_InputDelaySort', '_InputDelayColor', '_InputDelayP95Sort', '_InputDelayP95Color', '_DiskIOPSSort', '_DiskIOPSPctSort', '_DiskIOPSPctColor', '_DiskQueueSort', '_DiskQueueColor', '_DiskProvIOPS', '_VMResourceId', '_UserTooltip', '_HealthTooltip', '_DiskTier', '_DiskSkuRaw', '_ComputeCostSort', '_DiskCostSort', '_TxnCostSort', '_TxnMoCostSort', '_OsDiskResourceId', '_CPUCreditsSort', '_CPUCreditsColor')) { $e.Cancel = $true; return }
+        if ($e.Column.Header -in @('_RG', '_HpRG', '_SHName', '_CPUSort', '_MemSort', '_DiskSort', '_CPUColor', '_MemColor', '_DiskColor', '_InputDelaySort', '_InputDelayColor', '_InputDelayP95Sort', '_InputDelayP95Color', '_DiskIOPSSort', '_DiskIOPSPctSort', '_DiskIOPSPctColor', '_DiskQueueSort', '_DiskQueueColor', '_DiskProvIOPS', '_VMResourceId', '_UserTooltip', '_HealthTooltip', '_DiskTier', '_DiskSkuRaw', '_ComputeCostSort', '_DiskCostSort', '_TxnCostSort', '_TxnMoCostSort', '_OsDiskResourceId', '_CPUCreditsSort', '_CPUCreditsColor', '_PricingOsType')) { $e.Cancel = $true; return }
 
         # Hide disabled metric columns based on $Show* toggles
         $colName = [string]$e.Column.Header
@@ -4704,8 +4765,12 @@ function Invoke-SessionHostsTabRefresh {
     $script:vmRefreshRunspace.SessionStateProxy.SetVariable('HpPool',           $script:vmHpPool)
     $script:vmRefreshRunspace.SessionStateProxy.SetVariable('RestHelperDef',    $script:restHelperDef)
     $script:vmRefreshRunspace.SessionStateProxy.SetVariable('LogFile',          $script:LogFile)
-    $script:vmRefreshRunspace.SessionStateProxy.SetVariable('ScalingExcludeTag', $script:ScalingExcludeTag)
-    $script:vmRefreshRunspace.SessionStateProxy.SetVariable('ShowFullUPN',      $script:ShowFullUPN)
+    $script:vmRefreshRunspace.SessionStateProxy.SetVariable('ScalingExcludeTag',       $script:ScalingExcludeTag)
+    $script:vmRefreshRunspace.SessionStateProxy.SetVariable('ShowFullUPN',             $script:ShowFullUPN)
+    # PricingWindowsFallback is used when a VM's image offer cannot be identified
+    # (e.g. custom/gallery images). $true = Windows PAYG; $false = Linux/base rate.
+    # Derived from Costs.PricingWindowsLicence in config.psd1 (via $script:UseAHBPricing).
+    $script:vmRefreshRunspace.SessionStateProxy.SetVariable('PricingWindowsFallback', (-not $script:UseAHBPricing))
 
     if ($script:LogFile) { try { [IO.File]::AppendAllText($script:LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [Core-Init] Starting Core (Pass 1) refresh job`r`n") } catch {} }
 

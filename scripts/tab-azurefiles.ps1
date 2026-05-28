@@ -452,7 +452,8 @@ function Initialize-AzureFilesTab {
         $toolsBtn.IsEnabled = $false
         $toolsBtn.Content   = "Profile Tools (Running)"
         $_ptThemeArg = [int]$script:DarkTheme
-        $script:toolsProc   = Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$toolsScript`" -UseExistingContext -DashboardTheme $_ptThemeArg" -PassThru
+        $_ptCfgArg = if ($script:_configFile) { " -ConfigFile `"$($script:_configFile)`"" } else { '' }
+        $script:toolsProc   = Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$toolsScript`" -UseExistingContext -DashboardTheme $_ptThemeArg$_ptCfgArg" -PassThru
         $localToolsProc     = $script:toolsProc   # local ref captured by GetNewClosure()
 
         # Re-enable the button once the Profile Tools window is closed.

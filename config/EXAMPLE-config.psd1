@@ -357,6 +357,26 @@
     }
 
     # =========================================================================
+    # Costs - used by scripts\cost-lookup.ps1 (Session Hosts / Infrastructure tabs)
+    # =========================================================================
+
+    Costs = @{
+
+        # Controls whether the Windows Server licence cost is included in compute pricing.
+        #
+        # $false (default) - base/Linux compute rate.
+        #   Use this for Windows 10/11 multisession AVD session hosts — the Windows licence
+        #   is covered by Microsoft 365 (E3/E5/F3) and is NOT charged per-VM. This matches
+        #   what Azure actually bills for multisession hosts.
+        #   Also use this for VMs with Azure Hybrid Benefit (AHB) enabled.
+        #
+        # $true - full Windows Server PAYG rate (compute + Windows Server licence bundled).
+        #   Use this only if your VMs are billed at the Windows Server PAYG rate
+        #   (i.e. Windows Server session hosts without AHB or an included licence).
+        PricingWindowsLicence = $false
+    }
+
+    # =========================================================================
     # Azure DevOps - used by scripts\tab-azuredevops.ps1
     # =========================================================================
 

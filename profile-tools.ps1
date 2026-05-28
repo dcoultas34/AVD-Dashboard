@@ -104,7 +104,7 @@ param(
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-05-26"
+$ScriptVersion = "2026-05-27"
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
@@ -207,6 +207,183 @@ $CLEANUP_CONFIRM_CAP       = 20     # Max folders listed in the confirmation dia
 $CLEANUP_BATCH_WARN        = 50     # Folder count above which a large-batch warning is shown
 $CLEANUP_RUNSPACE_MAX      = 6      # Max concurrent runspaces when deleting folders in parallel
 
+$script:_ptActiveJobs = [System.Collections.Generic.List[System.Management.Automation.Job]]::new()
+
+# =============================================================================
+# Multi-config support
+# Mirrors the same logic in avd-live-dashboard.ps1 so profile-tools respects
+# whichever config the dashboard selected (passed via -ConfigFile when launched
+# from the dashboard) or lets the user pick when launched standalone.
+# =============================================================================
+
+function Get-PtAvailableConfigs {
+    @(
+        Get-ChildItem -Path (Join-Path $PSScriptRoot 'config') -Filter '*.psd1' -ErrorAction SilentlyContinue |
+        Where-Object  { $_.Name -ne 'EXAMPLE-config.psd1' } |
+        Sort-Object   Name |
+        ForEach-Object {
+            $_slug = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+            $_disp = $_slug
+            try {
+                $_d = & ([scriptblock]::Create([System.IO.File]::ReadAllText($_.FullName)))
+                if ($_d.Name) { $_disp = [string]$_d.Name }
+            } catch {}
+            [PSCustomObject]@{ Path = $_.FullName; Slug = $_slug; DisplayName = $_disp }
+        }
+    )
+}
+
+function Show-PtConfigPicker {
+    param([object[]]$Configs, [bool]$AllowCancel = $true)
+    $_tf  = if ($script:_ptDark) { 'dark' } else { 'light' }
+    $_thm = Get-Content -Raw -Path (Join-Path $PSScriptRoot "data\$_tf-theme.xaml") -ErrorAction SilentlyContinue
+    $_raw = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Profile Tools - Select Configuration"
+        SizeToContent="Height" Width="400"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
+        Background="{DynamicResource Avd.Window.Bg}"
+        FontFamily="Segoe UI" ShowInTaskbar="True">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
+    <Border Padding="24,20,24,20">
+        <StackPanel>
+            <TextBlock Text="Select a configuration:" FontSize="13" FontWeight="SemiBold"
+                       Foreground="{DynamicResource Avd.Window.Fg}" Margin="0,0,0,10"/>
+            <ListBox x:Name="ConfigList" Height="130" Margin="0,0,0,12"
+                     BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                     Background="{DynamicResource Avd.Card.Bg}"
+                     Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12"/>
+            <CheckBox x:Name="SetDefaultCheck" Content="Remember this choice"
+                      Foreground="{DynamicResource Avd.Window.Fg}" Margin="0,0,0,4"/>
+            <Button x:Name="ClearDefaultBtn" Content="Clear saved default"
+                    HorizontalAlignment="Left" FontSize="11" Background="Transparent"
+                    BorderThickness="0" Foreground="#2563EB" Cursor="Hand"
+                    Visibility="Collapsed" Padding="0" Margin="0,2,0,0"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                <Button x:Name="CancelBtn" Content="Cancel"
+                        Width="90" Height="32" Margin="0,0,8,0"
+                        Foreground="{DynamicResource Avd.Fg.Label}"
+                        BorderThickness="0" FontSize="13" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Cancel.Bg}" CornerRadius="4" Padding="8,0">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Hover}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Press}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+                <Button x:Name="OkBtn" Content="Load"
+                        Width="90" Height="32"
+                        Foreground="White" BorderThickness="0" FontSize="13" FontWeight="SemiBold" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Save.Bg}" CornerRadius="4" Padding="8,0">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Hover}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Press}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>
+'@
+    $_raw = $_raw -replace '<!-- THEME_SLOT -->', $_thm
+    [xml]$_cx = $_raw
+    $_w = [System.Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $_cx))
+    if ($script:_ptDark) {
+        $_w.Add_SourceInitialized({
+            param($s, $e)
+            try { $_h = (New-Object System.Windows.Interop.WindowInteropHelper($s)).Handle; $_dv = 1; [void][Win32.DwmApiPT]::DwmSetWindowAttribute($_h, 20, [ref]$_dv, 4) } catch {}
+        })
+    }
+    $_list   = $_w.FindName('ConfigList')
+    $_okBtn  = $_w.FindName('OkBtn')
+    $_cnlBtn = $_w.FindName('CancelBtn')
+    $_setDef = $_w.FindName('SetDefaultCheck')
+    $_clrBtn = $_w.FindName('ClearDefaultBtn')
+
+    foreach ($_c in $Configs) { [void]$_list.Items.Add($_c.DisplayName) }
+    if ($_list.Items.Count -gt 0) { $_list.SelectedIndex = 0 }
+
+    # Show "Clear saved default" link only when a default is already saved and cancel is allowed
+    # (i.e. this is an in-app switch, not the mandatory startup prompt)
+    $_rootReg = 'HKCU:\Software\AVDDashboard'
+    $_hasDef  = $false
+    try { $_hasDef = $null -ne (Get-ItemProperty -Path $_rootReg -Name 'DefaultConfig' -ErrorAction Stop).DefaultConfig } catch {}
+    if ($_hasDef -and $AllowCancel) { $_clrBtn.Visibility = 'Visible' }
+
+    # At startup (AllowCancel=$false): hide Cancel, button says "Load"
+    # From Switch Config button (AllowCancel=$true): show Cancel, button says "Switch"
+    if (-not $AllowCancel) { $_cnlBtn.Visibility = 'Collapsed' }
+    if ($AllowCancel)      { $_okBtn.Content = 'Switch' }
+
+    $_okBtn.Add_Click({
+        if ($_list.SelectedIndex -lt 0) { return }
+        $script:_ptCfgPickerResult = @{
+            Config       = $Configs[$_list.SelectedIndex]
+            SetDefault   = [bool]$_setDef.IsChecked
+            ClearDefault = $false
+        }
+        $_w.DialogResult = $true; $_w.Close()
+    })
+    $_cnlBtn.Add_Click({ $_w.DialogResult = $false; $_w.Close() })
+    $_clrBtn.Add_Click({
+        $script:_ptCfgPickerResult = @{ Config = $null; SetDefault = $false; ClearDefault = $true }
+        $_w.DialogResult = $true; $_w.Close()
+    })
+
+    $null = $_w.ShowDialog()
+    if (-not $_w.DialogResult) { return $null }
+    return $script:_ptCfgPickerResult
+}
+
+function Resolve-PtStartupConfig {
+    $_rootReg = 'HKCU:\Software\AVDDashboard'
+    $configs  = Get-PtAvailableConfigs
+    if ($configs.Count -le 1) {
+        if ($configs.Count -eq 1) { return $configs[0].Path }
+        return Join-Path $PSScriptRoot 'config\config.psd1'
+    }
+    # Multiple configs: check for a saved default
+    $_savedSlug = try { (Get-ItemProperty -Path $_rootReg -Name 'DefaultConfig' -ErrorAction Stop).DefaultConfig } catch { $null }
+    if ($_savedSlug) {
+        $_m = $configs | Where-Object { $_.Slug -eq $_savedSlug } | Select-Object -First 1
+        if ($_m) {
+            $script:_ptRegPath = "$_rootReg\$($_m.Slug)"
+            return $_m.Path
+        }
+    }
+    # No usable default: show picker. Cancel exits because we cannot continue without a config.
+    $_p = Show-PtConfigPicker -Configs $configs -AllowCancel $false
+    if (-not $_p -or -not $_p.Config) { exit }
+    if ($_p.SetDefault) {
+        if (-not (Test-Path $_rootReg)) { try { New-Item -Path $_rootReg -Force | Out-Null } catch {} }
+        try { Set-ItemProperty -Path $_rootReg -Name 'DefaultConfig' -Value $_p.Config.Slug } catch {}
+    }
+    $script:_ptRegPath = "$_rootReg\$($_p.Config.Slug)"
+    return $_p.Config.Path
+}
+
 # =============================================================================
 # Customer / Environment Configuration
 # All environment-specific settings are loaded from config.psd1 which
@@ -214,7 +391,18 @@ $CLEANUP_RUNSPACE_MAX      = 6      # Max concurrent runspaces when deleting fol
 # - not this one - when deploying to a new customer or environment.
 # =============================================================================
 
-$_configFile    = if ($ConfigFile) { $ConfigFile } else { Join-Path $PSScriptRoot 'config\config.psd1' }
+if ($ConfigFile) {
+    # Launched from the dashboard with an explicit config path.
+    # Derive the slug from the filename so the per-config registry subkey matches
+    # what the dashboard is using, then skip the picker entirely.
+    $_configFile = $ConfigFile
+    $_cfgSlug    = [System.IO.Path]::GetFileNameWithoutExtension($ConfigFile)
+    $_rootReg    = 'HKCU:\Software\AVDDashboard'
+    $script:_ptRegPath = if ((Get-PtAvailableConfigs).Count -gt 1) { "$_rootReg\$_cfgSlug" } else { $_rootReg }
+} else {
+    $_configFile = Resolve-PtStartupConfig
+}
+$script:_ptConfigFile = $_configFile   # stored for Switch Config button access
 $script:profileSizeScript        = Join-Path $PSScriptRoot 'scripts\profile-sizes.ps1'
 $script:profileCleanupScript     = Join-Path $PSScriptRoot 'scripts\profile-cleanup.ps1'
 $script:profileDeleteScript      = Join-Path $PSScriptRoot 'scripts\profile-delete-check.ps1'
@@ -542,6 +730,11 @@ $_ptXamlRaw = @'
                            Foreground="White" FontSize="12"
                            VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="SwitchConfigBtn"
+                            Content="Switch Config"
+                            Style="{StaticResource RefreshBtn}"
+                            Visibility="Collapsed"
+                            Margin="0,0,8,0"/>
                     <Button x:Name="SettingsBtn"
                             Content="Settings"
                             Style="{StaticResource RefreshBtn}"
@@ -1444,6 +1637,7 @@ $DeleteCleanupBtn           = $window.FindName("DeleteCleanupBtn")
 $DeleteAllCleanupBtn        = $window.FindName("DeleteAllCleanupBtn")
 $SettingsBtn                = $window.FindName("SettingsBtn")
 $AboutBtn                   = $window.FindName("AboutBtn")
+$SwitchConfigBtn            = $window.FindName("SwitchConfigBtn")
 
 # =============================================================================
 # Theme support
@@ -1912,6 +2106,7 @@ $ScanSizesBtn.Add_Click({
 
     $sw          = [System.Diagnostics.Stopwatch]::StartNew()
     $capturedJob = Start-Job -FilePath $scanScriptPath -ArgumentList $scanPaths, $accountMap
+    [void]$script:_ptActiveJobs.Add($capturedJob)
 
     # Capture all UI references as locals so GetNewClosure() can bind them correctly.
     # $script: scope does not resolve reliably inside a DispatcherTimer closure.
@@ -1934,6 +2129,7 @@ $ScanSizesBtn.Add_Click({
 
             $results = Receive-Job -Job $capturedJob -ErrorAction SilentlyContinue
             Remove-Job -Job $capturedJob -Force
+            [void]$script:_ptActiveJobs.Remove($capturedJob)
 
             if (-not $results -or @($results).Count -eq 0) {
                 $localSummaryText.Text   = "No folders found. Verify the storage account paths are accessible."
@@ -2180,6 +2376,7 @@ $ScanCleanupBtn.Add_Click({
         $am   = @{ $path = $saName }
         $job  = Start-Job -FilePath $cleanupScriptPath -ArgumentList @(,$path), $am, $threshold
         $scanJobs.Add([PSCustomObject]@{ Job = $job; Done = $false; Name = $saName })
+        [void]$script:_ptActiveJobs.Add($job)
     }
 
     $totalJobs         = $scanJobs.Count
@@ -2205,6 +2402,7 @@ $ScanCleanupBtn.Add_Click({
                 $doneCount++
                 $results = Receive-Job -Job $entry.Job -ErrorAction SilentlyContinue
                 Remove-Job -Job $entry.Job -Force
+                [void]$script:_ptActiveJobs.Remove($entry.Job)
                 if ($results) {
                     foreach ($r in $results) { $localAllResults.Add($r) }
                     & $localUpdateGrid
@@ -2281,6 +2479,7 @@ function Invoke-CleanupDelete {
         $batchData = @($group.Group | ForEach-Object { [PSCustomObject]@{ Folder = $_.Folder; FullPath = $_.FullPath } })
         $job = Start-Job -ScriptBlock $script:cleanupDeleteScript -ArgumentList (, $batchData), $CLEANUP_RUNSPACE_MAX
         $deleteJobs.Add([PSCustomObject]@{ Job = $job; Done = $false; AccountName = $group.Name })
+        [void]$script:_ptActiveJobs.Add($job)
     }
 
     $totalJobs         = $deleteJobs.Count
@@ -2308,6 +2507,7 @@ function Invoke-CleanupDelete {
                 $doneCount++
                 $delResults = @(Receive-Job -Job $entry.Job -ErrorAction SilentlyContinue)
                 Remove-Job -Job $entry.Job -Force
+                [void]$script:_ptActiveJobs.Remove($entry.Job)
 
                 foreach ($r in $delResults) {
                     if ($r.Success) {
@@ -2522,6 +2722,41 @@ function Show-CleanupSettings {
 
     $sWin.ShowDialog() | Out-Null
 }
+
+# Show Switch Config button only when multiple configs exist and not launched from the dashboard
+# (when launched from the dashboard the config is controlled by the dashboard itself)
+$_ptAllConfigs = Get-PtAvailableConfigs
+if ($_ptAllConfigs.Count -gt 1 -and -not $_ptLaunchedFromDashboard) { $SwitchConfigBtn.Visibility = 'Visible' }
+
+$SwitchConfigBtn.Add_Click({
+    $_ptAllConfigs = Get-PtAvailableConfigs
+    if ($_ptAllConfigs.Count -lt 2) { return }
+    $_p = Show-PtConfigPicker -Configs $_ptAllConfigs -AllowCancel $true
+    if (-not $_p) { return }   # cancelled
+
+    $_rootReg = 'HKCU:\Software\AVDDashboard'
+
+    if ($_p.ClearDefault) {
+        # User clicked "Clear saved default" - remove the registry value so the picker
+        # appears next time both the dashboard and profile-tools are launched
+        try { Remove-ItemProperty -Path $_rootReg -Name 'DefaultConfig' -ErrorAction Stop } catch {}
+        return   # stay on the current config, no restart needed
+    }
+
+    if (-not $_p.Config) { return }
+
+    # Save or update the default if the user ticked "Remember this choice"
+    if ($_p.SetDefault) {
+        if (-not (Test-Path $_rootReg)) { try { New-Item -Path $_rootReg -Force | Out-Null } catch {} }
+        try { Set-ItemProperty -Path $_rootReg -Name 'DefaultConfig' -Value $_p.Config.Slug } catch {}
+    }
+
+    # Restart with the new config, reusing the current Az context and theme
+    $_theme  = [int]$script:_ptDark
+    $_script = Join-Path $PSScriptRoot 'profile-tools.ps1'
+    Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$_script`" -UseExistingContext -DashboardTheme $_theme -ConfigFile `"$($_p.Config.Path)`""
+    $window.Close()
+})
 
 $SettingsBtn.Add_Click({ Show-CleanupSettings })
 
@@ -3224,7 +3459,11 @@ $UnlockFolderInput.Add_KeyDown({
 # =============================================================================
 
 $window.Add_Closed({
-    # No temp files to clean up - REST API calls use in-memory tokens/keys
+    foreach ($j in @($script:_ptActiveJobs)) {
+        try { Stop-Job  -Job $j -ErrorAction SilentlyContinue } catch {}
+        try { Remove-Job -Job $j -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    $script:_ptActiveJobs.Clear()
 })
 
 # =============================================================================
