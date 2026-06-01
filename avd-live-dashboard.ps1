@@ -140,7 +140,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-05-26
+    Version       : 2026-05-30b
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -174,7 +174,7 @@ param(
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-05-27"
+$ScriptVersion = "2026-05-30b"
 
 # All native type definitions and assembly loads are done here, before any WPF windows
 # are created. Show-ConfigPicker (the startup config picker) runs before the main
@@ -830,7 +830,7 @@ $script:armToken = Get-ArmToken
 # Splash / Loading Window - shown immediately so the user knows something is happening
 # =============================================================================
 
-# Quick early read of dark theme — global setting, always at the root registry key
+# Quick early read of dark theme - global setting, always at the root registry key
 $_earlyDark = try {
     $k = Get-ItemProperty -Path $script:GlobalRegPath -Name 'DarkTheme' -ErrorAction Stop
     [bool][int]$k.DarkTheme
@@ -1292,8 +1292,9 @@ $dataScript = {
                 "Total VMs"      = 0
                 "RG VMs"         = ''
                 "_RGVMDiff"      = '0'
-                "VMs Available"         = 0
-                "VMs Not Available"        = 0
+                "VMs Available"  = 0
+                "VMs Not Available" = 0
+                "VMs Drained"    = 0                                                                # No VMs -> 0 drained; field must match the non-empty pool row schema
                 "Active Users"   = $activeSess
                 "Disconnected"   = $disconnSess
                 "Total Sessions" = $activeSess + $disconnSess
@@ -1444,7 +1445,7 @@ $dataScript = {
                 $ver = $ref.exactVersion
                 # Fallback: some older gallery VMs may not have exactVersion on the VM object
                 # but retain it on the OS disk's creationData. Marketplace images hit this path
-                # too but return nothing (galleryImageReference is absent) — they show N/A.
+                # too but return nothing (galleryImageReference is absent) - they show N/A.
                 # Note: disks use a different API version to VMs; 2024-07-01 is not valid for disks.
                 if (-not $ver -and $vm.properties.storageProfile.osDisk.managedDisk.id) {
                     $diskRg   = $vm.properties.storageProfile.osDisk.managedDisk.id.Split('/')[4]
@@ -1634,16 +1635,23 @@ function ConvertTo-DataTable {
     $dt = New-Object System.Data.DataTable
     if (-not $Objects -or $Objects.Count -eq 0) { return ,$dt }
 
-    foreach ($p in $Objects[0].PSObject.Properties) {
-        $val = $p.Value
-        $colType = if     ($val -is [double]) { [double] }
-                   elseif ($val -is [int])    { [int] }
-                   else                       { [string] }
-        $dt.Columns.Add($p.Name, $colType) | Out-Null
+    # Build the schema from the UNION of all objects' properties so that a row with
+    # fewer fields (e.g. an empty host pool) appearing first does not cause later rows
+    # with additional columns to throw "Column X does not belong to table".
+    foreach ($obj in $Objects) {
+        foreach ($p in $obj.PSObject.Properties) {
+            if ($dt.Columns.Contains($p.Name)) { continue }
+            $val = $p.Value
+            $colType = if     ($val -is [double]) { [double] }
+                       elseif ($val -is [int])    { [int] }
+                       else                       { [string] }
+            $dt.Columns.Add($p.Name, $colType) | Out-Null
+        }
     }
     foreach ($obj in $Objects) {
         $row = $dt.NewRow()
         foreach ($prop in $obj.PSObject.Properties.Name) {
+            if (-not $dt.Columns.Contains($prop)) { continue }  # skip if column somehow still missing
             $v = $obj.$prop
             $row[$prop] = if ($null -eq $v) { [DBNull]::Value } else { $v }
         }
@@ -1928,7 +1936,7 @@ $rawXaml = @'
             <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
         </Style>
 
-        <!-- Row header style — zero-width, background matches grid so no white strip on scroll -->
+        <!-- Row header style - zero-width, background matches grid so no white strip on scroll -->
         <Style TargetType="DataGridRowHeader">
             <Setter Property="Background"   Value="{DynamicResource Avd.Grid.Bg}"/>
             <Setter Property="BorderBrush"  Value="{DynamicResource Avd.Grid.Bg}"/>
@@ -2321,6 +2329,174 @@ try {
     throw
 }
 
+# Registry of secondary windows that need theme updates when the user toggles dark mode.
+# Each popup that carries its own theme ResourceDictionary registers itself here on open
+# and removes itself on close. Switch-DashboardTheme iterates this list.
+$script:_themedWindows = [System.Collections.Generic.List[System.Windows.Window]]::new()
+
+function Register-ThemedWindow   { param([System.Windows.Window]$Win) [void]$script:_themedWindows.Add($Win) }
+function Unregister-ThemedWindow { param([System.Windows.Window]$Win) [void]$script:_themedWindows.Remove($Win) }
+
+# =============================================================================
+# Show-ThemedDialog  -  themed replacement for [System.Windows.MessageBox]::Show()
+#
+# Renders a modal WPF dialog that matches the dashboard's dark/light theme.
+# Called from any in-app context where a MessageBox would otherwise be used.
+# Startup errors that fire before the WPF window exists should still use
+# [System.Windows.MessageBox]::Show() directly.
+#
+# Parameters
+#   Message  - Body text (supports `n newlines and long strings; wraps automatically)
+#   Title    - Window title bar text
+#   Buttons  - 'OK' | 'OKCancel' | 'YesNo'
+#   Icon     - 'Information' | 'Warning' | 'Error' | 'Question'
+#   Owner    - Optional explicit owner window; defaults to the active detail window
+#              ($script:sdOpenWindow) or the main dashboard window
+#
+# Returns
+#   $true  - user clicked OK or Yes
+#   $false - user clicked Cancel, No, or closed the window with X
+# =============================================================================
+function Show-ThemedDialog {
+    param(
+        [string]$Message,
+        [string]$Title   = 'AVD Dashboard',
+        [ValidateSet('OK','OKCancel','YesNo')]
+        [string]$Buttons = 'OK',
+        [ValidateSet('Information','Warning','Error','Question')]
+        [string]$Icon    = 'Information',
+        [System.Windows.Window]$Owner = $null
+    )
+
+    # ── Resolve owner window ─────────────────────────────────────────────────
+    # Use the session-detail window when it is open (it is in the foreground),
+    # otherwise fall back to the main dashboard window.
+    $_owner = if ($Owner) { $Owner }
+              elseif ($script:sdOpenWindow -and $script:sdOpenWindow.IsLoaded) { $script:sdOpenWindow }
+              else { $script:MainWindow }
+
+    # ── Build WPF window ─────────────────────────────────────────────────────
+    $win = New-Object System.Windows.Window
+    $win.Title                 = $Title
+    $win.Width                 = 400
+    $win.MaxWidth              = 600
+    $win.SizeToContent         = 'Height'
+    $win.ResizeMode            = 'NoResize'
+    $win.WindowStartupLocation = 'CenterOwner'
+    $win.Owner                 = $_owner
+    $win.SetResourceReference([System.Windows.Window]::BackgroundProperty, 'Avd.Window.Bg')
+    $win.SetResourceReference([System.Windows.Window]::ForegroundProperty,  'Avd.Window.Fg')
+
+    # ── Inject current theme as a MergedDictionary ──────────────────────────
+    # Reads the theme file fresh so the dialog is correct even if the user
+    # toggled dark/light mode after the dashboard started.
+    $_themeFile    = if ($script:DarkTheme) { 'dark' } else { 'light' }
+    $_themeContent = Get-Content -Raw -Path "$PSScriptRoot\data\$_themeFile-theme.xaml" -ErrorAction SilentlyContinue
+    $_themeRd      = [Windows.Markup.XamlReader]::Parse("<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_themeContent</ResourceDictionary>")
+    $win.Resources.MergedDictionaries.Add($_themeRd)
+
+    # Window icon and dark title bar chrome
+    try { Set-WindowIcon -Window $win -IconPath (Join-Path $PSScriptRoot 'data\avd-dashboard.ico') } catch {}
+    if ($script:DarkTheme) {
+        $win.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($win)).Handle
+            $v = 1; [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
+
+    # Register so Switch-DashboardTheme can push resource updates while open
+    Register-ThemedWindow $win
+    $win.Add_Closed({ Unregister-ThemedWindow $win }.GetNewClosure())
+
+    # ── Icon glyph + colour ──────────────────────────────────────────────────
+    $iconText           = New-Object System.Windows.Controls.TextBlock
+    $iconText.FontSize  = 32
+    $iconText.Margin    = '0,2,14,0'
+    $iconText.VerticalAlignment = 'Top'
+    switch ($Icon) {
+        'Information' { $iconText.Text = [char]0x2139; $iconText.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.ColorConverter]::ConvertFromString('#0078D4') }
+        'Warning'     { $iconText.Text = [char]0x26A0;  $iconText.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.ColorConverter]::ConvertFromString('#F0A500') }
+        'Error'       { $iconText.Text = [char]0x2715;  $iconText.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Btn.Danger.Bg') }
+        'Question'    { $iconText.Text = '?';           $iconText.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.ColorConverter]::ConvertFromString('#0078D4') }
+    }
+
+    # ── Message text ─────────────────────────────────────────────────────────
+    $msgText                = New-Object System.Windows.Controls.TextBlock
+    $msgText.Text           = $Message
+    $msgText.TextWrapping   = 'Wrap'
+    $msgText.MaxWidth       = 360
+    $msgText.VerticalAlignment = 'Top'
+    $msgText.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Window.Fg')
+
+    # ── Content row (icon + message, horizontal) ──────────────────────────────
+    $contentRow             = New-Object System.Windows.Controls.StackPanel
+    $contentRow.Orientation = 'Horizontal'
+    $contentRow.Margin      = '20,20,20,16'
+    [void]$contentRow.Children.Add($iconText)
+    [void]$contentRow.Children.Add($msgText)
+
+    # ── Button helper (same pattern as Show-RunCommandPicker) ─────────────────
+    $applyBtnStyle = {
+        param([System.Windows.Controls.Button]$Btn, [string]$BgKey, [string]$HoverKey, [string]$PressKey)
+        $Btn.Template = [Windows.Markup.XamlReader]::Parse("
+            <ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
+                             xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='Button'>
+                <Border x:Name='Bd' Background='{DynamicResource $BgKey}' CornerRadius='4' Padding='{TemplateBinding Padding}'>
+                    <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property='IsMouseOver' Value='True'><Setter TargetName='Bd' Property='Background' Value='{DynamicResource $HoverKey}'/></Trigger>
+                    <Trigger Property='IsPressed'   Value='True'><Setter TargetName='Bd' Property='Background' Value='{DynamicResource $PressKey}'/></Trigger>
+                    <Trigger Property='IsEnabled'   Value='False'><Setter TargetName='Bd' Property='Opacity'   Value='0.45'/></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate>")
+        $Btn.BorderThickness = 0; $Btn.FontSize = 12; $Btn.FontWeight = 'SemiBold'
+        $Btn.Cursor = [System.Windows.Input.Cursors]::Hand
+    }
+
+    # ── Button bar ────────────────────────────────────────────────────────────
+    $btnRow                     = New-Object System.Windows.Controls.StackPanel
+    $btnRow.Orientation         = 'Horizontal'
+    $btnRow.HorizontalAlignment = 'Right'
+    $btnRow.Margin              = '12,4,16,16'
+
+    $script:_tdlgResult = $false   # default: Cancel/No/X
+
+    # Primary (OK / Yes) button - always rightmost
+    $btnPrimary           = New-Object System.Windows.Controls.Button
+    $btnPrimary.Content   = if ($Buttons -eq 'YesNo') { 'Yes' } else { 'OK' }
+    $btnPrimary.Width     = 90; $btnPrimary.Height = 30; $btnPrimary.Padding = '10,0'
+    $btnPrimary.IsDefault = $true
+    & $applyBtnStyle $btnPrimary 'Avd.Btn.Save.Bg' 'Avd.Btn.Save.Hover' 'Avd.Btn.Save.Press'
+    $btnPrimary.Foreground = [System.Windows.Media.Brushes]::White
+    $btnPrimary.Add_Click({ $script:_tdlgResult = $true; $win.Close() }.GetNewClosure())
+
+    # Secondary (Cancel / No) button - shown for OKCancel and YesNo only
+    if ($Buttons -ne 'OK') {
+        $btnSecondary          = New-Object System.Windows.Controls.Button
+        $btnSecondary.Content  = if ($Buttons -eq 'YesNo') { 'No' } else { 'Cancel' }
+        $btnSecondary.Width    = 90; $btnSecondary.Height = 30; $btnSecondary.Padding = '10,0'
+        $btnSecondary.Margin   = '0,0,8,0'
+        $btnSecondary.IsCancel = $true
+        & $applyBtnStyle $btnSecondary 'Avd.Btn.Cancel.Bg' 'Avd.Btn.Cancel.Hover' 'Avd.Btn.Cancel.Press'
+        $btnSecondary.SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, 'Avd.Fg.Label')
+        $btnSecondary.Add_Click({ $script:_tdlgResult = $false; $win.Close() }.GetNewClosure())
+        [void]$btnRow.Children.Add($btnSecondary)
+    }
+    [void]$btnRow.Children.Add($btnPrimary)
+
+    # ── Outer DockPanel ───────────────────────────────────────────────────────
+    $outer = New-Object System.Windows.Controls.DockPanel
+    $outer.LastChildFill = $true
+    [System.Windows.Controls.DockPanel]::SetDock($btnRow, 'Bottom')
+    [void]$outer.Children.Add($btnRow)
+    [void]$outer.Children.Add($contentRow)
+
+    $win.Content = $outer
+    $win.ShowDialog() | Out-Null
+    return $script:_tdlgResult
+}
+
 function Switch-DashboardTheme {
     param([bool]$Dark)
     $script:DarkTheme  = $Dark
@@ -2332,6 +2508,20 @@ function Switch-DashboardTheme {
     $_rd = [System.Windows.Markup.XamlReader]::Parse("<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_tc</ResourceDictionary>")
     foreach ($_key in @($_rd.Keys)) {
         $window.Resources[$_key] = $_rd[$_key]
+    }
+
+    # Push the same resource updates to every registered secondary window (Run Command,
+    # Session Detail, etc.). Setting keys directly on the window's own Resources dictionary
+    # overrides the stale injected MergedDictionary and fires DynamicResource notifications.
+    foreach ($_sw in @($script:_themedWindows)) {
+        if (-not $_sw -or -not $_sw.IsLoaded) { continue }
+        foreach ($_key in @($_rd.Keys)) { $_sw.Resources[$_key] = $_rd[$_key] }
+        # Update title bar chrome to match
+        try {
+            $_hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($_sw)).Handle
+            $_v = [int]$Dark
+            [void][DwmApiHelper]::DwmSetWindowAttribute($_hwnd, 20, [ref]$_v, 4)
+        } catch {}
     }
 
     # Rebuild pool row style: BasedOn theme (hover/select) + _IsSecondary tint trigger
@@ -2377,7 +2567,7 @@ function Switch-DashboardTheme {
         [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
     } catch {}
 
-    # Redraw monitoring canvas charts — they use hardcoded colours evaluated at draw time,
+    # Redraw monitoring canvas charts - they use hardcoded colours evaluated at draw time,
     # not DynamicResource, so must be explicitly redrawn when the theme changes.
     if ($script:_monSessionHistoryData) {
         Update-SessionHistoryChart -Canvas $script:monSessionHistoryCanvas `
@@ -2561,7 +2751,7 @@ function Invoke-PoolScalingPlanToggle {
         -Token $script:armToken -ApiVersion $script:ApiVersions.DesktopVirtualization -FullResponse
 
     if (-not $current -or -not $current.properties.hostPoolReferences) {
-        [System.Windows.MessageBox]::Show("Could not retrieve scaling plan '$spName'.", 'Error', 'OK', 'Error')
+        Show-ThemedDialog -Message "Could not retrieve scaling plan '$spName'." -Title 'Scaling Plan' -Icon 'Error'
         return
     }
 
@@ -2586,9 +2776,9 @@ function Invoke-PoolScalingPlanToggle {
             $selItem['Scaling Plan'] = if ($Enable) { 'Yes' } else { 'No' }
             $script:PoolGrid.Items.Refresh()
         }
-        [System.Windows.MessageBox]::Show("Scaling plan '$spName' $noun for host pool '$HostPoolName'.", "$verb Scaling Plan", 'OK', 'Information')
+        Show-ThemedDialog -Message "Scaling plan '$spName' $noun for host pool '$HostPoolName'." -Title "$verb Scaling Plan" -Icon 'Information'
     } else {
-        [System.Windows.MessageBox]::Show("Failed to update scaling plan '$spName'. Check token/permissions.", 'Error', 'OK', 'Error')
+        Show-ThemedDialog -Message "Failed to update scaling plan '$spName'. Check token/permissions." -Title 'Scaling Plan' -Icon 'Error'
     }
 }
 
@@ -2620,7 +2810,7 @@ function Show-PrivateEndpoints {
     $details = $script:hpPrivateEndpointDetails[$HostPool]
     if (-not $details -or $details.Count -eq 0) {
         # Either no PEs are configured, or data has not loaded yet
-        [System.Windows.MessageBox]::Show("No private endpoints found for $HostPool.", "Private Endpoints", "OK", "Information")
+        Show-ThemedDialog -Message "No private endpoints found for $HostPool." -Title 'Private Endpoints' -Icon 'Information'
         return
     }
 
@@ -2668,7 +2858,7 @@ function Show-ScalingPlanHistory {
 
     $lawId = $script:LawWorkspaceResourceId
     if (-not $lawId) {
-        [System.Windows.MessageBox]::Show("Log Analytics workspace is not configured.", "Scaling Plan History", "OK", "Warning")
+        Show-ThemedDialog -Message 'Log Analytics workspace is not configured.' -Title 'Scaling Plan History' -Icon 'Warning'
         return
     }
 
@@ -2821,7 +3011,7 @@ function Show-StartVmHistory {
     $avdAppId = '9cdead84-a844-4324-93f2-b2e6bb768d07'  # Azure Virtual Desktop service principal (fixed across all tenants)
 
     if (-not $VmRg) {
-        [System.Windows.MessageBox]::Show("No session host VM resource group available for this host pool.", "Start VM History", "OK", "Warning")
+        Show-ThemedDialog -Message 'No session host VM resource group available for this host pool.' -Title 'Start VM History' -Icon 'Warning'
         return
     }
 
@@ -3242,20 +3432,10 @@ $script:masterTimer.Add_Tick({
             if ($errStr -match 'AuthorizationFailed|does not have.*permission|does not have.*access|403|Forbidden|unauthorized' -or
                 $errStr -match 'The client.*does not have authorization') {
                 $script:StatusText.Text = "Access denied - click Switch Subscription to choose one you have permissions on"
-                [System.Windows.MessageBox]::Show(
-                    $window,
-                    "The signed-in account does not have permission to read this subscription.`n`nAccount: $($script:azAccountId)`nSubscription: $($azContext.Subscription.Name)`n`nPlease ensure the account has at least Reader role on the subscription, or use Switch Subscription to select a different one.",
-                    "Subscription Access Denied",
-                    [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                Show-ThemedDialog -Message "The signed-in account does not have permission to read this subscription.`n`nAccount: $($script:azAccountId)`nSubscription: $($azContext.Subscription.Name)`n`nPlease ensure the account has at least Reader role on the subscription, or use Switch Subscription to select a different one." -Title 'Subscription Access Denied' -Icon 'Warning'
             } elseif ($errStr -match 'InvalidSubscriptionId|provided subscription.*identifier|subscription.*is not.*valid|SubscriptionNotFound') {
                 $script:StatusText.Text = "Invalid subscription - use Switch Subscription to select a valid one"
-                [System.Windows.MessageBox]::Show(
-                    $window,
-                    "The selected subscription could not be found or is not accessible.`n`nThis usually means:`n  - The subscription no longer exists`n  - Your account does not have access to it`n  - The subscription ID stored in settings is incorrect`n`nUse the Switch Subscription button to select a valid subscription.",
-                    "Invalid Subscription",
-                    [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                Show-ThemedDialog -Message "The selected subscription could not be found or is not accessible.`n`nThis usually means:`n  - The subscription no longer exists`n  - Your account does not have access to it`n  - The subscription ID stored in settings is incorrect`n`nUse the Switch Subscription button to select a valid subscription." -Title 'Invalid Subscription' -Icon 'Warning'
             } else {
                 $script:StatusText.Text = "Refresh error: $_"
             }
@@ -4407,7 +4587,7 @@ function Show-SwitchSubscription {
     $script:StatusText.Text = ""
 
     if (-not $subs -or $subs.Count -eq 0) {
-        [System.Windows.MessageBox]::Show("No subscriptions found.", "Switch Subscription", "OK", "Information") | Out-Null
+        Show-ThemedDialog -Message 'No subscriptions found.' -Title 'Switch Subscription' -Icon 'Information'
         return
     }
 

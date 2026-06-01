@@ -117,11 +117,7 @@ function Show-RunCommandPicker {
 
     # Guard: one Run Command at a time
     if ($script:shRunCmdHandle -and -not $script:shRunCmdHandle.IsCompleted) {
-        [System.Windows.MessageBox]::Show(
-            "A Run Command is already in progress on $($script:shRunCmdVmName). Please wait for it to complete.",
-            'Run Command In Progress',
-            [System.Windows.MessageBoxButton]::OK,
-            [System.Windows.MessageBoxImage]::Information) | Out-Null
+        Show-ThemedDialog -Message "A Run Command is already in progress on $($script:shRunCmdVmName). Please wait for it to complete." -Title 'Run Command In Progress' -Icon 'Information'
         return
     }
 
@@ -137,9 +133,13 @@ function Show-RunCommandPicker {
     $win.WindowStartupLocation  = 'CenterOwner'
     $win.Owner                  = [System.Windows.Application]::Current.MainWindow
 
-    # Inject theme resources
-    $_themeRdXaml = "<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_themeContent</ResourceDictionary>"
-    $_themeRd = [Windows.Markup.XamlReader]::Parse($_themeRdXaml)
+    # Inject theme resources — load fresh from disk based on the CURRENT theme so
+    # the dialog is correct even if the user toggled dark/light mode after startup.
+    # ($script:DarkTheme tracks the active theme; $PSScriptRoot here = scripts\)
+    $_rcThemeFile    = if ($script:DarkTheme) { 'dark' } else { 'light' }
+    $_rcThemeContent = Get-Content -Raw -Path (Join-Path $PSScriptRoot "..\data\$_rcThemeFile-theme.xaml") -ErrorAction SilentlyContinue
+    $_themeRdXaml    = "<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_rcThemeContent</ResourceDictionary>"
+    $_themeRd        = [Windows.Markup.XamlReader]::Parse($_themeRdXaml)
     $win.Resources.MergedDictionaries.Add($_themeRd)
     $win.SetResourceReference([System.Windows.Window]::BackgroundProperty, 'Avd.Window.Bg')
     $win.SetResourceReference([System.Windows.Window]::ForegroundProperty, 'Avd.Window.Fg')
@@ -159,37 +159,80 @@ function Show-RunCommandPicker {
     $rcFile   = $script:SHRunCommandsFile
     $outer = New-Object System.Windows.Controls.DockPanel
 
+    # ── Button helper: applies a rounded themed template matching dashboard buttons ──
+    # Parses a minimal ControlTemplate via XamlReader so DynamicResource lookups
+    # resolve against the window's merged theme dictionary at display time.
+    # ── Button helper: applies a rounded themed template matching dashboard buttons ──
+    # Parses a minimal ControlTemplate via XamlReader so DynamicResource lookups
+    # resolve against the window's merged theme dictionary at display time.
+    $applyBtnStyle = {
+        param([System.Windows.Controls.Button]$Btn, [string]$BgKey, [string]$HoverKey, [string]$PressKey)
+        $Btn.Template = [Windows.Markup.XamlReader]::Parse("
+            <ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
+                             xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'
+                             TargetType='Button'>
+                <Border x:Name='Bd' Background='{DynamicResource $BgKey}'
+                        CornerRadius='4' Padding='{TemplateBinding Padding}'>
+                    <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property='IsMouseOver' Value='True'>
+                        <Setter TargetName='Bd' Property='Background' Value='{DynamicResource $HoverKey}'/>
+                    </Trigger>
+                    <Trigger Property='IsPressed' Value='True'>
+                        <Setter TargetName='Bd' Property='Background' Value='{DynamicResource $PressKey}'/>
+                    </Trigger>
+                    <Trigger Property='IsEnabled' Value='False'>
+                        <Setter TargetName='Bd' Property='Opacity' Value='0.45'/>
+                    </Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate>")
+        $Btn.BorderThickness = 0
+        $Btn.FontSize        = 12
+        $Btn.FontWeight      = 'SemiBold'
+        $Btn.Cursor          = [System.Windows.Input.Cursors]::Hand
+    }
+
     # ── Button bar (bottom, docked) ──────────────────────────────────────────
     $btnBar        = New-Object System.Windows.Controls.DockPanel
     $btnBar.Margin = '12,8,12,12'
     [System.Windows.Controls.DockPanel]::SetDock($btnBar, 'Bottom')
 
-    # Left-aligned: Reload button (re-reads run-commands.psd1)
-    $btnReload           = New-Object System.Windows.Controls.Button
-    $btnReload.Content   = 'Reload Commands'
-    $btnReload.Width     = 120
-    $btnReload.Height    = 28
+    # Left-aligned: Reload button (re-reads run-commands.psd1) — secondary/neutral style
+    $btnReload         = New-Object System.Windows.Controls.Button
+    $btnReload.Content = 'Reload Commands'
+    $btnReload.Width   = 130
+    $btnReload.Height  = 30
+    $btnReload.Padding = '10,0'
+    & $applyBtnStyle $btnReload 'Avd.Btn.Cancel.Bg' 'Avd.Btn.Cancel.Hover' 'Avd.Btn.Cancel.Press'
+    $btnReload.SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, 'Avd.Fg.Label')
     [System.Windows.Controls.DockPanel]::SetDock($btnReload, 'Left')
 
-    # Right-aligned: Close + Run
+    # Right-aligned: Cancel + Run Command
     $rightBtns                     = New-Object System.Windows.Controls.StackPanel
     $rightBtns.Orientation         = 'Horizontal'
     $rightBtns.HorizontalAlignment = 'Right'
 
-    $btnClose           = New-Object System.Windows.Controls.Button
-    $btnClose.Content   = 'Cancel'
-    $btnClose.Width     = 80
-    $btnClose.Height    = 28
-    $btnClose.Margin    = '0,0,8,0'
-    $btnClose.IsCancel  = $true
+    $btnClose          = New-Object System.Windows.Controls.Button
+    $btnClose.Content  = 'Cancel'
+    $btnClose.Width    = 90
+    $btnClose.Height   = 30
+    $btnClose.Padding  = '10,0'
+    $btnClose.Margin   = '0,0,8,0'
+    $btnClose.IsCancel = $true
     $btnClose.Add_Click({ $win.Close() })
+    & $applyBtnStyle $btnClose 'Avd.Btn.Cancel.Bg' 'Avd.Btn.Cancel.Hover' 'Avd.Btn.Cancel.Press'
+    $btnClose.SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, 'Avd.Fg.Label')
 
     $btnRun           = New-Object System.Windows.Controls.Button
     $btnRun.Content   = 'Run Command'
-    $btnRun.Width     = 110
-    $btnRun.Height    = 28
+    $btnRun.Width     = 120
+    $btnRun.Height    = 30
+    $btnRun.Padding   = '10,0'
     $btnRun.IsDefault = $true
     $btnRun.IsEnabled = $false
+    & $applyBtnStyle $btnRun 'Avd.Btn.Save.Bg' 'Avd.Btn.Save.Hover' 'Avd.Btn.Save.Press'
+    $btnRun.Foreground = [System.Windows.Media.Brushes]::White
 
     [void]$rightBtns.Children.Add($btnClose)
     [void]$rightBtns.Children.Add($btnRun)
@@ -205,6 +248,7 @@ function Show-RunCommandPicker {
     $lblHeader.Text        = "Select a command to run on:  $VmName"
     $lblHeader.FontWeight  = 'SemiBold'
     $lblHeader.Margin      = '0,0,0,2'
+    $lblHeader.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Window.Fg')
 
     $lblNote            = New-Object System.Windows.Controls.TextBlock
     $lblNote.Text       = 'Note: Commands run in the SYSTEM (computer) context, not as the logged-on user.'
@@ -216,22 +260,27 @@ function Show-RunCommandPicker {
     $lblCmd        = New-Object System.Windows.Controls.TextBlock
     $lblCmd.Text   = 'Command:'
     $lblCmd.Margin = '0,0,0,4'
+    $lblCmd.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Window.Fg')
 
     $listBox                = New-Object System.Windows.Controls.ListBox
     $listBox.Height         = 110
     $listBox.Margin         = '0,0,0,8'
+    $listBox.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'Avd.Card.Bg')
+    $listBox.SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, 'Avd.Window.Fg')
     $listBox.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty, 'Avd.Border.Input')
     foreach ($name in $rcRef.Commands.Keys) { [void]$listBox.Items.Add($name) }
 
     $lblDesc        = New-Object System.Windows.Controls.TextBlock
     $lblDesc.Text   = 'Description:'
     $lblDesc.Margin = '0,0,0,4'
+    $lblDesc.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Window.Fg')
 
     $descBox              = New-Object System.Windows.Controls.TextBox
     $descBox.Height       = 46
     $descBox.IsReadOnly   = $true
     $descBox.TextWrapping = 'Wrap'
     $descBox.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'Avd.Input.Bg')
+    $descBox.SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, 'Avd.Window.Fg')
     $descBox.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty, 'Avd.Border.Input')
     $descBox.Padding      = '4'
 
@@ -248,6 +297,7 @@ function Show-RunCommandPicker {
     $lblOut.Text   = 'Output:'
     $lblOut.Margin = '0,0,0,4'
     $lblOut.Visibility = 'Collapsed'
+    $lblOut.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Window.Fg')
 
     $outputBox                               = New-Object System.Windows.Controls.TextBox
     $outputBox.MinHeight                     = 100
@@ -258,6 +308,7 @@ function Show-RunCommandPicker {
     $outputBox.FontFamily                    = New-Object System.Windows.Media.FontFamily('Consolas')
     $outputBox.FontSize                      = 11
     $outputBox.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'Avd.Input.Bg')
+    $outputBox.SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, 'Avd.Window.Fg')
     $outputBox.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty, 'Avd.Border.Input')
     $outputBox.Padding                       = '6'
     $outputBox.Text                          = '(waiting for output...)'
@@ -275,9 +326,14 @@ function Show-RunCommandPicker {
 
     $win.Content = $outer
 
+    # Register with the theme-switch registry so Switch-DashboardTheme can push
+    # resource updates to this window when the user toggles dark/light mode.
+    Register-ThemedWindow $win
+
     # When the picker closes, clear all script-scope refs so Invoke-RunCommandTimer
     # falls back to the standalone output window if the job is still running.
     $win.Add_Closed({
+        Unregister-ThemedWindow $win
         $script:shRunCmdPickerOpen       = $false
         $script:shRunCmdPickerStatusText = $null
         $script:shRunCmdPickerOutputBox  = $null
@@ -445,9 +501,11 @@ function Show-RunCommandOutput {
     $win.WindowStartupLocation = 'CenterScreen'
     $win.Owner                 = [System.Windows.Application]::Current.MainWindow
 
-    # Inject theme resources
-    $_themeRdXaml = "<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_themeContent</ResourceDictionary>"
-    $_themeRd = [Windows.Markup.XamlReader]::Parse($_themeRdXaml)
+    # Inject theme resources — load fresh based on current theme (same fix as picker window)
+    $_rcThemeFile    = if ($script:DarkTheme) { 'dark' } else { 'light' }
+    $_rcThemeContent = Get-Content -Raw -Path (Join-Path $PSScriptRoot "..\data\$_rcThemeFile-theme.xaml") -ErrorAction SilentlyContinue
+    $_themeRdXaml    = "<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_rcThemeContent</ResourceDictionary>"
+    $_themeRd        = [Windows.Markup.XamlReader]::Parse($_themeRdXaml)
     $win.Resources.MergedDictionaries.Add($_themeRd)
     $win.SetResourceReference([System.Windows.Window]::BackgroundProperty, 'Avd.Window.Bg')
     $win.SetResourceReference([System.Windows.Window]::ForegroundProperty, 'Avd.Window.Fg')

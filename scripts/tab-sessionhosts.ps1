@@ -4420,6 +4420,21 @@ function Initialize-SessionHostsTab {
     })
     $script:SHExportButton.Add_Click(        { Invoke-SessionHostsExport })
     $script:SHLoadCostsButton.Add_Click(     { Invoke-SessionHostsCostFetch })
+
+    # Double-click a session host row to open the Session Detail window filtered to
+    # that host's sessions only. Passes the host pool name and RG so Show-SessionDetail
+    # can fetch the correct AVD session list, plus the VM name as a host filter so
+    # only that host's sessions are shown rather than the whole pool.
+    $script:SHGrid.Add_MouseDoubleClick({
+        $row = $script:SHGrid.SelectedItem
+        if ($null -eq $row) { return }
+        $hpName = [string]$row['Host Pool']
+        $hpRG   = [string]$row['_HpRG']
+        $vmName = [string]$row['VM Name']
+        if ($hpName -and $hpRG -and $vmName) {
+            Show-SessionDetail -HostPoolName $hpName -HostPoolRG $hpRG -HostNameFilter $vmName
+        }
+    })
     $script:SHEnableDrainButton.Add_Click(   { Invoke-SessionHostsDrainAction -EnableDrain $true  })
     $script:SHDisableDrainButton.Add_Click(  { Invoke-SessionHostsDrainAction -EnableDrain $false })
 

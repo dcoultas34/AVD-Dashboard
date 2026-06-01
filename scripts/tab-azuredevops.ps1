@@ -425,9 +425,24 @@ function Show-AdoRunningPopup {
     $dlg.Height = 420
     $dlg.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterOwner
     $dlg.Owner  = $OwnerWindow
-    $dlg.ResizeMode   = [System.Windows.ResizeMode]::CanResize
-    $dlg.Background   = [System.Windows.Media.Brushes]::White
+    $dlg.ResizeMode = [System.Windows.ResizeMode]::CanResize
+    $dlg.SetResourceReference([System.Windows.Window]::BackgroundProperty, 'Avd.Window.Bg')
+    $dlg.SetResourceReference([System.Windows.Window]::ForegroundProperty,  'Avd.Window.Fg')
     try { Set-WindowIcon -Window $dlg -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+
+    # Inject current theme so all DynamicResource keys resolve correctly
+    $_adoThemeFile    = if ($script:DarkTheme) { 'dark' } else { 'light' }
+    $_adoThemeContent = Get-Content -Raw -Path (Join-Path $PSScriptRoot "..\data\$_adoThemeFile-theme.xaml") -ErrorAction SilentlyContinue
+    $_adoThemeRd      = [Windows.Markup.XamlReader]::Parse("<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_adoThemeContent</ResourceDictionary>")
+    $dlg.Resources.MergedDictionaries.Add($_adoThemeRd)
+    Register-ThemedWindow $dlg
+    $dlg.Add_Closed({ Unregister-ThemedWindow $dlg }.GetNewClosure())
+    if ($script:DarkTheme) {
+        $dlg.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($dlg)).Handle
+            $v = 1; [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
 
     $sp = New-Object System.Windows.Controls.DockPanel
     $sp.LastChildFill = $true
@@ -437,20 +452,38 @@ function Show-AdoRunningPopup {
     $hdr.Text       = if ($running.Count -eq 0) { 'No pipelines currently running.' } else { "$($running.Count) pipeline(s) in progress" }
     $hdr.FontSize   = 13
     $hdr.FontWeight = [System.Windows.FontWeights]::SemiBold
-    $hdr.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0,120,212)
+    $hdr.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Fg.Accent')
     $hdr.Margin     = [System.Windows.Thickness]::new(16,14,16,10)
     [System.Windows.Controls.DockPanel]::SetDock($hdr, [System.Windows.Controls.Dock]::Top)
     [void]$sp.Children.Add($hdr)
 
-    # Close button row
+    # Close button row — styled via applyBtnStyle to match dashboard buttons
+    $applyBtnStyle = {
+        param([System.Windows.Controls.Button]$Btn, [string]$BgKey, [string]$HoverKey, [string]$PressKey)
+        $Btn.Template = [Windows.Markup.XamlReader]::Parse("
+            <ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
+                             xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='Button'>
+                <Border x:Name='Bd' Background='{DynamicResource $BgKey}' CornerRadius='4' Padding='{TemplateBinding Padding}'>
+                    <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property='IsMouseOver' Value='True'><Setter TargetName='Bd' Property='Background' Value='{DynamicResource $HoverKey}'/></Trigger>
+                    <Trigger Property='IsPressed'   Value='True'><Setter TargetName='Bd' Property='Background' Value='{DynamicResource $PressKey}'/></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate>")
+        $Btn.BorderThickness = 0; $Btn.FontSize = 12; $Btn.FontWeight = 'SemiBold'
+        $Btn.Cursor = [System.Windows.Input.Cursors]::Hand
+    }
+
     $btnRow = New-Object System.Windows.Controls.StackPanel
     $btnRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
     $btnRow.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
     $btnRow.Margin = [System.Windows.Thickness]::new(0,8,16,12)
     [System.Windows.Controls.DockPanel]::SetDock($btnRow, [System.Windows.Controls.Dock]::Bottom)
     $closeBtn = New-Object System.Windows.Controls.Button
-    $closeBtn.Content = 'Close'; $closeBtn.Padding = [System.Windows.Thickness]::new(16,6,16,6)
-    $closeBtn.FontSize = 12; $closeBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $closeBtn.Content = 'Close'; $closeBtn.Padding = '14,0'; $closeBtn.Width = 90; $closeBtn.Height = 30
+    & $applyBtnStyle $closeBtn 'Avd.Btn.Cancel.Bg' 'Avd.Btn.Cancel.Hover' 'Avd.Btn.Cancel.Press'
+    $closeBtn.SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, 'Avd.Fg.Label')
     $closeBtn.Add_Click({ $dlg.Close() })
     [void]$btnRow.Children.Add($closeBtn)
     [void]$sp.Children.Add($btnRow)
@@ -515,8 +548,41 @@ function Show-AdoPatDialog {
     $dlg.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterOwner
     $dlg.Owner  = $OwnerWindow
     $dlg.ResizeMode = [System.Windows.ResizeMode]::NoResize
-    $dlg.Background = [System.Windows.Media.Brushes]::White
+    $dlg.SetResourceReference([System.Windows.Window]::BackgroundProperty, 'Avd.Window.Bg')
+    $dlg.SetResourceReference([System.Windows.Window]::ForegroundProperty,  'Avd.Window.Fg')
     try { Set-WindowIcon -Window $dlg -IconPath (Join-Path $PSScriptRoot '..\data\avd-dashboard.ico') } catch {}
+
+    # Inject current theme
+    $_adoThemeFile    = if ($script:DarkTheme) { 'dark' } else { 'light' }
+    $_adoThemeContent = Get-Content -Raw -Path (Join-Path $PSScriptRoot "..\data\$_adoThemeFile-theme.xaml") -ErrorAction SilentlyContinue
+    $_adoThemeRd      = [Windows.Markup.XamlReader]::Parse("<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_adoThemeContent</ResourceDictionary>")
+    $dlg.Resources.MergedDictionaries.Add($_adoThemeRd)
+    Register-ThemedWindow $dlg
+    $dlg.Add_Closed({ Unregister-ThemedWindow $dlg }.GetNewClosure())
+    if ($script:DarkTheme) {
+        $dlg.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($dlg)).Handle
+            $v = 1; [void][DwmApiHelper]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
+
+    # Button helper
+    $applyBtnStyle = {
+        param([System.Windows.Controls.Button]$Btn, [string]$BgKey, [string]$HoverKey, [string]$PressKey)
+        $Btn.Template = [Windows.Markup.XamlReader]::Parse("
+            <ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
+                             xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='Button'>
+                <Border x:Name='Bd' Background='{DynamicResource $BgKey}' CornerRadius='4' Padding='{TemplateBinding Padding}'>
+                    <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property='IsMouseOver' Value='True'><Setter TargetName='Bd' Property='Background' Value='{DynamicResource $HoverKey}'/></Trigger>
+                    <Trigger Property='IsPressed'   Value='True'><Setter TargetName='Bd' Property='Background' Value='{DynamicResource $PressKey}'/></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate>")
+        $Btn.BorderThickness = 0; $Btn.FontSize = 12; $Btn.FontWeight = 'SemiBold'
+        $Btn.Cursor = [System.Windows.Input.Cursors]::Hand
+    }
 
     $sp = New-Object System.Windows.Controls.StackPanel
     $sp.Margin = [System.Windows.Thickness]::new(24, 20, 24, 20)
@@ -525,7 +591,7 @@ function Show-AdoPatDialog {
     $title.Text       = 'Azure DevOps Configuration'
     $title.FontSize   = 16
     $title.FontWeight = [System.Windows.FontWeights]::SemiBold
-    $title.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0, 120, 212)
+    $title.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Fg.Accent')
     $title.Margin     = [System.Windows.Thickness]::new(0, 0, 0, 16)
     [void]$sp.Children.Add($title)
 
@@ -540,7 +606,7 @@ function Show-AdoPatDialog {
     $urlHint = New-Object System.Windows.Controls.TextBlock
     $urlHint.Text      = 'Full URL including organisation and project (e.g. https://dev.azure.com/contoso/MyProject).'
     $urlHint.FontSize  = 11
-    $urlHint.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(140, 140, 140)
+    $urlHint.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Fg.Hint')
     $urlHint.TextWrapping = [System.Windows.TextWrapping]::Wrap
     $urlHint.Margin    = [System.Windows.Thickness]::new(0, 0, 0, 6)
     [void]$sp.Children.Add($urlHint)
@@ -549,7 +615,7 @@ function Show-AdoPatDialog {
     $urlBox.Text         = $script:AdoOrgUrl
     $urlBox.FontSize     = 12
     $urlBox.Padding      = [System.Windows.Thickness]::new(8, 6, 8, 6)
-    $urlBox.BorderBrush  = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(200, 205, 211)
+    $urlBox.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty, 'Avd.Border.Input')
     $urlBox.BorderThickness = [System.Windows.Thickness]::new(1)
     $urlBox.Margin       = [System.Windows.Thickness]::new(0, 0, 0, 20)
     [void]$sp.Children.Add($urlBox)
@@ -562,7 +628,7 @@ function Show-AdoPatDialog {
     $desc = New-Object System.Windows.Controls.TextBlock
     $desc.Text        = "Enter a Personal Access Token with at least Read permission on Build (Pipelines). The PAT is encrypted using your Windows account and stored locally - no one else can read it."
     $desc.FontSize    = 12
-    $desc.Foreground  = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(80, 80, 80)
+    $desc.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Window.Fg')
     $desc.TextWrapping = [System.Windows.TextWrapping]::Wrap
     $desc.Margin      = [System.Windows.Thickness]::new(0, 0, 0, 16)
     [void]$sp.Children.Add($desc)
@@ -577,7 +643,7 @@ function Show-AdoPatDialog {
     $pwBox = New-Object System.Windows.Controls.PasswordBox
     $pwBox.FontSize         = 13
     $pwBox.Padding          = [System.Windows.Thickness]::new(8, 6, 8, 6)
-    $pwBox.BorderBrush      = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(200, 205, 211)
+    $pwBox.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty, 'Avd.Border.Input')
     $pwBox.BorderThickness  = [System.Windows.Thickness]::new(1)
     $pwBox.Margin           = [System.Windows.Thickness]::new(0, 0, 0, 4)
     if ($hasCurrent) { $pwBox.Password = $script:adoPat }
@@ -586,7 +652,7 @@ function Show-AdoPatDialog {
     $hint = New-Object System.Windows.Controls.TextBlock
     $hint.Text      = 'Leave blank and click Save to clear the stored PAT.'
     $hint.FontSize  = 11
-    $hint.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(140, 140, 140)
+    $hint.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Fg.Hint')
     $hint.Margin    = [System.Windows.Thickness]::new(0, 0, 0, 20)
     [void]$sp.Children.Add($hint)
 
@@ -608,7 +674,7 @@ function Show-AdoPatDialog {
     $intBox.Padding      = [System.Windows.Thickness]::new(8, 6, 8, 6)
     $intBox.Width        = 80
     $intBox.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
-    $intBox.BorderBrush  = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(200, 205, 211)
+    $intBox.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty, 'Avd.Border.Input')
     $intBox.BorderThickness = [System.Windows.Thickness]::new(1)
     $intBox.Margin       = [System.Windows.Thickness]::new(0, 0, 0, 4)
     [void]$sp.Children.Add($intBox)
@@ -616,7 +682,7 @@ function Show-AdoPatDialog {
     $intHint = New-Object System.Windows.Controls.TextBlock
     $intHint.Text      = 'Minimum 10 seconds. Default: 30.'
     $intHint.FontSize  = 11
-    $intHint.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(140, 140, 140)
+    $intHint.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Fg.Hint')
     $intHint.Margin    = [System.Windows.Thickness]::new(0, 0, 0, 16)
     [void]$sp.Children.Add($intHint)
 
@@ -633,21 +699,18 @@ function Show-AdoPatDialog {
 
     $cancelBtn = New-Object System.Windows.Controls.Button
     $cancelBtn.Content = 'Cancel'
-    $cancelBtn.Padding = [System.Windows.Thickness]::new(16, 6, 16, 6)
+    $cancelBtn.Padding = '14,0'; $cancelBtn.Width = 90; $cancelBtn.Height = 30
     $cancelBtn.Margin  = [System.Windows.Thickness]::new(0, 0, 8, 0)
-    $cancelBtn.FontSize = 12
-    $cancelBtn.Cursor  = [System.Windows.Input.Cursors]::Hand
     $cancelBtn.Add_Click({ $dlg.Close() })
+    & $applyBtnStyle $cancelBtn 'Avd.Btn.Cancel.Bg' 'Avd.Btn.Cancel.Hover' 'Avd.Btn.Cancel.Press'
+    $cancelBtn.SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, 'Avd.Fg.Label')
     [void]$btnRow.Children.Add($cancelBtn)
 
     $saveBtn = New-Object System.Windows.Controls.Button
-    $saveBtn.Content    = 'Save'
-    $saveBtn.Padding    = [System.Windows.Thickness]::new(16, 6, 16, 6)
-    $saveBtn.FontSize   = 12
-    $saveBtn.Cursor     = [System.Windows.Input.Cursors]::Hand
-    $saveBtn.Background = [System.Windows.Media.SolidColorBrush][System.Windows.Media.Color]::FromRgb(0, 120, 212)
+    $saveBtn.Content = 'Save'
+    $saveBtn.Padding = '14,0'; $saveBtn.Width = 90; $saveBtn.Height = 30
+    & $applyBtnStyle $saveBtn 'Avd.Btn.Save.Bg' 'Avd.Btn.Save.Hover' 'Avd.Btn.Save.Press'
     $saveBtn.Foreground = [System.Windows.Media.Brushes]::White
-    $saveBtn.BorderThickness = [System.Windows.Thickness]::new(0)
     [void]$btnRow.Children.Add($saveBtn)
     [void]$sp.Children.Add($btnRow)
 
@@ -1911,11 +1974,7 @@ function Initialize-AzureDevOpsTab {
             $script:ADOActionStatus.Text = "Cannot delete - run #$buildId is $status. Cancel it first."
             return
         }
-        $conf = [System.Windows.MessageBox]::Show(
-            "Delete run #$buildId from history? This cannot be undone.",
-            'Confirm Delete', [System.Windows.MessageBoxButton]::YesNo,
-            [System.Windows.MessageBoxImage]::Warning)
-        if ($conf -eq [System.Windows.MessageBoxResult]::Yes) {
+        if (Show-ThemedDialog -Message "Delete run #$buildId from history? This cannot be undone." -Title 'Confirm Delete' -Buttons 'YesNo' -Icon 'Warning') {
             _ADO_DeleteRun -BuildId $buildId
         }
     })

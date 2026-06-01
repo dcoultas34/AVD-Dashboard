@@ -99,6 +99,11 @@
 # This prevents $script:sd* variable collisions when switching between detail views.
 $script:sdOpenWindow = $null
 
+# Optional host-name pre-filter applied by Update-SessionFilter.
+# Set by Show-SessionDetail when called from the Session Hosts tab double-click;
+# cleared by Show-GlobalSessionDetail and by Show-SessionDetail when no filter is passed.
+$script:sdHostFilter = ''
+
 # (Session detail LAW logging uses the main -EnableLogging log file when enabled)
 
 # =============================================================================
@@ -234,7 +239,7 @@ function script:Invoke-SessionExport {
 
     if ($dlg.ShowDialog() -eq $true) {
         try {
-            $hidden = @('Session Host FQDN', 'HP RG', 'Host Pool', '_AvgRTTSort', '_P95RTTSort', '_AvgRTTColor', '_P95RTTColor')
+            $hidden = @('Session Host FQDN', 'Host Pool', '_AvgRTTSort', '_P95RTTSort', '_AvgRTTColor', '_P95RTTColor')
             $script:sdDataTable.Rows |
                 ForEach-Object {
                     $row = $_
@@ -249,10 +254,7 @@ function script:Invoke-SessionExport {
                 Export-Csv -Path $dlg.FileName -NoTypeInformation -Force
             $script:sdStatus.Text = "Exported $($script:sdDataTable.Rows.Count) row(s) to $($dlg.FileName)"
         } catch {
-            [System.Windows.MessageBox]::Show(
-                "Export failed:`n$_", 'Export Error',
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Error) | Out-Null
+            Show-ThemedDialog -Message "Export failed:`n$_" -Title 'Export Error' -Icon 'Error'
         }
     }
 }
@@ -516,6 +518,7 @@ $sessionXaml = @'
         <DataGrid x:Name="SessionGrid" Margin="20,0,20,12"
                   Background="{DynamicResource Avd.Grid.Bg}" BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
                   RowBackground="{DynamicResource Avd.Grid.Bg}" AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}"
+                  Foreground="{DynamicResource Avd.Window.Fg}"
                   GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="{DynamicResource Avd.Border.Grid}"
                   ColumnHeaderHeight="36" RowHeight="32" FontSize="13"
                   IsReadOnly="True" AutoGenerateColumns="True"
@@ -1065,7 +1068,7 @@ function Add-SessionContextMenu {
             )
         }
         catch {
-            [System.Windows.MessageBox]::Show("Context menu log off error: $_", "Log Off Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Context menu log off error: $_" -Title 'Log Off Error' -Icon 'Error'
         }
     }.GetNewClosure())
 
@@ -1073,9 +1076,12 @@ function Add-SessionContextMenu {
         $sel = @($Grid.SelectedItems)
         if ($sel.Count -eq 0 -or $null -eq $sel[0]) { return }
         $row    = $sel[0]
-        # Session Host FQDN is e.g. "avd-vm-0.contoso.com" - extract just the VM name
-        $vmName = ([string]$row["Session Host FQDN"]).Split(".")[0]
-        Show-RunCommandPicker -VmName $vmName -RG ([string]$row["HP RG"])
+        # "Session Host" column already holds the short VM name (e.g. "avd-vm-0").
+        # Avoid $row["HP RG"] - that column is not in the DataTable and accessing it
+        # on a DataRowView throws, silently killing the handler. Show-RunCommandPicker
+        # resolves the VM resource group from $script:vmRgMap using the VM name.
+        $vmName = [string]$row["Session Host"]
+        Show-RunCommandPicker -VmName $vmName -RG ''
     }.GetNewClosure())
 
     $Grid.ContextMenu = $ctxMenu
@@ -1182,8 +1188,7 @@ function script:Show-MessageComposeDialog {
 
     $sendBtn.Add_Click({
         if ([string]::IsNullOrWhiteSpace($bodyBox.Text)) {
-            [System.Windows.MessageBox]::Show(
-                "Please enter a message body.", "Send Message", "OK", "Warning") | Out-Null
+            Show-ThemedDialog -Message 'Please enter a message body.' -Title 'Send Message' -Icon 'Warning'
             return
         }
         $msgWin.DialogResult = $true
@@ -1225,14 +1230,10 @@ function script:Invoke-SendMessageToUser {
             -Token          (Get-ArmToken)
 
         Write-AuditLog -Action 'SendMessage' -Target $SessionHostName -Details "$User - $($msg.Title)"
-        [System.Windows.MessageBox]::Show(
-            "Message sent to $User successfully.",
-            "Send Message", "OK", "Information") | Out-Null
+        Show-ThemedDialog -Message "Message sent to $User successfully." -Title 'Send Message' -Icon 'Information'
     }
     catch {
-        [System.Windows.MessageBox]::Show(
-            "Failed to send message:`n$_",
-            "Send Message Error", "OK", "Error") | Out-Null
+        Show-ThemedDialog -Message "Failed to send message:`n$_" -Title 'Send Message Error' -Icon 'Error'
     }
 }
 
@@ -1249,9 +1250,7 @@ function script:Invoke-ShadowFromRow {
         $fqdn = $SessionHost
 
         if ([string]::IsNullOrWhiteSpace($fqdn) -or [string]::IsNullOrWhiteSpace($SessionId)) {
-            [System.Windows.MessageBox]::Show(
-                "Could not determine session host or session ID for this row.",
-                "Shadow Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message 'Could not determine session host or session ID for this row.' -Title 'Shadow Error' -Icon 'Error'
             return
         }
 
@@ -1268,14 +1267,10 @@ function script:Invoke-ShadowFromRow {
                     $ip     = [string]$nic.properties.ipConfigurations[0].properties.privateIPAddress
                     if (-not [string]::IsNullOrWhiteSpace($ip)) { $target = $ip }
                 } catch {
-                    [System.Windows.MessageBox]::Show(
-                        "IP resolution failed, falling back to DNS hostname.`n`n$_",
-                        "Shadow Warning", "OK", "Warning") | Out-Null
+                    Show-ThemedDialog -Message "IP resolution failed, falling back to DNS hostname.`n`n$_" -Title 'Shadow Warning' -Icon 'Warning'
                 }
             } else {
-                [System.Windows.MessageBox]::Show(
-                    "VM '$vmName' not found in cached host data.`n`nConnecting via DNS hostname - wait for a dashboard refresh and try again if this fails.",
-                    "Shadow Warning", "OK", "Warning") | Out-Null
+                Show-ThemedDialog -Message "VM '$vmName' not found in cached host data.`n`nConnecting via DNS hostname - wait for a dashboard refresh and try again if this fails." -Title 'Shadow Warning' -Icon 'Warning'
             }
         }
 
@@ -1295,9 +1290,7 @@ function script:Invoke-ShadowFromRow {
         }
     }
     catch {
-        [System.Windows.MessageBox]::Show(
-            "Failed to start shadow session: $_",
-            "Shadow Error", "OK", "Error") | Out-Null
+        Show-ThemedDialog -Message "Failed to start shadow session: $_" -Title 'Shadow Error' -Icon 'Error'
     }
 }
 
@@ -1310,9 +1303,7 @@ function script:Invoke-RDPToSessionHost {
     $WarningPreference = 'SilentlyContinue'
     try {
         if ([string]::IsNullOrWhiteSpace($SessionHost)) {
-            [System.Windows.MessageBox]::Show(
-                "Could not determine the session host for this row.",
-                "RDP Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message 'Could not determine the session host for this row.' -Title 'RDP Error' -Icon 'Error'
             return
         }
 
@@ -1336,23 +1327,17 @@ function script:Invoke-RDPToSessionHost {
                     if (-not [string]::IsNullOrWhiteSpace($ip)) { $target = $ip }
                 }
                 catch {
-                    [System.Windows.MessageBox]::Show(
-                        "IP resolution failed, falling back to DNS hostname.`n`n$_",
-                        "RDP Warning", "OK", "Warning") | Out-Null
+                    Show-ThemedDialog -Message "IP resolution failed, falling back to DNS hostname.`n`n$_" -Title 'RDP Warning' -Icon 'Warning'
                 }
             } else {
-                [System.Windows.MessageBox]::Show(
-                    "VM '$vmName' not found in cached host data.`n`nConnecting via DNS hostname - wait for a dashboard refresh and try again if this fails.",
-                    "RDP Warning", "OK", "Warning") | Out-Null
+                Show-ThemedDialog -Message "VM '$vmName' not found in cached host data.`n`nConnecting via DNS hostname - wait for a dashboard refresh and try again if this fails." -Title 'RDP Warning' -Icon 'Warning'
             }
         }
 
         Start-Process -FilePath "$env:SystemRoot\System32\mstsc.exe" -ArgumentList "/v:$target"
     }
     catch {
-        [System.Windows.MessageBox]::Show(
-            "Failed to launch RDP: $_",
-            "RDP Error", "OK", "Error") | Out-Null
+        Show-ThemedDialog -Message "Failed to launch RDP: $_" -Title 'RDP Error' -Icon 'Error'
     }
 
     # Audit log outside the try/catch so it never blocks or masks the RDP launch
@@ -1405,14 +1390,14 @@ function Start-DetailJob {
         catch {
             $errMsg = "Runspace error: $_"
             try { $script:sdStatus.Text = $errMsg } catch {}
-            [System.Windows.MessageBox]::Show($errMsg, "Log Off Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message $errMsg -Title 'Log Off Error' -Icon 'Error'
         }
         # Surface any non-terminating stream errors
         if ($script:detailPS.Streams.Error.Count -gt 0) {
             $streamErrs = ($script:detailPS.Streams.Error | ForEach-Object { $_.ToString() }) -join "`n"
             $errMsg = "Stream errors:`n$streamErrs"
             try { $script:sdStatus.Text = $errMsg } catch {}
-            [System.Windows.MessageBox]::Show($errMsg, "Log Off Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message $errMsg -Title 'Log Off Error' -Icon 'Error'
         }
         try { $script:detailPS.Runspace.Close() } catch {}
         try { $script:detailPS.Dispose() }        catch {}
@@ -1422,7 +1407,7 @@ function Start-DetailJob {
         catch {
             $errMsg = "Callback error: $_"
             try { $script:sdStatus.Text = $errMsg } catch {}
-            [System.Windows.MessageBox]::Show($errMsg, "Log Off Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message $errMsg -Title 'Log Off Error' -Icon 'Error'
         }
     })
     $script:detailTimer.Start()
@@ -1776,6 +1761,12 @@ function script:Update-SessionFilter {
         $escapedText = $text.Replace("'","''")
         $parts.Add("User LIKE '%$escapedText%'")
     }
+    # Host filter - set when the window is opened from the Session Hosts tab
+    # double-click handler so only sessions on that specific VM are shown.
+    if (-not [string]::IsNullOrEmpty($script:sdHostFilter)) {
+        $escapedHost = $script:sdHostFilter.Replace("'","''")
+        $parts.Add("[Session Host] = '$escapedHost'")
+    }
     $script:sdDataTable.DefaultView.RowFilter = if ($parts.Count -gt 0) {
         $parts -join ' AND '
     } else { '' }
@@ -1991,10 +1982,12 @@ function script:Update-GlobalSessionView {
 }
 
 function Show-GlobalSessionDetail {
+    # Global view shows all pools - no host filter
+    $script:sdHostFilter = ''
     param([string]$StateFilter = "All")
 
     if (-not $script:lastData) {
-        [System.Windows.MessageBox]::Show("No data loaded yet - wait for the first refresh.", "Not Ready", "OK", "Information") | Out-Null
+        Show-ThemedDialog -Message 'No data loaded yet - wait for the first refresh.' -Title 'Not Ready' -Icon 'Information'
         return
     }
 
@@ -2032,6 +2025,10 @@ function Show-GlobalSessionDetail {
     $script:sdCountdown = $detailWin.FindName("SessionCountdown")
     $script:sdGrid      = $detailWin.FindName("SessionGrid")
     $script:sdGridZoom  = $detailWin.FindName("GridZoom")
+    # Apply the themed row style (Foreground, hover, selection colours) from the
+    # window's own injected resource dictionary so dark mode text is correct.
+    $_sdRowStyle = $detailWin.TryFindResource('Avd.DataGridRow.Style')
+    if ($_sdRowStyle) { $script:sdGrid.RowStyle = $_sdRowStyle }
     $script:sdLogoff        = $detailWin.FindName("LogoffButton")
     $script:sdMessage       = $detailWin.FindName("MessageSelectedButton")
     $script:sdMessageAll    = $detailWin.FindName("MessageAllButton")
@@ -2182,12 +2179,12 @@ function Show-GlobalSessionDetail {
     $script:sdMessageAll.Add_Click({
         try {
             if (-not $script:sdDataTable) {
-                [System.Windows.MessageBox]::Show("Session data not yet loaded - please wait.", "Message All", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message 'Session data not yet loaded - please wait.' -Title 'Message All' -Icon 'Information'
                 return
             }
             $activeRows = @($script:sdDataTable.Select("State = 'Active'"))
             if ($activeRows.Count -eq 0) {
-                [System.Windows.MessageBox]::Show("No active sessions found.", "Message All", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message 'No active sessions found.' -Title 'Message All' -Icon 'Information'
                 return
             }
             $msg = Show-MessageComposeDialog -Recipient "$($activeRows.Count) active user(s)" `
@@ -2211,13 +2208,13 @@ function Show-GlobalSessionDetail {
                 catch { $errors += "$([string]$row["User"]): $_" }
             }
             if ($errors) {
-                [System.Windows.MessageBox]::Show("Some messages failed:`n$($errors -join "`n")", "Message All Error", "OK", "Error") | Out-Null
+                Show-ThemedDialog -Message "Some messages failed:`n$($errors -join "`n")" -Title 'Message All Error' -Icon 'Error'
             } else {
-                [System.Windows.MessageBox]::Show("Message sent to $($activeRows.Count) active session(s) successfully.", "Message All", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message "Message sent to $($activeRows.Count) active session(s) successfully." -Title 'Message All' -Icon 'Information'
             }
         }
         catch {
-            [System.Windows.MessageBox]::Show("Error: $_", "Message All Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Error: $_" -Title 'Message All Error' -Icon 'Error'
         }
     })
 
@@ -2226,9 +2223,7 @@ function Show-GlobalSessionDetail {
             $selected   = @($script:sdGrid.SelectedItems)
             $activeRows = @($selected | Where-Object { $null -ne $_ -and $_["State"] -eq "Active" })
             if ($activeRows.Count -eq 0) {
-                [System.Windows.MessageBox]::Show(
-                    "No active sessions selected.`nMessages can only be sent to active sessions.",
-                    "Send Message", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message "No active sessions selected.`nMessages can only be sent to active sessions." -Title 'Send Message' -Icon 'Information'
                 return
             }
             $recipient = if ($activeRows.Count -eq 1) { [string]$activeRows[0]["User"] } else { "$($activeRows.Count) users" }
@@ -2253,17 +2248,13 @@ function Show-GlobalSessionDetail {
                 catch { $errors += "$([string]$row["User"]): $_" }
             }
             if ($errors) {
-                [System.Windows.MessageBox]::Show(
-                    "Some messages failed:`n$($errors -join "`n")",
-                    "Send Message Error", "OK", "Error") | Out-Null
+                Show-ThemedDialog -Message "Some messages failed:`n$($errors -join "`n")" -Title 'Send Message Error' -Icon 'Error'
             } else {
-                [System.Windows.MessageBox]::Show(
-                    "Message sent to $($activeRows.Count) session(s) successfully.",
-                    "Send Message", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message "Message sent to $($activeRows.Count) session(s) successfully." -Title 'Send Message' -Icon 'Information'
             }
         }
         catch {
-            [System.Windows.MessageBox]::Show("Error: $_", "Send Message Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Error: $_" -Title 'Send Message Error' -Icon 'Error'
         }
     })
 
@@ -2271,15 +2262,12 @@ function Show-GlobalSessionDetail {
         try {
             $selected = @($script:sdGrid.SelectedItems)
             if ($selected.Count -eq 0) {
-                [System.Windows.MessageBox]::Show("No sessions selected.", "Log Off", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message 'No sessions selected.' -Title 'Log Off' -Icon 'Information'
                 return
             }
 
             $names   = ($selected | ForEach-Object { $_["User"] }) -join "`n"
-            $confirm = [System.Windows.MessageBox]::Show(
-                "Log off $($selected.Count) session(s)?`n`n$names",
-                "Confirm Log Off", "YesNo", "Warning")
-            if ($confirm -ne "Yes") { return }
+            if (-not (Show-ThemedDialog -Message "Log off $($selected.Count) session(s)?`n`n$names" -Title 'Confirm Log Off' -Buttons 'YesNo' -Icon 'Warning')) { return }
 
             $script:sdStatus.Text      = "Logging off $($selected.Count) session(s)..."
             $script:sdLogoff.IsEnabled = $false
@@ -2304,7 +2292,7 @@ function Show-GlobalSessionDetail {
             try {
                 $script:azArmToken = Get-ArmToken
             } catch {
-                [System.Windows.MessageBox]::Show("Failed to obtain ARM token: $_`n`nPlease restart the dashboard.", "Auth Error", "OK", "Error") | Out-Null
+                Show-ThemedDialog -Message "Failed to obtain ARM token: $_`n`nPlease restart the dashboard." -Title 'Auth Error' -Icon 'Error'
                 return
             }
 
@@ -2329,7 +2317,7 @@ function Show-GlobalSessionDetail {
                 if ($errs) {
                     $msg = "Log off errors:`n$($errs -join "`n")"
                     $script:sdStatus.Text = "Errors - see popup"
-                    [System.Windows.MessageBox]::Show($msg, "Log Off Error", "OK", "Error") | Out-Null
+                    Show-ThemedDialog -Message $msg -Title 'Log Off Error' -Icon 'Error'
                 } else {
                     $script:sdStatus.Text = "Log off complete - reloading..."
                 }
@@ -2337,7 +2325,7 @@ function Show-GlobalSessionDetail {
             }
         }
         catch {
-            [System.Windows.MessageBox]::Show("Log off error: $_", "Log Off Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Log off error: $_" -Title 'Log Off Error' -Icon 'Error'
         }
     })
 
@@ -2345,18 +2333,15 @@ function Show-GlobalSessionDetail {
     $gsDisconnBtn.Add_Click({
         try {
             if (-not $script:sdDataTable) {
-                [System.Windows.MessageBox]::Show("Session data not yet loaded - please wait.", "Not Ready", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message 'Session data not yet loaded - please wait.' -Title 'Not Ready' -Icon 'Information'
                 return
             }
             $disconnRows = @($script:sdDataTable.Select("State = 'Disconnected'"))
             if ($disconnRows.Count -eq 0) {
-                [System.Windows.MessageBox]::Show("No disconnected sessions found.", "Nothing to do", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message 'No disconnected sessions found.' -Title 'Nothing to Do' -Icon 'Information'
                 return
             }
-            $confirm = [System.Windows.MessageBox]::Show(
-                "Log off $($disconnRows.Count) disconnected session(s)?",
-                "Confirm Log Off Disconnected", "YesNo", "Warning")
-            if ($confirm -ne "Yes") { return }
+            if (-not (Show-ThemedDialog -Message "Log off $($disconnRows.Count) disconnected session(s)?" -Title 'Confirm Log Off Disconnected' -Buttons 'YesNo' -Icon 'Warning')) { return }
 
             $script:sdStatus.Text             = "Logging off $($disconnRows.Count) disconnected session(s)..."
             $script:sdLogoff.IsEnabled        = $false
@@ -2375,7 +2360,7 @@ function Show-GlobalSessionDetail {
             try {
                 $script:azArmToken = Get-ArmToken
             } catch {
-                [System.Windows.MessageBox]::Show("Failed to obtain ARM token: $_`n`nPlease restart the dashboard.", "Auth Error", "OK", "Error") | Out-Null
+                Show-ThemedDialog -Message "Failed to obtain ARM token: $_`n`nPlease restart the dashboard." -Title 'Auth Error' -Icon 'Error'
                 return
             }
 
@@ -2407,7 +2392,7 @@ function Show-GlobalSessionDetail {
             }
         }
         catch {
-            [System.Windows.MessageBox]::Show("Error: $_", "Log Off Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Error: $_" -Title 'Log Off Error' -Icon 'Error'
         }
     })
 
@@ -2616,7 +2601,15 @@ function script:Update-SessionView {
 }
 
 function Show-SessionDetail {
-    param([string]$HostPoolName, [string]$HostPoolRG)
+    param(
+        [string]$HostPoolName,
+        [string]$HostPoolRG,
+        # Optional: short VM name (e.g. "avd-vm-0") to pre-filter the session list
+        # to only that host. Set when called from the Session Hosts tab double-click.
+        # Cleared when opening a full host-pool or global view.
+        [string]$HostNameFilter = ''
+    )
+    $script:sdHostFilter = $HostNameFilter
 
     # Close any existing detail window before opening a new one
     if ($script:sdOpenWindow) {
@@ -2644,6 +2637,9 @@ function Show-SessionDetail {
     $script:sdCountdown = $detailWin.FindName("SessionCountdown")
     $script:sdGrid      = $detailWin.FindName("SessionGrid")
     $script:sdGridZoom  = $detailWin.FindName("GridZoom")
+    # Apply themed row style so dark mode row text colour is correct
+    $_sdRowStyle = $detailWin.TryFindResource('Avd.DataGridRow.Style')
+    if ($_sdRowStyle) { $script:sdGrid.RowStyle = $_sdRowStyle }
     $script:sdLogoff          = $detailWin.FindName("LogoffButton")
     $script:sdMessage         = $detailWin.FindName("MessageSelectedButton")
     $script:sdMessageAll      = $detailWin.FindName("MessageAllButton")
@@ -2697,8 +2693,10 @@ function Show-SessionDetail {
         }
     })
 
-    $script:sdTitle.Text    = "User Sessions - $HostPoolName"
-    $script:sdSubtitle.Text = "Host Pool RG : $HostPoolRG"
+    # When opened from the Session Hosts tab double-click, show the VM name in the
+    # title so the user knows the view is filtered to a single session host.
+    $script:sdTitle.Text    = if ($HostNameFilter) { "User Sessions - $HostNameFilter" } else { "User Sessions - $HostPoolName" }
+    $script:sdSubtitle.Text = if ($HostNameFilter) { "$HostPoolName  |  $HostPoolRG" } else { "Host Pool RG : $HostPoolRG" }
     $script:sdStatus.Text   = "Loading sessions..."
 
     $script:sdCF                     = $contextFile
@@ -2785,12 +2783,12 @@ function Show-SessionDetail {
     $script:sdMessageAll.Add_Click({
         try {
             if (-not $script:sdDataTable) {
-                [System.Windows.MessageBox]::Show("Session data not yet loaded - please wait.", "Message All", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message 'Session data not yet loaded - please wait.' -Title 'Message All' -Icon 'Information'
                 return
             }
             $activeRows = @($script:sdDataTable.Select("State = 'Active'"))
             if ($activeRows.Count -eq 0) {
-                [System.Windows.MessageBox]::Show("No active sessions found.", "Message All", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message 'No active sessions found.' -Title 'Message All' -Icon 'Information'
                 return
             }
             $msg = Show-MessageComposeDialog -Recipient "$($activeRows.Count) active user(s)" `
@@ -2814,13 +2812,13 @@ function Show-SessionDetail {
                 catch { $errors += "$([string]$row["User"]): $_" }
             }
             if ($errors) {
-                [System.Windows.MessageBox]::Show("Some messages failed:`n$($errors -join "`n")", "Message All Error", "OK", "Error") | Out-Null
+                Show-ThemedDialog -Message "Some messages failed:`n$($errors -join "`n")" -Title 'Message All Error' -Icon 'Error'
             } else {
-                [System.Windows.MessageBox]::Show("Message sent to $($activeRows.Count) active session(s) successfully.", "Message All", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message "Message sent to $($activeRows.Count) active session(s) successfully." -Title 'Message All' -Icon 'Information'
             }
         }
         catch {
-            [System.Windows.MessageBox]::Show("Error: $_", "Message All Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Error: $_" -Title 'Message All Error' -Icon 'Error'
         }
     })
 
@@ -2829,9 +2827,7 @@ function Show-SessionDetail {
             $selected   = @($script:sdGrid.SelectedItems)
             $activeRows = @($selected | Where-Object { $null -ne $_ -and $_["State"] -eq "Active" })
             if ($activeRows.Count -eq 0) {
-                [System.Windows.MessageBox]::Show(
-                    "No active sessions selected.`nMessages can only be sent to active sessions.",
-                    "Send Message", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message "No active sessions selected.`nMessages can only be sent to active sessions." -Title 'Send Message' -Icon 'Information'
                 return
             }
             $recipient = if ($activeRows.Count -eq 1) { [string]$activeRows[0]["User"] } else { "$($activeRows.Count) users" }
@@ -2856,17 +2852,13 @@ function Show-SessionDetail {
                 catch { $errors += "$([string]$row["User"]): $_" }
             }
             if ($errors) {
-                [System.Windows.MessageBox]::Show(
-                    "Some messages failed:`n$($errors -join "`n")",
-                    "Send Message Error", "OK", "Error") | Out-Null
+                Show-ThemedDialog -Message "Some messages failed:`n$($errors -join "`n")" -Title 'Send Message Error' -Icon 'Error'
             } else {
-                [System.Windows.MessageBox]::Show(
-                    "Message sent to $($activeRows.Count) session(s) successfully.",
-                    "Send Message", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message "Message sent to $($activeRows.Count) session(s) successfully." -Title 'Send Message' -Icon 'Information'
             }
         }
         catch {
-            [System.Windows.MessageBox]::Show("Error: $_", "Send Message Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Error: $_" -Title 'Send Message Error' -Icon 'Error'
         }
     })
 
@@ -2874,15 +2866,13 @@ function Show-SessionDetail {
         try {
             $selected = @($script:sdGrid.SelectedItems)
             if ($selected.Count -eq 0) {
-                [System.Windows.MessageBox]::Show("No sessions selected.", "Log Off", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message 'No sessions selected.' -Title 'Log Off' -Icon 'Information'
                 return
             }
 
             $names   = ($selected | ForEach-Object { $_["User"] }) -join "`n"
-            $confirm = [System.Windows.MessageBox]::Show(
-                "Log off $($selected.Count) session(s)?`n`n$names",
-                "Confirm Log Off", "YesNo", "Warning")
-            if ($confirm -ne 'Yes') { return }
+            $confirm = Show-ThemedDialog -Message "Log off $($selected.Count) session(s)?`n`n$names" -Title 'Confirm Log Off' -Buttons 'YesNo' -Icon 'Warning'
+            if (-not $confirm) { return }
 
             $script:sdStatus.Text      = "Logging off $($selected.Count) session(s)..."
             $script:sdLogoff.IsEnabled = $false
@@ -2900,7 +2890,7 @@ function Show-SessionDetail {
             try {
                 $script:azArmToken = Get-ArmToken
             } catch {
-                [System.Windows.MessageBox]::Show("Failed to obtain ARM token: $_`n`nPlease restart the dashboard.", "Auth Error", "OK", "Error") | Out-Null
+                Show-ThemedDialog -Message "Failed to obtain ARM token: $_`n`nPlease restart the dashboard." -Title 'Auth Error' -Icon 'Error'
                 return
             }
 
@@ -2922,7 +2912,7 @@ function Show-SessionDetail {
                 if ($errs) {
                     $msg = "Log off errors:`n$($errs -join "`n")"
                     $script:sdStatus.Text = "Errors - see popup"
-                    [System.Windows.MessageBox]::Show($msg, "Log Off Error", "OK", "Error") | Out-Null
+                    Show-ThemedDialog -Message $msg -Title 'Log Off Error' -Icon 'Error'
                 } else {
                     $script:sdStatus.Text = "Log off complete - reloading..."
                 }
@@ -2930,7 +2920,7 @@ function Show-SessionDetail {
             }
         }
         catch {
-            [System.Windows.MessageBox]::Show("Log off error: $_", "Log Off Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Log off error: $_" -Title 'Log Off Error' -Icon 'Error'
         }
     })
 
@@ -2938,18 +2928,16 @@ function Show-SessionDetail {
     $ppDisconnBtn.Add_Click({
         try {
             if (-not $script:sdDataTable) {
-                [System.Windows.MessageBox]::Show("Session data not yet loaded - please wait.", "Not Ready", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message 'Session data not yet loaded - please wait.' -Title 'Not Ready' -Icon 'Information'
                 return
             }
             $disconnRows = @($script:sdDataTable.Select("State = 'Disconnected'"))
             if ($disconnRows.Count -eq 0) {
-                [System.Windows.MessageBox]::Show("No disconnected sessions found.", "Nothing to do", "OK", "Information") | Out-Null
+                Show-ThemedDialog -Message 'No disconnected sessions found.' -Title 'Nothing to Do' -Icon 'Information'
                 return
             }
-            $confirm = [System.Windows.MessageBox]::Show(
-                "Log off $($disconnRows.Count) disconnected session(s)?",
-                "Confirm Log Off Disconnected", "YesNo", "Warning")
-            if ($confirm -ne 'Yes') { return }
+            $confirm = Show-ThemedDialog -Message "Log off $($disconnRows.Count) disconnected session(s)?" -Title 'Confirm Log Off Disconnected' -Buttons 'YesNo' -Icon 'Warning'
+            if (-not $confirm) { return }
 
             $script:sdStatus.Text             = "Logging off $($disconnRows.Count) disconnected session(s)..."
             $script:sdLogoff.IsEnabled        = $false
@@ -2963,7 +2951,7 @@ function Show-SessionDetail {
             try {
                 $script:azArmToken = Get-ArmToken
             } catch {
-                [System.Windows.MessageBox]::Show("Failed to obtain ARM token: $_`n`nPlease restart the dashboard.", "Auth Error", "OK", "Error") | Out-Null
+                Show-ThemedDialog -Message "Failed to obtain ARM token: $_`n`nPlease restart the dashboard." -Title 'Auth Error' -Icon 'Error'
                 return
             }
 
@@ -2995,7 +2983,7 @@ function Show-SessionDetail {
             }
         }
         catch {
-            [System.Windows.MessageBox]::Show("Error: $_", "Log Off Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Error: $_" -Title 'Log Off Error' -Icon 'Error'
         }
     })
 
@@ -3015,9 +3003,7 @@ function Initialize-SessionDetail {
             Show-SessionDetail -HostPoolName $row["Host Pool"] -HostPoolRG $row["Host Pool RG"]
         }
         elseif ($row) {
-            [System.Windows.MessageBox]::Show(
-                "No sessions currently active for '$($row["Host Pool"])'.",
-                "No Sessions", "OK", "Information") | Out-Null
+            Show-ThemedDialog -Message "No sessions currently active for '$($row["Host Pool"])'." -Title 'No Sessions' -Icon 'Information'
         }
     })
 }

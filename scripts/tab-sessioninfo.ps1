@@ -937,6 +937,7 @@ Event
             # Collect all SAM account names
             $sams = @($dt.Rows | ForEach-Object { [string]$_['User'] } | Where-Object { $_ })
             if ($sams.Count -eq 0) { throw 'No users to enrich.' }
+            Write-Log "[UniqueUsers] Usernames to enrich ($($sams.Count)): $($sams -join ', ')"
 
             # Batch LDAP query (chunks of 50 to avoid filter length limits)
             $adLookup = @{}
@@ -1019,23 +1020,19 @@ Event
             # Collect all SAM account names
             $sams = @($dt.Rows | ForEach-Object { [string]$_['User'] } | Where-Object { $_ })
             if ($sams.Count -eq 0) { throw 'No users to enrich.' }
+            Write-Log "[UniqueUsers] Usernames to enrich ($($sams.Count)): $($sams -join ', ')"
 
             if ($useMgGraph) {
                 # ── Microsoft.Graph module approach (batched) ──
                 Import-Module Microsoft.Graph.Users -ErrorAction Stop
-                $mgCtx = $null
-                try { $mgCtx = Get-MgContext -ErrorAction SilentlyContinue } catch {}
-                if (-not $mgCtx) {
-                    Write-Log "[UniqueUsers] Connecting to Microsoft Graph (User.Read.All)..."
-                    $script:_uuTitle.Text = "Connecting to Microsoft Graph..."
-                    $f2 = [System.Windows.Threading.DispatcherFrame]::new()
-                    [System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvoke(
-                        [System.Windows.Threading.DispatcherPriority]::Background,
-                        [Action]{ $f2.Continue = $false }) | Out-Null
-                    [System.Windows.Threading.Dispatcher]::PushFrame($f2)
-                    Connect-MgGraph -Scopes 'User.Read.All' -NoWelcome -ErrorAction Stop
-                }
-                Write-Log "[UniqueUsers] Microsoft Graph connected"
+                # Use the existing Az.Accounts Graph token instead of the MgGraph module's own auth.
+                # This avoids an interactive sign-in popup and ensures we query the correct tenant
+                # (the one the dashboard is already authenticated against, not the admin's home tenant).
+                $mgGraphToken = Get-ArmToken -ResourceUrl 'https://graph.microsoft.com'
+                Write-Log "[UniqueUsers] Connecting MgGraph with existing Az token (tenant: $script:azTenantId)..."
+                Connect-MgGraph -AccessToken ($mgGraphToken | ConvertTo-SecureString -AsPlainText -Force) -NoWelcome -ErrorAction Stop
+                $mgCtx = Get-MgContext
+                Write-Log "[UniqueUsers] MgGraph connected: TenantId=$($mgCtx.TenantId) Account=$($mgCtx.Account)"
 
                 # Build lookup hashtable via batched queries (3 passes with fallback)
                 $entraLookup = @{}
@@ -1050,21 +1047,25 @@ Event
                     $batch = @($remaining[$i..([Math]::Min($i + $batchSize - 1, $remaining.Count - 1))])
                     $parts = $batch | ForEach-Object { "onPremisesSamAccountName eq '$_'" }
                     $batchFilter = $parts -join ' or '
-                    Write-Log "[UniqueUsers] MgGraph batch [samAccount] $($batch.Count) user(s)"
+                    Write-Log "[UniqueUsers] MgGraph Pass1-samAccount querying: $($batch -join ', ')"
+                    Write-Log "[UniqueUsers] MgGraph Pass1-samAccount filter: $batchFilter"
                     try {
                         $results = Get-MgUser -Filter $batchFilter -Property $props -ConsistencyLevel eventual -CountVariable c -All -ErrorAction Stop
+                        $resultCount = if ($results) { @($results).Count } else { 0 }
+                        Write-Log "[UniqueUsers] MgGraph Pass1-samAccount returned $resultCount result(s) (CountVariable=$c)"
                         if ($results) {
                             foreach ($u in $results) {
                                 $key = if ($u.OnPremisesSamAccountName) { $u.OnPremisesSamAccountName.ToLower() } else { $null }
-                                if ($key) { $entraLookup[$key] = $u }
+                                if ($key) { $entraLookup[$key] = $u; Write-Log "[UniqueUsers]   matched '$key' → UPN=$($u.UserPrincipalName)" }
                             }
                         }
                     } catch {
-                        Write-Log "[UniqueUsers] MgGraph batch samAccount failed: $_"
+                        Write-Log "[UniqueUsers] MgGraph Pass1-samAccount FAILED: $_"
                     }
                 }
                 foreach ($s in $remaining) { if (-not $entraLookup.ContainsKey($s.ToLower())) { $still.Add($s) } }
                 $remaining = $still
+                if ($remaining.Count -gt 0) { Write-Log "[UniqueUsers] MgGraph Pass1 unmatched ($($remaining.Count)): $($remaining -join ', ')" }
 
                 # Pass 2: mailNickname (for unmatched)
                 if ($remaining.Count -gt 0) {
@@ -1073,40 +1074,49 @@ Event
                         $batch = @($remaining[$i..([Math]::Min($i + $batchSize - 1, $remaining.Count - 1))])
                         $parts = $batch | ForEach-Object { "mailNickname eq '$_'" }
                         $batchFilter = $parts -join ' or '
-                        Write-Log "[UniqueUsers] MgGraph batch [mailNickname] $($batch.Count) user(s)"
+                        Write-Log "[UniqueUsers] MgGraph Pass2-mailNickname querying: $($batch -join ', ')"
                         try {
-                            $results = Get-MgUser -Filter $batchFilter -Property $props -All -ErrorAction Stop
+                            # mailNickname 'or' filters also require advanced query (ConsistencyLevel eventual)
+                            $results = Get-MgUser -Filter $batchFilter -Property $props -ConsistencyLevel eventual -CountVariable c -All -ErrorAction Stop
+                            $resultCount = if ($results) { @($results).Count } else { 0 }
+                            Write-Log "[UniqueUsers] MgGraph Pass2-mailNickname returned $resultCount result(s)"
                             if ($results) {
                                 foreach ($u in $results) {
                                     $key = if ($u.MailNickname) { $u.MailNickname.ToLower() } else { $null }
-                                    if ($key) { $entraLookup[$key] = $u }
+                                    if ($key) { $entraLookup[$key] = $u; Write-Log "[UniqueUsers]   matched '$key' → UPN=$($u.UserPrincipalName)" }
                                 }
                             }
                         } catch {
-                            Write-Log "[UniqueUsers] MgGraph batch mailNickname failed: $_"
+                            Write-Log "[UniqueUsers] MgGraph Pass2-mailNickname FAILED: $_"
                         }
                     }
                     foreach ($s in $remaining) { if (-not $entraLookup.ContainsKey($s.ToLower())) { $still.Add($s) } }
                     $remaining = $still
+                    if ($remaining.Count -gt 0) { Write-Log "[UniqueUsers] MgGraph Pass2 unmatched ($($remaining.Count)): $($remaining -join ', ')" }
                 }
 
                 # Pass 3: UPN startswith (individual - no batch 'or' for startswith)
                 if ($remaining.Count -gt 0) {
-                    Write-Log "[UniqueUsers] MgGraph UPN fallback for $($remaining.Count) user(s)"
+                    Write-Log "[UniqueUsers] MgGraph Pass3-UPN startswith for $($remaining.Count) user(s)"
                     foreach ($s in $remaining) {
                         try {
-                            $u = Get-MgUser -Filter "startswith(userPrincipalName,'$($s)@')" -Property $props -Top 1 -ErrorAction Stop
+                            # startswith() is an advanced query function - requires ConsistencyLevel eventual
+                            $u = Get-MgUser -Filter "startswith(userPrincipalName,'$($s)@')" -Property $props -ConsistencyLevel eventual -Top 1 -ErrorAction Stop
                             if ($u) {
                                 $resolved = if ($u -is [array]) { $u[0] } else { $u }
                                 $entraLookup[$s.ToLower()] = $resolved
+                                Write-Log "[UniqueUsers] MgGraph Pass3-UPN '$s' → matched UPN=$($resolved.UserPrincipalName)"
+                            } else {
+                                Write-Log "[UniqueUsers] MgGraph Pass3-UPN '$s' → no match"
                             }
                         } catch {
-                            Write-Log "[UniqueUsers] MgGraph UPN lookup failed for '$s': $_"
+                            Write-Log "[UniqueUsers] MgGraph Pass3-UPN '$s' FAILED: $_"
                         }
                     }
                 }
 
-                Write-Log "[UniqueUsers] MgGraph batch lookup resolved $($entraLookup.Count) of $($sams.Count) user(s)"
+                $notFound = @($sams | Where-Object { -not $entraLookup.ContainsKey($_.ToLower()) })
+                Write-Log "[UniqueUsers] MgGraph resolved $($entraLookup.Count)/$($sams.Count). Not found: $(if ($notFound) { $notFound -join ', ' } else { 'none' })"
 
                 # Apply results to DataTable
                 foreach ($row in $dt.Rows) {
@@ -1124,9 +1134,9 @@ Event
                 }
             } else {
                 # ── REST API fallback (batched) ──
-                Write-Log "[UniqueUsers] Acquiring Graph token via Get-ArmToken..."
+                Write-Log "[UniqueUsers] Acquiring Graph token via Get-ArmToken (target tenant: $script:azTenantId)..."
                 $graphToken = Get-ArmToken -ResourceUrl 'https://graph.microsoft.com'
-                Write-Log "[UniqueUsers] Graph token acquired, token length=$($graphToken.Length)"
+                Write-Log "[UniqueUsers] Graph token acquired, length=$($graphToken.Length). Token prefix: $($graphToken.Substring(0,[Math]::Min(40,$graphToken.Length)))..."
                 $hdrs = @{ Authorization = "Bearer $graphToken"; 'Content-Type' = 'application/json'; ConsistencyLevel = 'eventual' }
                 $selFields = 'givenName,surname,department,userPrincipalName,mailNickname,onPremisesSamAccountName'
 
@@ -1142,21 +1152,26 @@ Event
                     $parts = $batch | ForEach-Object { "onPremisesSamAccountName eq '$([Uri]::EscapeDataString($_))'" }
                     $filterStr = [Uri]::EscapeDataString(($parts -join ' or '))
                     $uri = "https://graph.microsoft.com/v1.0/users?`$filter=$filterStr&`$select=$selFields&`$count=true"
-                    Write-Log "[UniqueUsers] REST batch [samAccount] $($batch.Count) user(s)"
+                    Write-Log "[UniqueUsers] REST Pass1-samAccount querying: $($batch -join ', ')"
                     try {
                         $gResp = Invoke-RestMethod -Uri $uri -Headers $hdrs -Method GET -ErrorAction Stop
+                        $resultCount = if ($gResp.value) { $gResp.value.Count } else { 0 }
+                        Write-Log "[UniqueUsers] REST Pass1-samAccount returned $resultCount result(s) (odataCount=$($gResp.'@odata.count'))"
                         if ($gResp.value) {
                             foreach ($u in $gResp.value) {
                                 $key = if ($u.onPremisesSamAccountName) { $u.onPremisesSamAccountName.ToLower() } else { $null }
-                                if ($key) { $entraLookup[$key] = $u }
+                                if ($key) { $entraLookup[$key] = $u; Write-Log "[UniqueUsers]   matched '$key' → UPN=$($u.userPrincipalName)" }
                             }
+                        } else {
+                            Write-Log "[UniqueUsers] REST Pass1-samAccount: empty response - Graph returned no users matching these SAM names"
                         }
                     } catch {
-                        Write-Log "[UniqueUsers] REST batch samAccount failed: $_"
+                        Write-Log "[UniqueUsers] REST Pass1-samAccount FAILED: $_"
                     }
                 }
                 foreach ($s in $remaining) { if (-not $entraLookup.ContainsKey($s.ToLower())) { $still.Add($s) } }
                 $remaining = $still
+                if ($remaining.Count -gt 0) { Write-Log "[UniqueUsers] REST Pass1 unmatched ($($remaining.Count)): $($remaining -join ', ')" }
 
                 # Pass 2: mailNickname
                 if ($remaining.Count -gt 0) {
@@ -1165,42 +1180,53 @@ Event
                         $batch = @($remaining[$i..([Math]::Min($i + $batchSize - 1, $remaining.Count - 1))])
                         $parts = $batch | ForEach-Object { "mailNickname eq '$([Uri]::EscapeDataString($_))'" }
                         $filterStr = [Uri]::EscapeDataString(($parts -join ' or '))
-                        $uri = "https://graph.microsoft.com/v1.0/users?`$filter=$filterStr&`$select=$selFields"
-                        Write-Log "[UniqueUsers] REST batch [mailNickname] $($batch.Count) user(s)"
+                        # $count=true is required alongside ConsistencyLevel:eventual for advanced query filters
+                        $uri = "https://graph.microsoft.com/v1.0/users?`$filter=$filterStr&`$select=$selFields&`$count=true"
+                        Write-Log "[UniqueUsers] REST Pass2-mailNickname querying: $($batch -join ', ')"
                         try {
                             $gResp = Invoke-RestMethod -Uri $uri -Headers $hdrs -Method GET -ErrorAction Stop
+                            $resultCount = if ($gResp.value) { $gResp.value.Count } else { 0 }
+                            Write-Log "[UniqueUsers] REST Pass2-mailNickname returned $resultCount result(s)"
                             if ($gResp.value) {
                                 foreach ($u in $gResp.value) {
                                     $key = if ($u.mailNickname) { $u.mailNickname.ToLower() } else { $null }
-                                    if ($key) { $entraLookup[$key] = $u }
+                                    if ($key) { $entraLookup[$key] = $u; Write-Log "[UniqueUsers]   matched '$key' → UPN=$($u.userPrincipalName)" }
                                 }
+                            } else {
+                                Write-Log "[UniqueUsers] REST Pass2-mailNickname: empty response - no mailNickname match for these usernames"
                             }
                         } catch {
-                            Write-Log "[UniqueUsers] REST batch mailNickname failed: $_"
+                            Write-Log "[UniqueUsers] REST Pass2-mailNickname FAILED: $_"
                         }
                     }
                     foreach ($s in $remaining) { if (-not $entraLookup.ContainsKey($s.ToLower())) { $still.Add($s) } }
                     $remaining = $still
+                    if ($remaining.Count -gt 0) { Write-Log "[UniqueUsers] REST Pass2 unmatched ($($remaining.Count)): $($remaining -join ', ')" }
                 }
 
                 # Pass 3: UPN startswith (individual - can't batch startswith)
                 if ($remaining.Count -gt 0) {
-                    Write-Log "[UniqueUsers] REST UPN fallback for $($remaining.Count) user(s)"
+                    Write-Log "[UniqueUsers] REST Pass3-UPN startswith for $($remaining.Count) user(s)"
                     foreach ($s in $remaining) {
                         $upnFilter = [Uri]::EscapeDataString("startswith(userPrincipalName,'$($s)@')")
-                        $uri = "https://graph.microsoft.com/v1.0/users?`$filter=$upnFilter&`$select=$selFields&`$top=1"
+                        # startswith requires advanced query - $count=true is needed alongside ConsistencyLevel:eventual header
+                        $uri = "https://graph.microsoft.com/v1.0/users?`$filter=$upnFilter&`$select=$selFields&`$count=true&`$top=1"
                         try {
                             $gResp = Invoke-RestMethod -Uri $uri -Headers $hdrs -Method GET -ErrorAction Stop
                             if ($gResp.value -and $gResp.value.Count -gt 0) {
                                 $entraLookup[$s.ToLower()] = $gResp.value[0]
+                                Write-Log "[UniqueUsers] REST Pass3-UPN '$s' → matched UPN=$($gResp.value[0].userPrincipalName)"
+                            } else {
+                                Write-Log "[UniqueUsers] REST Pass3-UPN '$s' → no match (no UPN starts with '$s@')"
                             }
                         } catch {
-                            Write-Log "[UniqueUsers] REST UPN lookup failed for '$s': $_"
+                            Write-Log "[UniqueUsers] REST Pass3-UPN '$s' FAILED: $_"
                         }
                     }
                 }
 
-                Write-Log "[UniqueUsers] REST batch lookup resolved $($entraLookup.Count) of $($sams.Count) user(s)"
+                $notFound = @($sams | Where-Object { -not $entraLookup.ContainsKey($_.ToLower()) })
+                Write-Log "[UniqueUsers] REST resolved $($entraLookup.Count)/$($sams.Count). Not found: $(if ($notFound) { $notFound -join ', ' } else { 'none' })"
 
                 # Apply results to DataTable
                 foreach ($row in $dt.Rows) {

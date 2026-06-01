@@ -107,7 +107,7 @@ $script:shCostTimer.Add_Tick({
             $script:shCostPS = $null; $script:shCostHandle = $null
             $script:SHLoadCostsButton.IsEnabled = $true
             $script:SHLoadCostsButton.Content   = 'Load Costs'
-            [System.Windows.MessageBox]::Show("Cost fetch timed out.`n`nCheck that prices.azure.com is accessible from this machine.", 'Load Costs Timeout', [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+            Show-ThemedDialog -Message "Cost fetch timed out.`n`nCheck that prices.azure.com is accessible from this machine." -Title 'Load Costs Timeout' -Icon 'Warning'
         }
         return  # Not done yet - timer will fire again in 500ms
     }
@@ -323,10 +323,7 @@ $script:shCostTimer.Add_Tick({
     } catch {
         if ($script:LogFile) { try { [IO.File]::AppendAllText($script:LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [CostLookup] ERROR: $_`r`n") } catch {} }
         if ($script:SHActionStatus) { $script:SHActionStatus.Text = "Load Costs failed: $_" }
-        [System.Windows.MessageBox]::Show(
-            "Cost fetch failed:`n$_", 'Load Costs Error',
-            [System.Windows.MessageBoxButton]::OK,
-            [System.Windows.MessageBoxImage]::Error) | Out-Null
+        Show-ThemedDialog -Message "Cost fetch failed:`n$_" -Title 'Load Costs Error' -Icon 'Error'
         if ($script:SHLoadCostsButton) { $script:SHLoadCostsButton.IsEnabled = $true; $script:SHLoadCostsButton.Content = 'Load Costs' }
     } finally {
         try { $script:shCostPS.Runspace.Dispose() } catch {}
@@ -371,7 +368,7 @@ $script:shTxnCostTimer.Add_Tick({
                 if ($script:SHActionStatus) { $script:SHActionStatus.Text = 'Txn costs unavailable: subscription offer type not supported by Cost Management' }
             } else {
                 if ($script:SHActionStatus) { $script:SHActionStatus.Text = 'Txn cost fetch error - enable logging for details' }
-                [System.Windows.MessageBox]::Show("Transaction cost fetch failed:`n$errDetail", 'Txn Cost Error', [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                Show-ThemedDialog -Message "Transaction cost fetch failed:`n$errDetail" -Title 'Txn Cost Error' -Icon 'Warning'
             }
         }
         if ($result -and $result.Count -gt 0 -and $result[0].TxnMoMap) {
@@ -689,7 +686,7 @@ $script:afCostTimer.Add_Tick({
             $script:afCostPS = $null; $script:afCostHandle = $null
             $script:AFLoadCostsButton.IsEnabled = $true
             $script:AFLoadCostsButton.Content   = 'Load Costs'
-            [System.Windows.MessageBox]::Show("Cost fetch timed out.`n`nCheck that prices.azure.com is accessible from this machine.", 'Load Costs Timeout', [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+            Show-ThemedDialog -Message "Cost fetch timed out.`n`nCheck that prices.azure.com is accessible from this machine." -Title 'Load Costs Timeout' -Icon 'Warning'
         }
         return
     }
@@ -743,10 +740,7 @@ $script:afCostTimer.Add_Tick({
     } catch {
         if ($script:LogFile) { try { [IO.File]::AppendAllText($script:LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [CostLookup-Files] ERROR: $_`r`n") } catch {} }
         if ($script:FilesStatus) { $script:FilesStatus.Text = "Load Costs failed: $_" }
-        [System.Windows.MessageBox]::Show(
-            "Cost fetch failed:`n$_", 'Load Costs Error',
-            [System.Windows.MessageBoxButton]::OK,
-            [System.Windows.MessageBoxImage]::Error) | Out-Null
+        Show-ThemedDialog -Message "Cost fetch failed:`n$_" -Title 'Load Costs Error' -Icon 'Error'
     } finally {
         try { $script:afCostPS.Runspace.Dispose() } catch {}
         try { $script:afCostPS.Dispose() } catch {}
@@ -923,7 +917,7 @@ $script:isCostTimer.Add_Tick({
             $script:isCostPS = $null; $script:isCostHandle = $null
             $script:ISLoadCostsButton.IsEnabled = $true
             $script:ISLoadCostsButton.Content   = 'Load Costs'
-            [System.Windows.MessageBox]::Show("Cost fetch timed out.`n`nCheck that prices.azure.com is accessible from this machine.", 'Load Costs Timeout', [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+            Show-ThemedDialog -Message "Cost fetch timed out.`n`nCheck that prices.azure.com is accessible from this machine." -Title 'Load Costs Timeout' -Icon 'Warning'
         }
         return
     }
@@ -1124,7 +1118,7 @@ $script:isTxnCostTimer.Add_Tick({
                 if ($script:ISActionStatus) { $script:ISActionStatus.Text = 'Txn costs unavailable: subscription offer type not supported by Cost Management' }
             } else {
                 if ($script:ISActionStatus) { $script:ISActionStatus.Text = 'Txn cost fetch error - enable logging for details' }
-                [System.Windows.MessageBox]::Show("Transaction cost fetch failed:`n$errDetail", 'Txn Cost Error', [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                Show-ThemedDialog -Message "Transaction cost fetch failed:`n$errDetail" -Title 'Txn Cost Error' -Icon 'Warning'
             }
         }
         if ($result -and $result.Count -gt 0 -and $result[0].TxnMoMap) {
