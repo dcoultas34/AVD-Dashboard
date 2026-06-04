@@ -72,7 +72,7 @@ $script:PricingCurrency    = 'GBP'
 $script:PricingCountryCode = 'GB'
 $script:HoursPerMonth         = 730   # Full month (365 days x 24 hrs / 12 months) - used for column cost calculation
 $script:SHUsageHoursPerMonth  = 416   # Session Hosts actual planned usage: 16 hrs/day x 6 days/week
-$script:UseAHBPricing      = $false
+$script:UseAHBPricing      = $true   # Default: Linux/base rate (no Windows licence surcharge). Overridden by Costs.PricingWindowsLicence in config.psd1.
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── Script-level DispatcherTimer ───────────────────────────────────────────────

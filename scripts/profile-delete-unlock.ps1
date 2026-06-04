@@ -60,16 +60,14 @@ param(
     [string]   $StorageToken   = "",      # OAuth bearer token auth (preferred) - single token for all accounts
     [string]   $FolderName,
     [object[]] $LockedAccounts,
-    [string]   $FileShareName,
-    [string]   $FileShareSubPath,
+    [hashtable]$ShareNameMap    = @{},    # per-account share names derived from the storage map
+    [hashtable]$ShareSubPathMap = @{},    # per-account subpaths derived from the storage map
     [string]   $LogFile = ""
 )
 
 # Load storage REST helper functions into this runspace.
 # $LogFile (if set) is visible to storage-api-helpers.ps1 for REST call logging.
 . ([scriptblock]::Create($StorageHelperCode))
-
-$BasePath = if ($FileShareSubPath) { "$FileShareSubPath/$FolderName" } else { $FolderName }
 $messages = [System.Collections.Generic.List[PSCustomObject]]::new()
 $errors   = [System.Collections.Generic.List[string]]::new()
 
@@ -82,6 +80,10 @@ Msg ("  " + ("-" * 48)) "#3B5A7A"
 foreach ($la in $LockedAccounts) {
     Msg ""
     Msg "  > Processing: $($la.Name)" "#E5E7EB"
+
+    $acctShareName = [string]$ShareNameMap[$la.Name]
+    $acctSubPath   = [string]$ShareSubPathMap[$la.Name]
+    $BasePath      = if ($acctSubPath) { "$acctSubPath/$FolderName" } else { $FolderName }
 
     # Determine auth method: OAuth bearer token (preferred) or SharedKey (legacy)
     $authSplat = @{ AccountName = $la.Name }
@@ -99,17 +101,17 @@ foreach ($la in $LockedAccounts) {
         if ($la.HandleCount -gt 0) {
             Msg "    Closing $($la.HandleCount) handle(s)..." "#9CA3AF"
             $closed = Close-StorageFileHandles @authSplat `
-                          -ShareName $FileShareName -Path $BasePath -Recursive
+                          -ShareName $acctShareName -Path $BasePath -Recursive
             Start-Sleep -Seconds 2
             Msg "    OK All handles closed ($closed closed by server)" "#34D399"
         }
         foreach ($lf in $la.LockFiles) {
             $lp = "$BasePath/$lf"
             $exists = Test-StorageFileExists @authSplat `
-                          -ShareName $FileShareName -FilePath $lp
+                          -ShareName $acctShareName -FilePath $lp
             if ($exists) {
                 Remove-StorageFileItem @authSplat `
-                    -ShareName $FileShareName -FilePath $lp
+                    -ShareName $acctShareName -FilePath $lp
                 Msg "    OK Removed lock file: $lf" "#34D399"
             } else {
                 Msg "    [INFO] Lock file already gone: $lf" "#9CA3AF"

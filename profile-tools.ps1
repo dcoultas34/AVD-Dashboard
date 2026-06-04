@@ -430,8 +430,6 @@ $_cfg.ProfileTools.StorageAccountShareMap.GetEnumerator() | ForEach-Object {
     $StorageAccountShareMap[$_.Key] = $_.Value
 }
 $ExcludeStorage = @($_cfg.ProfileTools.ExcludeStorage | Where-Object { $_ })
-$FileShareName           = [string]$_cfg.ProfileTools.FileShareName
-$FileShareSubPath        = [string]$_cfg.ProfileTools.FileShareSubPath
 
 $StorageAccountPairs = [ordered]@{}
 if ($_cfg.ProfileTools.StorageAccountPairs) {
@@ -2008,9 +2006,7 @@ foreach ($saName in $StorageAccountShareMap.Keys) {
             $StatusBar.Text = "Opened: $openBtnPath"
         } catch {
             Write-Log "ERROR [ProfileTools] Open Explorer failed for '$openBtnPath': $_"
-            [System.Windows.MessageBox]::Show(
-                "Could not open Explorer for:`n$openBtnPath`n`nError: $_",
-                "Open Failed", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Title "Explorer Error" -Message "Could not open Explorer for:`n$openBtnPath`n`nError: $_" -Icon Error | Out-Null
         }
     }.GetNewClosure())
 
@@ -2021,9 +2017,7 @@ foreach ($saName in $StorageAccountShareMap.Keys) {
             [System.Windows.Clipboard]::SetText($copyBtnPath)
             $StatusBar.Text = "Copied to clipboard: $copyBtnPath"
         } catch {
-            [System.Windows.MessageBox]::Show(
-                "Could not copy to clipboard.`n`nError: $_",
-                "Copy Failed", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Title "Clipboard Error" -Message "Could not copy to clipboard.`n`nError: $_" -Icon Error | Out-Null
         }
     }.GetNewClosure())
 
@@ -2065,9 +2059,7 @@ $ScanSizesBtn.Add_Click({
     $selectedAccounts = Get-CheckedAccounts $script:SizeStorageCheckboxes
 
     if ($selectedAccounts.Count -eq 0) {
-        [System.Windows.MessageBox]::Show(
-            "Please select at least one storage account to scan.",
-            "No Storage Account Selected", "OK", "Warning") | Out-Null
+        Show-ThemedDialog -Title "No Storage Account Selected" -Message "Please select at least one storage account to scan." -Icon Warning | Out-Null
         return
     }
 
@@ -2095,9 +2087,7 @@ $ScanSizesBtn.Add_Click({
     $scanScriptPath = $script:profileSizeScript
 
     if (-not (Test-Path $scanScriptPath)) {
-        [System.Windows.MessageBox]::Show(
-            "profile-sizes.ps1 not found:`n$scanScriptPath`n`nPlace it in the scripts subfolder alongside profile-tools.ps1.",
-            "Script Not Found", "OK", "Error") | Out-Null
+        Show-ThemedDialog -Title "Script Not Found" -Message "profile-sizes.ps1 not found:`n$scanScriptPath`n`nPlace it in the scripts subfolder alongside profile-tools.ps1." -Icon Error | Out-Null
         $ScanSizesBtn.IsEnabled = $true
         $ScanSizesBtn.Content   = "  Scan Folder Sizes"
         $StatusBar.Text         = "Ready."
@@ -2188,9 +2178,7 @@ $ProfileSizeGrid.Add_MouseDoubleClick({
             $StatusBar.Text = "Opened: $($row.FullPath)"
         } catch {
             Write-Log "ERROR [ProfileTools] Open Explorer failed for '$($row.FullPath)': $_"
-            [System.Windows.MessageBox]::Show(
-                "Could not open Explorer:`n$($row.FullPath)`n`nError: $_",
-                "Open Failed", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Title "Explorer Error" -Message "Could not open Explorer:`n$($row.FullPath)`n`nError: $_" -Icon Error | Out-Null
         }
     }
 })
@@ -2320,7 +2308,7 @@ $ExportCleanupBtn.Add_Click({
             $StatusBar.Text = "Exported $($script:cleanupItems.Count) row(s) to: $($dlg.FileName)"
         } catch {
             Write-Log "ERROR [ProfileTools] CSV export failed to '$($dlg.FileName)': $_"
-            [System.Windows.MessageBox]::Show("Export failed:`n$_", "Export Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Title "Export Error" -Message "Export failed:`n$_" -Icon Error | Out-Null
         }
     }
 })
@@ -2336,25 +2324,19 @@ $ScanCleanupBtn.Add_Click({
     $selectedAccounts = Get-CheckedAccounts $script:CleanupStorageCheckboxes
 
     if ($selectedAccounts.Count -eq 0) {
-        [System.Windows.MessageBox]::Show(
-            "Please select at least one storage account to scan.",
-            "No Storage Account Selected", "OK", "Warning") | Out-Null
+        Show-ThemedDialog -Title "No Storage Account Selected" -Message "Please select at least one storage account to scan." -Icon Warning | Out-Null
         return
     }
 
     $threshold = 0
     if (-not [int]::TryParse($CleanupThresholdBox.Text.Trim(), [ref]$threshold) -or $threshold -lt $CLEANUP_THRESHOLD_MIN -or $threshold -gt $CLEANUP_THRESHOLD_MAX) {
-        [System.Windows.MessageBox]::Show(
-            "Please enter a valid number of days between $CLEANUP_THRESHOLD_MIN and $CLEANUP_THRESHOLD_MAX.",
-            "Invalid Threshold", "OK", "Warning") | Out-Null
+        Show-ThemedDialog -Title "Invalid Threshold" -Message "Please enter a valid number of days between $CLEANUP_THRESHOLD_MIN and $CLEANUP_THRESHOLD_MAX." -Icon Warning | Out-Null
         return
     }
 
     $cleanupScriptPath = $script:profileCleanupScript
     if (-not (Test-Path $cleanupScriptPath)) {
-        [System.Windows.MessageBox]::Show(
-            "profile-cleanup.ps1 not found:`n$cleanupScriptPath`n`nPlace it in the scripts subfolder alongside profile-tools.ps1.",
-            "Script Not Found", "OK", "Error") | Out-Null
+        Show-ThemedDialog -Title "Script Not Found" -Message "profile-cleanup.ps1 not found:`n$cleanupScriptPath`n`nPlace it in the scripts subfolder alongside profile-tools.ps1." -Icon Error | Out-Null
         return
     }
 
@@ -2457,10 +2439,8 @@ function Invoke-CleanupDelete {
     if ($totalCount -gt $CLEANUP_CONFIRM_CAP) { $lines += "`n  ... and $($totalCount - $CLEANUP_CONFIRM_CAP) more" }
 
     $prefix  = if ($totalCount -gt $CLEANUP_BATCH_WARN) { "WARNING: You are deleting a large number of folders!`n`n" } else { "" }
-    $confirm = [System.Windows.MessageBox]::Show(
-        "${prefix}You are about to PERMANENTLY DELETE $totalCount profile folder(s):`n`n$lines`n`nThis action cannot be undone.`nAre you absolutely sure?",
-        "Confirm $ActionLabel", "YesNo", "Warning")
-    if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+    $confirm = Show-ThemedDialog -Message "${prefix}You are about to PERMANENTLY DELETE $totalCount profile folder(s):`n`n$lines`n`nThis action cannot be undone.`nAre you absolutely sure?" -Title "Confirm $ActionLabel" -Buttons YesNo -Icon Warning
+    if (-not $confirm) { return }
 
     # Audit log - record the cleanup deletion
     foreach ($item in $ItemsToDelete) {
@@ -2528,9 +2508,7 @@ function Invoke-CleanupDelete {
 
             if ($deleteState.FailedList.Count -gt 0) {
                 $errList = ($deleteState.FailedList | ForEach-Object { "  $_" }) -join "`n"
-                [System.Windows.MessageBox]::Show(
-                    "$($deleteState.Succeeded) folder(s) deleted successfully.`n$($deleteState.FailedList.Count) failed:`n`n$errList",
-                    "Deletion Results", "OK", "Warning") | Out-Null
+                Show-ThemedDialog -Title "Deletion Complete" -Message "$($deleteState.Succeeded) folder(s) deleted successfully.`n$($deleteState.FailedList.Count) failed:`n`n$errList" -Icon Warning | Out-Null
             }
 
             $remaining = $localAllResults.Count
@@ -2576,9 +2554,7 @@ $ProfileCleanupGrid.Add_MouseDoubleClick({
             Start-Process explorer.exe -ArgumentList $row.FullPath
             $StatusBar.Text = "Opened: $($row.FullPath)"
         } catch {
-            [System.Windows.MessageBox]::Show(
-                "Could not open Explorer:`n$($row.FullPath)`n`nError: $_",
-                "Open Failed", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Title "Explorer Error" -Message "Could not open Explorer:`n$($row.FullPath)`n`nError: $_" -Icon Error | Out-Null
         }
     }
 })
@@ -2886,9 +2862,7 @@ function Clear-Log {
 
 foreach ($s in @($script:profileDeleteScript, $script:profileDeleteLocksScript, $script:profileDeleteRemoveScript)) {
     if (-not (Test-Path $s)) {
-        [System.Windows.MessageBox]::Show(
-            "Required script not found:`n$s`n`nPlace it in the scripts subfolder alongside profile-tools.ps1.",
-            "Script Not Found", "OK", "Error") | Out-Null
+        Show-ThemedDialog -Title "Script Not Found" -Message "Required script not found:`n$s`n`nPlace it in the scripts subfolder alongside profile-tools.ps1." -Icon Error | Out-Null
         exit 1
     }
 }
@@ -2898,120 +2872,369 @@ $lockCleanupScript = [scriptblock]::Create((Get-Content $script:profileDeleteLoc
 $removeScript      = [scriptblock]::Create((Get-Content $script:profileDeleteRemoveScript -Raw))
 
 # =============================================================================
+# Find-ProfileFolders
+# Searches the share paths for all folders whose names contain $SearchName.
+# Returns an array of PSCustomObjects: StorageAccount, FolderName, FolderPath.
+# =============================================================================
+function Find-ProfileFolders {
+    param(
+        [string]$SearchName,
+        [string[]]$SelectedAccounts,
+        [hashtable]$ShareMap,
+        [string]$SubPath      = '',
+        [string]$StorageToken = '',   # OAuth bearer token for Azure Files data plane
+        [ref]$SearchErrors    = $null # collects per-account error strings for the caller to display
+    )
+    $results   = @()
+    $errorList = [System.Collections.Generic.List[string]]::new()
+
+    # Dot-source the storage REST helper so Invoke-StorageFileRest is available.
+    # This is the same helper used by the background scripts and already handles:
+    #   - x-ms-file-request-intent: backup  (required for OAuth calls to Azure Files)
+    #   - x-ms-version and x-ms-date headers
+    #   - Correct URI construction for Azure Files
+    . ([scriptblock]::Create($script:storageHelperCode))
+
+    foreach ($saName in $SelectedAccounts) {
+        if (-not $ShareMap.ContainsKey($saName)) { continue }
+        $uncPath = $ShareMap[$saName]
+
+        # Parse account name, share name, and optional subpath from the UNC path:
+        #   \\stfeavdgenprdsdc.file.core.windows.net\fslogix-general\profiles
+        #   -> AccountName = 'stfeavdgenprdsdc'  ShareName = 'fslogix-general'  SubPath = 'profiles'
+        $m = [regex]::Match($uncPath, '\\\\(?<acct>[^.\\]+)\.file\.core\.windows\.net\\(?<share>[^\\]+)(?:\\(?<sub>.+))?')
+        if (-not $m.Success) {
+            $errorList.Add("PARSE [$saName]: cannot extract account/share from '$uncPath'")
+            continue
+        }
+        $acctName  = $m.Groups['acct'].Value   # e.g. stfeavdgenprdsdc
+        $shareName = $m.Groups['share'].Value  # e.g. fslogix-general
+        $acctSub   = $m.Groups['sub'].Value    # e.g. profiles (empty if profiles are at share root)
+
+        # List the directory via Azure Files REST API.
+        # No prefix filter in the request - list all entries and filter client-side.
+        # The prefix query parameter was rejected with InvalidResourceName so we
+        # avoid it entirely.
+        $restOk = $false
+        if ($StorageToken) {
+            try {
+                $marker = ''
+                do {
+                    $qp = @{ restype = 'directory'; comp = 'list' }
+                    if ($marker) { $qp['marker'] = $marker }
+                    $resp = Invoke-StorageFileRest `
+                        -AccountName $acctName `
+                        -BearerToken $StorageToken `
+                        -Method 'GET' `
+                        -ShareName $shareName `
+                        -Path $acctSub `
+                        -QueryParams $qp `
+                        -ErrorAction Stop
+
+                    # Strip UTF-8 BOM that PS 5.1 may leave on the content string
+                    $content  = $resp.Content
+                    $xmlStart = $content.IndexOf('<')
+                    if ($xmlStart -gt 0) { $content = $content.Substring($xmlStart) }
+                    [xml]$xml = $content
+
+                    # Filter directories client-side: names starting with the search term
+                    foreach ($dir in @($xml.EnumerationResults.Entries.Directory)) {
+                        if (-not $dir) { continue }
+                        $name = [string]$dir.Name
+                        if (-not $name -or $name -notlike "$SearchName*") { continue }
+                        $results += [PSCustomObject]@{ StorageAccount = $saName; FolderName = $name; FolderPath = "$uncPath\$name" }
+                    }
+                    $marker = [string]$xml.EnumerationResults.NextMarker
+                } while ($marker)
+                $restOk = $true
+            } catch {
+                $errorList.Add("REST [$saName]: $_")
+            }
+        }
+
+        # Fallback: SMB listing (may fail if the share root is permission-restricted)
+        if (-not $restOk) {
+            $root = $uncPath
+            try {
+                $dirs = @(Get-ChildItem -Path $root -Directory -ErrorAction Stop |
+                          Where-Object { $_.Name -like "$SearchName*" })
+                foreach ($d in $dirs) {
+                    $results += [PSCustomObject]@{ StorageAccount = $saName; FolderName = $d.Name; FolderPath = $d.FullName }
+                }
+            } catch {
+                $errorList.Add("SMB  [$saName]: $_")
+            }
+        }
+    }
+
+    if ($null -ne $SearchErrors) { $SearchErrors.Value = $errorList }
+    return $results
+}
+
+# =============================================================================
+# Show-FolderPickerDialog
+# Displays a list of matching profile folders so the user can select one or more.
+# Returns an array of chosen PSCustomObjects (@{StorageAccount;FolderName;FolderPath})
+# or $null if the user cancelled.
+# =============================================================================
+function Show-FolderPickerDialog {
+    param(
+        [PSCustomObject[]]$FolderMatches,
+        [string]$SearchName
+    )
+
+    [xml]$fpXaml = @'
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Select Profile Folder"
+    Height="340" Width="620" MinWidth="500"
+    ResizeMode="CanResize"
+    WindowStartupLocation="CenterOwner"
+    Background="#F4F6F9" FontFamily="Segoe UI">
+    <DockPanel Margin="20">
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+            <TextBlock x:Name="HeaderText" FontSize="13" FontWeight="SemiBold"
+                       Foreground="{DynamicResource Avd.Window.Fg}" TextWrapping="Wrap"/>
+            <TextBlock x:Name="HintText"
+                       Text="Select one or more folders, then click OK.  (Ctrl+Click or Shift+Click to select multiple)"
+                       FontSize="12" Foreground="{DynamicResource Avd.Fg.Hint}" Margin="0,4,0,0"/>
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button x:Name="CancelBtn" Content="Cancel" Width="90" Height="30"
+                    Margin="0,0,8,0" IsCancel="True"
+                    Background="#E5E5E5" Foreground="#444" BorderThickness="0"
+                    FontSize="12" FontWeight="SemiBold" Cursor="Hand">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#D0D0D0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+            <Button x:Name="OkBtn" Content="OK" Width="90" Height="30"
+                    IsDefault="True" IsEnabled="False"
+                    Background="#0078D4" Foreground="White" BorderThickness="0"
+                    FontSize="12" FontWeight="SemiBold" Cursor="Hand">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#005A9E"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </StackPanel>
+        <DataGrid x:Name="FolderGrid"
+                  AutoGenerateColumns="False" IsReadOnly="True"
+                  SelectionMode="Extended" SelectionUnit="FullRow"
+                  CanUserSortColumns="True" CanUserResizeRows="False"
+                  CanUserAddRows="False" HeadersVisibility="Column"
+                  GridLinesVisibility="Horizontal"
+                  BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
+                  Background="{DynamicResource Avd.Grid.Bg}"
+                  RowBackground="{DynamicResource Avd.Grid.Bg}"
+                  AlternatingRowBackground="{DynamicResource Avd.AltRow.Bg}"
+                  Foreground="{DynamicResource Avd.Window.Fg}"
+                  HorizontalGridLinesBrush="{DynamicResource Avd.Border.Grid}">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Storage Account" Binding="{Binding StorageAccount}" Width="160"/>
+                <DataGridTextColumn Header="Folder Name"     Binding="{Binding FolderName}"     Width="*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</Window>
+'@
+    $fpReader = New-Object System.Xml.XmlNodeReader $fpXaml
+    $fpWin    = [System.Windows.Markup.XamlReader]::Load($fpReader)
+    $fpWin.Owner = $window
+
+    # Apply current theme resources so the grid and text colours match
+    foreach ($_key in @($window.Resources.Keys)) {
+        try { $fpWin.Resources[$_key] = $window.Resources[$_key] } catch {}
+    }
+    if ($script:_ptDark) {
+        try {
+            $fpWin.Add_SourceInitialized({
+                $_h = (New-Object System.Windows.Interop.WindowInteropHelper($fpWin)).Handle
+                $_v = 1; [void][Win32.DwmApiPT]::DwmSetWindowAttribute($_h, 20, [ref]$_v, 4)
+            })
+        } catch {}
+    }
+    try { Set-WindowIcon -Window $fpWin -IconPath (Join-Path $PSScriptRoot 'data\avd-dashboard.ico') } catch {}
+
+    $headerText = $fpWin.FindName('HeaderText')
+    $hintText   = $fpWin.FindName('HintText')
+    $grid       = $fpWin.FindName('FolderGrid')
+    $okBtn      = $fpWin.FindName('OkBtn')
+    $cancelBtn  = $fpWin.FindName('CancelBtn')
+
+    $count = $FolderMatches.Count
+    $headerText.Text = "$count folder(s) found matching '$SearchName':"
+
+    $grid.ItemsSource = $FolderMatches
+
+    $resultRef = @{ Value = $null }
+
+    $grid.Add_SelectionChanged({
+        $sel = $grid.SelectedItems.Count
+        $okBtn.IsEnabled = ($sel -gt 0)
+        $hintText.Text = if ($sel -gt 1) { "$sel folders selected" } else { "Select one or more folders, then click OK.  (Ctrl+Click or Shift+Click to select multiple)" }
+    }.GetNewClosure())
+
+    # Double-click row = immediate OK with just that row
+    $grid.Add_MouseDoubleClick({
+        if ($grid.SelectedItem) {
+            $resultRef.Value = @($grid.SelectedItem)
+            $fpWin.DialogResult = $true
+            $fpWin.Close()
+        }
+    }.GetNewClosure())
+
+    $okBtn.Add_Click({
+        $resultRef.Value = @($grid.SelectedItems)
+        $fpWin.DialogResult = $true
+        $fpWin.Close()
+    }.GetNewClosure())
+
+    $cancelBtn.Add_Click({ $fpWin.DialogResult = $false; $fpWin.Close() })
+
+    $fpWin.ShowDialog() | Out-Null
+    return $resultRef.Value
+}
+
+# =============================================================================
 # Custom confirmation dialog - auto-sizes to content width
 # =============================================================================
 
-function Show-InfoDialog {
-    param([string]$Title, [string]$Message)
-    [xml]$iXaml = @'
-<Window
-    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Info" SizeToContent="WidthAndHeight"
-    MinWidth="420" MaxWidth="800"
-    ResizeMode="NoResize"
-    WindowStartupLocation="CenterOwner"
-    Background="#F4F6F9" FontFamily="Segoe UI">
-    <StackPanel Margin="24,20">
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-            <TextBlock Text="i" FontSize="28" Foreground="#0078D4" VerticalAlignment="Center" Margin="0,0,14,0"/>
-            <TextBlock x:Name="MsgText" FontSize="13" Foreground="{DynamicResource Avd.Window.Fg}"
-                       TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="680"/>
-        </StackPanel>
-        <Button x:Name="OkBtn" Content="OK" Width="90" Height="32"
-                HorizontalAlignment="Right"
-                Background="#0078D4" Foreground="White" BorderThickness="0"
-                FontSize="13" FontWeight="SemiBold" Cursor="Hand">
-            <Button.Template>
-                <ControlTemplate TargetType="Button">
-                    <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="8,0">
-                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                    <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True">
-                            <Setter Property="Background" Value="#005A9E"/>
-                        </Trigger>
-                    </ControlTemplate.Triggers>
-                </ControlTemplate>
-            </Button.Template>
-        </Button>
-    </StackPanel>
-</Window>
-'@
-    $iReader = New-Object System.Xml.XmlNodeReader $iXaml
-    $iWin    = [System.Windows.Markup.XamlReader]::Load($iReader)
-    $iWin.Title = $Title
-    $iWin.Owner = $window
-    $iWin.FindName("MsgText").Text = $Message
-    $iWin.FindName("OkBtn").Add_Click({ $iWin.Close() })
-    $iWin.ShowDialog() | Out-Null
-}
+function Show-ThemedDialog {
+    param(
+        [string]$Message,
+        [string]$Title   = 'Profile Tools',
+        [ValidateSet('OK','YesNo')]
+        [string]$Buttons = 'OK',
+        [ValidateSet('Information','Warning','Error','Question')]
+        [string]$Icon    = 'Information'
+    )
 
-function Show-ConfirmDialog {
-    param([string]$Title, [string]$Message)
-    [xml]$cXaml = @'
-<Window
-    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Confirm" SizeToContent="WidthAndHeight"
-    MinWidth="420" MaxWidth="800"
-    ResizeMode="NoResize"
-    WindowStartupLocation="CenterOwner"
-    Background="#F4F6F9" FontFamily="Segoe UI"
-    Padding="24,20">
-    <StackPanel Margin="24,20">
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-            <TextBlock Text="!" FontSize="28" Foreground="#D83B01" VerticalAlignment="Center" Margin="0,0,14,0"/>
-            <TextBlock x:Name="MsgText" FontSize="13" Foreground="{DynamicResource Avd.Window.Fg}"
-                       TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="680"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button x:Name="YesBtn" Content="Yes" Width="90" Height="32" Margin="0,0,8,0"
-                    Background="#D83B01" Foreground="White" BorderThickness="0"
-                    FontSize="13" FontWeight="SemiBold" Cursor="Hand">
-                <Button.Template>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="8,0">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#B33200"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Button.Template>
-            </Button>
-            <Button x:Name="NoBtn" Content="No" Width="90" Height="32"
-                    Background="#6B737C" Foreground="White" BorderThickness="0"
-                    FontSize="13" FontWeight="SemiBold" Cursor="Hand">
-                <Button.Template>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="8,0">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#4F565D"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Button.Template>
-            </Button>
-        </StackPanel>
-    </StackPanel>
-</Window>
-'@
-    $cReader = New-Object System.Xml.XmlNodeReader $cXaml
-    $cWin    = [System.Windows.Markup.XamlReader]::Load($cReader)
-    $cWin.Title = $Title
-    $cWin.Owner = $window
-    $cWin.FindName("MsgText").Text = $Message
-    $script:confirmResult = $false
-    $cWin.FindName("YesBtn").Add_Click({ $script:confirmResult = $true;  $cWin.Close() })
-    $cWin.FindName("NoBtn").Add_Click({  $script:confirmResult = $false; $cWin.Close() })
-    $cWin.ShowDialog() | Out-Null
-    return $script:confirmResult
+    $_themeFile    = if ($script:_ptDark) { 'dark' } else { 'light' }
+    $_themeContent = Get-Content -Raw -Path (Join-Path $PSScriptRoot "data\$_themeFile-theme.xaml") -ErrorAction SilentlyContinue
+    $_themeRd      = [Windows.Markup.XamlReader]::Parse("<ResourceDictionary xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>$_themeContent</ResourceDictionary>")
+
+    $win = New-Object System.Windows.Window
+    $win.Title                 = $Title
+    $win.Width                 = 420
+    $win.MaxWidth              = 640
+    $win.SizeToContent         = 'Height'
+    $win.ResizeMode            = 'NoResize'
+    $win.WindowStartupLocation = 'CenterOwner'
+    $win.Owner                 = $window
+    $win.SetResourceReference([System.Windows.Window]::BackgroundProperty, 'Avd.Window.Bg')
+    $win.SetResourceReference([System.Windows.Window]::ForegroundProperty,  'Avd.Window.Fg')
+    $win.Resources.MergedDictionaries.Add($_themeRd)
+
+    try { Set-WindowIcon -Window $win -IconPath (Join-Path $PSScriptRoot 'data\avd-dashboard.ico') } catch {}
+    if ($script:_ptDark) {
+        $win.Add_SourceInitialized({
+            $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($win)).Handle
+            $v = 1; [void][Win32.DwmApiPT]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4)
+        })
+    }
+
+    $iconText = New-Object System.Windows.Controls.TextBlock
+    $iconText.FontSize  = 32
+    $iconText.Margin    = '0,2,14,0'
+    $iconText.VerticalAlignment = 'Top'
+    switch ($Icon) {
+        'Information' { $iconText.Text = [char]0x2139; $iconText.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.ColorConverter]::ConvertFromString('#0078D4') }
+        'Warning'     { $iconText.Text = [char]0x26A0;  $iconText.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.ColorConverter]::ConvertFromString('#F0A500') }
+        'Error'       { $iconText.Text = [char]0x2715;  $iconText.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Btn.Danger.Bg') }
+        'Question'    { $iconText.Text = '?';           $iconText.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.ColorConverter]::ConvertFromString('#0078D4') }
+    }
+
+    $msgText = New-Object System.Windows.Controls.TextBlock
+    $msgText.Text         = $Message
+    $msgText.TextWrapping = 'Wrap'
+    $msgText.MaxWidth     = 380
+    $msgText.VerticalAlignment = 'Top'
+    $msgText.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Avd.Window.Fg')
+
+    $contentRow = New-Object System.Windows.Controls.StackPanel
+    $contentRow.Orientation = 'Horizontal'
+    $contentRow.Margin      = '20,20,20,16'
+    [void]$contentRow.Children.Add($iconText)
+    [void]$contentRow.Children.Add($msgText)
+
+    $applyBtnStyle = {
+        param([System.Windows.Controls.Button]$Btn, [string]$BgKey, [string]$HoverKey, [string]$PressKey)
+        $Btn.Template = [Windows.Markup.XamlReader]::Parse("
+            <ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
+                             xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='Button'>
+                <Border x:Name='Bd' Background='{DynamicResource $BgKey}' CornerRadius='4' Padding='{TemplateBinding Padding}'>
+                    <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property='IsMouseOver' Value='True'><Setter TargetName='Bd' Property='Background' Value='{DynamicResource $HoverKey}'/></Trigger>
+                    <Trigger Property='IsPressed'   Value='True'><Setter TargetName='Bd' Property='Background' Value='{DynamicResource $PressKey}'/></Trigger>
+                    <Trigger Property='IsEnabled'   Value='False'><Setter TargetName='Bd' Property='Opacity'   Value='0.45'/></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate>")
+        $Btn.BorderThickness = 0; $Btn.FontSize = 12; $Btn.FontWeight = 'SemiBold'
+        $Btn.Cursor = [System.Windows.Input.Cursors]::Hand
+    }
+
+    $btnRow = New-Object System.Windows.Controls.StackPanel
+    $btnRow.Orientation         = 'Horizontal'
+    $btnRow.HorizontalAlignment = 'Right'
+    $btnRow.Margin              = '12,4,16,16'
+
+    $script:_ptDlgResult = $false
+
+    $btnPrimary           = New-Object System.Windows.Controls.Button
+    $btnPrimary.Content   = if ($Buttons -eq 'YesNo') { 'Yes' } else { 'OK' }
+    $btnPrimary.Width     = 90; $btnPrimary.Height = 30; $btnPrimary.Padding = '10,0'
+    $btnPrimary.IsDefault = $true
+    & $applyBtnStyle $btnPrimary 'Avd.Btn.Save.Bg' 'Avd.Btn.Save.Hover' 'Avd.Btn.Save.Press'
+    $btnPrimary.Foreground = [System.Windows.Media.Brushes]::White
+    $btnPrimary.Add_Click({ $script:_ptDlgResult = $true; $win.Close() }.GetNewClosure())
+
+    if ($Buttons -eq 'YesNo') {
+        $btnSecondary          = New-Object System.Windows.Controls.Button
+        $btnSecondary.Content  = 'No'
+        $btnSecondary.Width    = 90; $btnSecondary.Height = 30; $btnSecondary.Padding = '10,0'
+        $btnSecondary.Margin   = '0,0,8,0'
+        $btnSecondary.IsCancel = $true
+        & $applyBtnStyle $btnSecondary 'Avd.Btn.Cancel.Bg' 'Avd.Btn.Cancel.Hover' 'Avd.Btn.Cancel.Press'
+        $btnSecondary.SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, 'Avd.Fg.Label')
+        $btnSecondary.Add_Click({ $script:_ptDlgResult = $false; $win.Close() }.GetNewClosure())
+        [void]$btnRow.Children.Add($btnSecondary)
+    }
+    [void]$btnRow.Children.Add($btnPrimary)
+
+    $outer = New-Object System.Windows.Controls.DockPanel
+    $outer.LastChildFill = $true
+    [System.Windows.Controls.DockPanel]::SetDock($btnRow, 'Bottom')
+    [void]$outer.Children.Add($btnRow)
+    [void]$outer.Children.Add($contentRow)
+
+    $win.Content = $outer
+    $win.ShowDialog() | Out-Null
+    return $script:_ptDlgResult
 }
 
 # =============================================================================
@@ -3066,14 +3289,14 @@ $RunDeleteBtn.Add_Click({
 
     $folderName = $FolderInput.Text.Trim()
     if ([string]::IsNullOrWhiteSpace($folderName)) {
-        [System.Windows.MessageBox]::Show("Please enter a profile folder name.", "Input Required", "OK", "Warning") | Out-Null
+        Show-ThemedDialog -Title "Input Required" -Message "Please enter a profile folder name." -Icon Warning | Out-Null
         return
     }
 
     # Collect selected storage accounts
     $selectedAccounts = Get-CheckedAccounts $script:StorageCheckboxes
     if ($selectedAccounts.Count -eq 0) {
-        [System.Windows.MessageBox]::Show("Please select at least one storage account.", "No Storage Account Selected", "OK", "Warning") | Out-Null
+        Show-ThemedDialog -Title "No Storage Account Selected" -Message "Please select at least one storage account." -Icon Warning | Out-Null
         return
     }
 
@@ -3085,8 +3308,6 @@ $RunDeleteBtn.Add_Click({
     # Capture closure vars
     $fn         = $folderName
     $sa         = @($selectedAccounts)
-    $shareName  = $FileShareName
-    $shareSub   = $FileShareSubPath
     $helperCode = $script:storageHelperCode
     $logPath    = if ($script:LogFile) { $script:LogFile } else { "" }
     # Acquire OAuth bearer token for Azure Files data plane access.
@@ -3095,9 +3316,7 @@ $RunDeleteBtn.Add_Click({
         $storageTok = Get-ArmToken -ResourceUrl 'https://storage.azure.com/'
     } catch {
         Write-Log "ERROR [ProfileTools] Storage token acquisition failed (lock cleanup): $_"
-        [System.Windows.MessageBox]::Show(
-            "Failed to acquire storage token:`n`n$_`n`nCheck your Azure sign-in and RBAC permissions.",
-            "Token Error", "OK", "Error") | Out-Null
+        Show-ThemedDialog -Title "Token Error" -Message "Failed to acquire storage token:`n`n$_`n`nCheck your Azure sign-in and RBAC permissions." -Icon Error | Out-Null
         $RunDeleteBtn.IsEnabled = $true
         $ClearLogBtn.IsEnabled  = $true
         $StatusBar.Text = "Ready."
@@ -3105,32 +3324,68 @@ $RunDeleteBtn.Add_Click({
     }
     # Convert to plain hashtable - OrderedDictionary does not have ContainsKey()
     $shareMap = @{}; foreach ($k in $StorageAccountShareMap.Keys) { $shareMap[$k] = $StorageAccountShareMap[$k] }
-
-    # Build deletion UNC paths here in the UI thread - avoids serialisation issues
-    # with hashtables across runspace boundaries
-    $pathsToDelete = @()
-    foreach ($saName in $sa) {
-        if ($shareMap.ContainsKey($saName)) {
-            $pathsToDelete += $shareMap[$saName] + '\' + $fn
+    # Build per-account share name and subpath maps from the UNC paths in the storage map
+    $shareNameMap    = @{}
+    $shareSubPathMap = @{}
+    foreach ($k in $StorageAccountShareMap.Keys) {
+        $unc = $StorageAccountShareMap[$k]
+        $pm = [regex]::Match($unc, '\\\\[^.\\]+\.file\.core\.windows\.net\\([^\\]+)(?:\\(.+))?')
+        if ($pm.Success) {
+            $shareNameMap[$k]    = $pm.Groups[1].Value
+            $shareSubPathMap[$k] = $pm.Groups[2].Value
         }
     }
 
-    # Check at least one folder exists before proceeding
-    $existingPaths = @($pathsToDelete | Where-Object { Test-Path $_ })
-    if ($existingPaths.Count -eq 0) {
-        $checked = ($pathsToDelete -join "`n")
-        Show-InfoDialog -Title "Folder Not Found" `
-            -Message "No profile folders were found for '$folderName'.`n`nLocations checked:`n$checked"
+    # Search each selected share for folders whose names contain the input string.
+    # A "perfect match" (input equals the folder name exactly, case-insensitive,
+    # and only one match found) skips the picker and proceeds automatically.
+    $StatusBar.Text = "Searching shares for '$fn'..."
+    $searchErrs = [System.Collections.Generic.List[string]]::new()
+    $foundFolders = Find-ProfileFolders -SearchName $fn -SelectedAccounts $sa -ShareMap $shareMap -StorageToken $storageTok -SearchErrors ([ref]$searchErrs)
+
+    if ($foundFolders.Count -eq 0) {
+        $errDetail = if ($searchErrs.Count -gt 0) { "`n`nSearch errors:`n" + ($searchErrs -join "`n") } else { '' }
+        Show-ThemedDialog -Title "Folder Not Found" `
+            -Message "No profile folders starting with '$fn' were found in the selected storage account(s).$errDetail" | Out-Null
         $RunDeleteBtn.IsEnabled = $true
         $ClearLogBtn.IsEnabled  = $true
         $StatusBar.Text = "Ready."
         return
     }
-    # Local variable so .GetNewClosure() captures the paths - $script: scope
-    # references don't resolve correctly inside a closure-captured scriptblock.
-    $deletePaths = $existingPaths
 
-    $checkArgs = @{ StorageHelperCode=$helperCode; StorageToken=$storageTok; FolderName=$fn; SelectedAccounts=$sa; FileShareName=$shareName; FileShareSubPath=$shareSub; LogFile=$logPath }
+    # Exact match: exactly one result whose folder name equals the input exactly.
+    # Skip the picker and proceed directly in that case.
+    $exactMatches = @($foundFolders | Where-Object { $_.FolderName -ieq $fn })
+    if ($foundFolders.Count -eq 1 -and $exactMatches.Count -eq 1) {
+        $chosenFolders = @($foundFolders[0])
+    } else {
+        # Multiple matches, or a single partial match - let the user pick (multi-select).
+        $chosenFolders = Show-FolderPickerDialog -FolderMatches $foundFolders -SearchName $fn
+        if (-not $chosenFolders -or $chosenFolders.Count -eq 0) {
+            $RunDeleteBtn.IsEnabled = $true
+            $ClearLogBtn.IsEnabled  = $true
+            $StatusBar.Text = "Ready."
+            return
+        }
+        # All selected folders must share the same folder name so the lock-check
+        # script can target a single path across multiple storage accounts.
+        $uniqueNames = @($chosenFolders | Select-Object -ExpandProperty FolderName -Unique)
+        if ($uniqueNames.Count -gt 1) {
+            Show-ThemedDialog -Title "Selection Error" `
+                -Message "All selected folders must have the same name.`n`nPlease re-select folders with a single matching name." `
+                -Icon Warning | Out-Null
+            $RunDeleteBtn.IsEnabled = $true
+            $ClearLogBtn.IsEnabled  = $true
+            $StatusBar.Text = "Ready."
+            return
+        }
+    }
+
+    $deletePaths = @($chosenFolders | Select-Object -ExpandProperty FolderPath)
+    $fn          = $chosenFolders[0].FolderName
+    $sa          = @($chosenFolders | Select-Object -ExpandProperty StorageAccount -Unique)
+
+    $checkArgs = @{ StorageHelperCode=$helperCode; StorageToken=$storageTok; FolderName=$fn; SelectedAccounts=$sa; ShareNameMap=$shareNameMap; ShareSubPathMap=$shareSubPathMap; LogFile=$logPath }
     # .GetNewClosure() captures local variables ($storageTok, $helperCode, $fn, $logPath,
     # $deletePaths, $lockCleanupScript, etc.) so they survive into the async OnComplete
     # callback. Without it, Phase 2 (lock cleanup) cannot build its argument hashtable
@@ -3153,25 +3408,21 @@ $RunDeleteBtn.Add_Click({
         # If any storage account returned AuthorizationPermissionMismatch, show
         # a clear popup explaining the required RBAC role before continuing.
         if ($result.PermissionError) {
-            [System.Windows.MessageBox]::Show(
+            Show-ThemedDialog -Title "Storage Permission Error" -Message (
                 "One or more storage accounts returned a permission error.`n`n" +
                 "OAuth data-plane access requires the RBAC role:`n" +
                 "  'Storage File Data Privileged Contributor'`n`n" +
                 "Assign this role on each storage account (or its resource group/subscription) " +
                 "for your user account or service principal.`n`n" +
                 "Note: 'Contributor' or 'Storage Account Contributor' are management-plane roles " +
-                "and do NOT grant data-plane (file) access.",
-                "Storage Permission Error", "OK", "Warning") | Out-Null
+                "and do NOT grant data-plane (file) access.") -Icon Warning | Out-Null
         }
 
         # -- Lock confirmation if needed --------------------------------------
         if ($result.RequiresLockConfirm) {
-            $answer = [System.Windows.MessageBox]::Show(
-                "Active locks were found on this profile.`n`nClose all handles and remove lock files to proceed?`n`nWARNING: This will forcefully disconnect the user's session!",
-                "Locks Detected - Confirm Force-Close",
-                "YesNo", "Warning")
+            $answer = Show-ThemedDialog -Message "Active locks were found on this profile.`n`nClose all handles and remove lock files to proceed?`n`nWARNING: This will forcefully disconnect the user's session!" -Title "Locks Detected - Confirm Force-Close" -Buttons YesNo -Icon Warning
 
-            if ($answer -ne 'Yes') {
+            if (-not $answer) {
                 Write-Log ""
                 Write-Log "  [ABORTED] Lock cleanup declined. No files were deleted." "#F59E0B"
                 Write-Log ""
@@ -3183,11 +3434,9 @@ $RunDeleteBtn.Add_Click({
 
             $lockedList  = @($result.LockedAccounts)
             $fn2         = $fn
-            $shareName2  = $FileShareName
-            $shareSub2   = $FileShareSubPath
             $StatusBar.Text = "Clearing locks..."
 
-            $unlockArgs = @{ StorageHelperCode=$helperCode; StorageToken=$storageTok; FolderName=$fn2; LockedAccounts=$lockedList; FileShareName=$shareName2; FileShareSubPath=$shareSub2; LogFile=$logPath }
+            $unlockArgs = @{ StorageHelperCode=$helperCode; StorageToken=$storageTok; FolderName=$fn2; LockedAccounts=$lockedList; ShareNameMap=$shareNameMap; ShareSubPathMap=$shareSubPathMap; LogFile=$logPath }
             Start-BgJob -Script $lockCleanupScript -NamedArguments $unlockArgs -OnComplete {
                 param($cleanResult)
 
@@ -3207,8 +3456,8 @@ $RunDeleteBtn.Add_Click({
 
                 # Confirm deletion
                 $pathList = ($deletePaths | ForEach-Object { "  - $_" }) -join "`n"
-                $delAnswer = Show-ConfirmDialog -Title "Confirm Permanent Deletion" `
-                    -Message "The following folders will be PERMANENTLY deleted:`n`n$pathList`n`nThis cannot be undone. Are you sure?"
+                $delAnswer = Show-ThemedDialog -Title "Confirm Permanent Deletion" `
+                    -Message "The following folders will be PERMANENTLY deleted:`n`n$pathList`n`nThis cannot be undone. Are you sure?" -Buttons YesNo -Icon Warning
 
                 if (-not $delAnswer) {
                     Write-Log ""
@@ -3239,8 +3488,8 @@ $RunDeleteBtn.Add_Click({
             # No locks - straight to deletion confirm
             $pathList = ($deletePaths | ForEach-Object { "  - $_" }) -join "`n"
 
-            $delAnswer = Show-ConfirmDialog -Title "Confirm Permanent Deletion" `
-                -Message "No locks detected. The following folders will be PERMANENTLY deleted:`n`n$pathList`n`nThis cannot be undone. Are you sure?"
+            $delAnswer = Show-ThemedDialog -Title "Confirm Permanent Deletion" `
+                -Message "No locks detected. The following folders will be PERMANENTLY deleted:`n`n$pathList`n`nThis cannot be undone. Are you sure?" -Buttons YesNo -Icon Warning
 
             if (-not $delAnswer) {
                 Write-Log ""
@@ -3314,13 +3563,13 @@ $RunUnlockBtn.Add_Click({
 
     $folderName = $UnlockFolderInput.Text.Trim()
     if ([string]::IsNullOrWhiteSpace($folderName)) {
-        [System.Windows.MessageBox]::Show("Please enter a profile folder name.", "Input Required", "OK", "Warning") | Out-Null
+        Show-ThemedDialog -Title "Input Required" -Message "Please enter a profile folder name." -Icon Warning | Out-Null
         return
     }
 
     $selectedAccounts = Get-CheckedAccounts $script:UnlockStorageCheckboxes
     if ($selectedAccounts.Count -eq 0) {
-        [System.Windows.MessageBox]::Show("Please select at least one storage account.", "No Storage Account Selected", "OK", "Warning") | Out-Null
+        Show-ThemedDialog -Title "No Storage Account Selected" -Message "Please select at least one storage account." -Icon Warning | Out-Null
         return
     }
 
@@ -3331,25 +3580,73 @@ $RunUnlockBtn.Add_Click({
 
     $fn         = $folderName
     $sa         = @($selectedAccounts)
-    $shareName  = $FileShareName
-    $shareSub   = $FileShareSubPath
     $helperCode = $script:storageHelperCode
     $logPath    = if ($script:LogFile) { $script:LogFile } else { "" }
+    # Build per-account share name and subpath maps from the UNC paths in the storage map
+    $shareNameMap    = @{}
+    $shareSubPathMap = @{}
+    foreach ($k in $StorageAccountShareMap.Keys) {
+        $unc = $StorageAccountShareMap[$k]
+        $pm = [regex]::Match($unc, '\\\\[^.\\]+\.file\.core\.windows\.net\\([^\\]+)(?:\\(.+))?')
+        if ($pm.Success) {
+            $shareNameMap[$k]    = $pm.Groups[1].Value
+            $shareSubPathMap[$k] = $pm.Groups[2].Value
+        }
+    }
     # Acquire a fresh OAuth bearer token for Azure Files data plane access
     try {
         $storageTok = Get-ArmToken -ResourceUrl 'https://storage.azure.com/'
     } catch {
         Write-Log "ERROR [ProfileTools] Storage token acquisition failed (unlock): $_"
-        [System.Windows.MessageBox]::Show(
-            "Failed to acquire storage token:`n`n$_`n`nCheck your Azure sign-in and RBAC permissions.",
-            "Token Error", "OK", "Error") | Out-Null
+        Show-ThemedDialog -Title "Token Error" -Message "Failed to acquire storage token:`n`n$_`n`nCheck your Azure sign-in and RBAC permissions." -Icon Error | Out-Null
         $RunUnlockBtn.IsEnabled      = $true
         $ClearUnlockLogBtn.IsEnabled = $true
         $StatusBar.Text = "Ready."
         return
     }
 
-    $checkArgs = @{ StorageHelperCode=$helperCode; StorageToken=$storageTok; FolderName=$fn; SelectedAccounts=$sa; FileShareName=$shareName; FileShareSubPath=$shareSub; LogFile=$logPath }
+    # Search shares for matching folders - same picker logic as the delete tab.
+    $shareMap = @{}; foreach ($k in $StorageAccountShareMap.Keys) { $shareMap[$k] = $StorageAccountShareMap[$k] }
+    $StatusBar.Text = "Searching shares for '$fn'..."
+    $searchErrs = [System.Collections.Generic.List[string]]::new()
+    $foundFolders = Find-ProfileFolders -SearchName $fn -SelectedAccounts $sa -ShareMap $shareMap -StorageToken $storageTok -SearchErrors ([ref]$searchErrs)
+
+    if ($foundFolders.Count -eq 0) {
+        $errDetail = if ($searchErrs.Count -gt 0) { "`n`nSearch errors:`n" + ($searchErrs -join "`n") } else { '' }
+        Show-ThemedDialog -Title "Folder Not Found" `
+            -Message "No profile folders starting with '$fn' were found in the selected storage account(s).$errDetail" | Out-Null
+        $RunUnlockBtn.IsEnabled      = $true
+        $ClearUnlockLogBtn.IsEnabled = $true
+        $StatusBar.Text = "Ready."
+        return
+    }
+
+    $exactMatches = @($foundFolders | Where-Object { $_.FolderName -ieq $fn })
+    if ($foundFolders.Count -eq 1 -and $exactMatches.Count -eq 1) {
+        $chosenFolders = @($foundFolders[0])
+    } else {
+        $chosenFolders = Show-FolderPickerDialog -FolderMatches $foundFolders -SearchName $fn
+        if (-not $chosenFolders -or $chosenFolders.Count -eq 0) {
+            $RunUnlockBtn.IsEnabled      = $true
+            $ClearUnlockLogBtn.IsEnabled = $true
+            $StatusBar.Text = "Ready."
+            return
+        }
+        $uniqueNames = @($chosenFolders | Select-Object -ExpandProperty FolderName -Unique)
+        if ($uniqueNames.Count -gt 1) {
+            Show-ThemedDialog -Title "Selection Error" `
+                -Message "All selected folders must have the same name.`n`nPlease re-select folders with a single matching name." `
+                -Icon Warning | Out-Null
+            $RunUnlockBtn.IsEnabled      = $true
+            $ClearUnlockLogBtn.IsEnabled = $true
+            $StatusBar.Text = "Ready."
+            return
+        }
+    }
+    $fn = $chosenFolders[0].FolderName
+    $sa = @($chosenFolders | Select-Object -ExpandProperty StorageAccount -Unique)
+
+    $checkArgs = @{ StorageHelperCode=$helperCode; StorageToken=$storageTok; FolderName=$fn; SelectedAccounts=$sa; ShareNameMap=$shareNameMap; ShareSubPathMap=$shareSubPathMap; LogFile=$logPath }
 
     Start-BgJob -Script $deleteScript -NamedArguments $checkArgs -OnComplete ({
         param($result)
@@ -3366,24 +3663,20 @@ $RunUnlockBtn.Add_Click({
 
         # -- Permission error popup -------------------------------------------
         if ($result.PermissionError) {
-            [System.Windows.MessageBox]::Show(
+            Show-ThemedDialog -Title "Storage Permission Error" -Message (
                 "One or more storage accounts returned a permission error.`n`n" +
                 "OAuth data-plane access requires the RBAC role:`n" +
                 "  'Storage File Data Privileged Contributor'`n`n" +
                 "Assign this role on each storage account (or its resource group/subscription) " +
                 "for your user account or service principal.`n`n" +
                 "Note: 'Contributor' or 'Storage Account Contributor' are management-plane roles " +
-                "and do NOT grant data-plane (file) access.",
-                "Storage Permission Error", "OK", "Warning") | Out-Null
+                "and do NOT grant data-plane (file) access.") -Icon Warning | Out-Null
         }
 
         if ($result.RequiresLockConfirm) {
-            $answer = [System.Windows.MessageBox]::Show(
-                "Active locks were found on this profile.`n`nClose all handles and remove lock files?`n`nWARNING: This will forcefully disconnect the user's session!",
-                "Locks Detected - Confirm Force-Close",
-                "YesNo", "Warning")
+            $answer = Show-ThemedDialog -Message "Active locks were found on this profile.`n`nClose all handles and remove lock files?`n`nWARNING: This will forcefully disconnect the user's session!" -Title "Locks Detected - Confirm Force-Close" -Buttons YesNo -Icon Warning
 
-            if ($answer -ne 'Yes') {
+            if (-not $answer) {
                 Write-UnlockLog ""
                 Write-UnlockLog "  [ABORTED] Lock cleanup declined." "#F59E0B"
                 Write-UnlockLog ""
@@ -3399,11 +3692,9 @@ $RunUnlockBtn.Add_Click({
 
             $lockedList = @($result.LockedAccounts)
             $fn2        = $fn
-            $shareName2 = $FileShareName
-            $shareSub2  = $FileShareSubPath
             $StatusBar.Text = "Clearing locks..."
 
-            $unlockArgs = @{ StorageHelperCode=$helperCode; StorageToken=$storageTok; FolderName=$fn2; LockedAccounts=$lockedList; FileShareName=$shareName2; FileShareSubPath=$shareSub2; LogFile=$logPath }
+            $unlockArgs = @{ StorageHelperCode=$helperCode; StorageToken=$storageTok; FolderName=$fn2; LockedAccounts=$lockedList; ShareNameMap=$shareNameMap; ShareSubPathMap=$shareSubPathMap; LogFile=$logPath }
             Start-BgJob -Script $lockCleanupScript -NamedArguments $unlockArgs -OnComplete {
                 param($cleanResult)
 

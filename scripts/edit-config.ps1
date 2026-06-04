@@ -63,26 +63,191 @@ try {
     $_kv = Get-ItemProperty -Path $script:EditRegPath -Name 'DarkTheme' -ErrorAction Stop
     $_editDark = [bool][int]$_kv.DarkTheme
 } catch {}
+
+try {
+    Add-Type -MemberDefinition '[DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);' `
+             -Name 'DwmApiEC' -Namespace 'Win32' -ErrorAction Stop
+} catch {}
+
 # =============================================================================
-# Config file resolution
+# Config file resolution - multi-config picker (mirrors dashboard behaviour)
 # =============================================================================
 
-$script:currentConfigFile = Join-Path $PSScriptRoot '..\config\config.psd1'
-
-if (-not (Test-Path $script:currentConfigFile)) {
-    $dlg = New-Object Microsoft.Win32.OpenFileDialog
-    $dlg.Title  = "Locate config.psd1"
-    $dlg.Filter = "Config Files (*.psd1)|*.psd1|All Files (*.*)|*.*"
-    $dlg.InitialDirectory = Join-Path $PSScriptRoot '..\config'
-
-    if (-not $dlg.ShowDialog()) {
-        [System.Windows.MessageBox]::Show(
-            "No config file selected. The editor will exit.",
-            "No Config Selected", "OK", "Information") | Out-Null
-        exit 0
-    }
-    $script:currentConfigFile = $dlg.FileName
+function Get-EditorAvailableConfigs {
+    @(
+        Get-ChildItem -Path (Join-Path $PSScriptRoot '..\config') -Filter '*.psd1' -ErrorAction SilentlyContinue |
+        Where-Object  { $_.Name -ne 'EXAMPLE-config.psd1' } |
+        Sort-Object   Name |
+        ForEach-Object {
+            $_slug = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+            $_disp = $_slug
+            try {
+                $_d = & ([scriptblock]::Create([System.IO.File]::ReadAllText($_.FullName)))
+                if ($_d.Name) { $_disp = [string]$_d.Name }
+            } catch {}
+            [PSCustomObject]@{ Path = $_.FullName; Slug = $_slug; DisplayName = $_disp }
+        }
+    )
 }
+
+function Show-EditorConfigPicker {
+    param([object[]]$Configs, [bool]$AllowCancel = $true)
+    $_tf  = if ($_editDark) { 'dark' } else { 'light' }
+    $_thm = Get-Content -Raw -Path (Join-Path $PSScriptRoot "..\data\$_tf-theme.xaml") -ErrorAction SilentlyContinue
+    $_raw = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Config Editor - Select Configuration"
+        SizeToContent="Height" Width="400"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
+        Background="{DynamicResource Avd.Window.Bg}"
+        FontFamily="Segoe UI" ShowInTaskbar="True">
+    <Window.Resources>
+        <!-- THEME_SLOT -->
+    </Window.Resources>
+    <Border Padding="24,20,24,20">
+        <StackPanel>
+            <TextBlock Text="Select a configuration:" FontSize="13" FontWeight="SemiBold"
+                       Foreground="{DynamicResource Avd.Window.Fg}" Margin="0,0,0,10"/>
+            <ListBox x:Name="ConfigList" Height="130" Margin="0,0,0,12"
+                     BorderBrush="{DynamicResource Avd.Border.Input}" BorderThickness="1"
+                     Background="{DynamicResource Avd.Card.Bg}"
+                     Foreground="{DynamicResource Avd.Window.Fg}" FontSize="12"/>
+            <CheckBox x:Name="SetDefaultCheck" Content="Remember this choice"
+                      Foreground="{DynamicResource Avd.Window.Fg}" Margin="0,0,0,4"/>
+            <Button x:Name="ClearDefaultBtn" Content="Clear saved default"
+                    HorizontalAlignment="Left" FontSize="11" Background="Transparent"
+                    BorderThickness="0" Foreground="#2563EB" Cursor="Hand"
+                    Visibility="Collapsed" Padding="0" Margin="0,2,0,0"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                <Button x:Name="CancelBtn" Content="Cancel"
+                        Width="90" Height="32" Margin="0,0,8,0"
+                        Foreground="{DynamicResource Avd.Fg.Label}"
+                        BorderThickness="0" FontSize="13" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Cancel.Bg}" CornerRadius="4" Padding="8,0">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Cancel.Hover}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+                <Button x:Name="OkBtn" Content="Load"
+                        Width="90" Height="32"
+                        Foreground="White" BorderThickness="0" FontSize="13" FontWeight="SemiBold" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="{DynamicResource Avd.Btn.Save.Bg}" CornerRadius="4" Padding="8,0">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Avd.Btn.Save.Hover}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>
+'@
+    $_raw = $_raw -replace '<!-- THEME_SLOT -->', $_thm
+    [xml]$_cx = $_raw
+    $_w = [System.Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $_cx))
+    if ($_editDark) {
+        $_w.Add_SourceInitialized({
+            try { $_h = (New-Object System.Windows.Interop.WindowInteropHelper($_w)).Handle; $_dv = 1; [void][Win32.DwmApiEC]::DwmSetWindowAttribute($_h, 20, [ref]$_dv, 4) } catch {}
+        })
+    }
+    try {
+        $_ico = Join-Path $PSScriptRoot '..\data\avd-dashboard.ico'
+        if (Test-Path $_ico) {
+            $_stream = [System.IO.File]::OpenRead((Resolve-Path $_ico).ProviderPath)
+            $_w.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create($_stream, [System.Windows.Media.Imaging.BitmapCreateOptions]::None, [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+            $_stream.Close()
+        }
+    } catch {}
+
+    $_list   = $_w.FindName('ConfigList')
+    $_okBtn  = $_w.FindName('OkBtn')
+    $_cnlBtn = $_w.FindName('CancelBtn')
+    $_setDef = $_w.FindName('SetDefaultCheck')
+    $_clrBtn = $_w.FindName('ClearDefaultBtn')
+
+    foreach ($_c in $Configs) { [void]$_list.Items.Add($_c.DisplayName) }
+    if ($_list.Items.Count -gt 0) { $_list.SelectedIndex = 0 }
+
+    $_hasDef = $false
+    try { $_hasDef = $null -ne (Get-ItemProperty -Path $script:EditRegPath -Name 'DefaultConfig' -ErrorAction Stop).DefaultConfig } catch {}
+    if ($_hasDef -and $AllowCancel) { $_clrBtn.Visibility = 'Visible' }
+
+    if (-not $AllowCancel) { $_cnlBtn.Visibility = 'Collapsed' }
+    if ($AllowCancel)      { $_okBtn.Content = 'Switch' }
+
+    $_okBtn.Add_Click({
+        if ($_list.SelectedIndex -lt 0) { return }
+        $script:_editorPickerResult = @{ Config = $Configs[$_list.SelectedIndex]; SetDefault = [bool]$_setDef.IsChecked; ClearDefault = $false }
+        $_w.DialogResult = $true; $_w.Close()
+    })
+    $_cnlBtn.Add_Click({ $_w.DialogResult = $false; $_w.Close() })
+    $_clrBtn.Add_Click({
+        $script:_editorPickerResult = @{ Config = $null; SetDefault = $false; ClearDefault = $true }
+        $_w.DialogResult = $true; $_w.Close()
+    })
+    $_list.Add_MouseDoubleClick({
+        if ($_list.SelectedIndex -lt 0) { return }
+        $script:_editorPickerResult = @{ Config = $Configs[$_list.SelectedIndex]; SetDefault = [bool]$_setDef.IsChecked; ClearDefault = $false }
+        $_w.DialogResult = $true; $_w.Close()
+    })
+
+    $null = $_w.ShowDialog()
+    if (-not $_w.DialogResult) { return $null }
+    return $script:_editorPickerResult
+}
+
+$script:_editorAllConfigs = Get-EditorAvailableConfigs
+
+function Resolve-EditorStartupConfig {
+    $_configs = $script:_editorAllConfigs
+    if ($_configs.Count -eq 0) {
+        # No .psd1 files in config folder - fall back to OpenFileDialog
+        $dlg = New-Object Microsoft.Win32.OpenFileDialog
+        $dlg.Title  = "Locate config.psd1"
+        $dlg.Filter = "Config Files (*.psd1)|*.psd1|All Files (*.*)|*.*"
+        $dlg.InitialDirectory = Join-Path $PSScriptRoot '..\config'
+        if (-not $dlg.ShowDialog()) {
+            [System.Windows.MessageBox]::Show("No config file selected. The editor will exit.", "No Config Selected", "OK", "Information") | Out-Null
+            exit 0
+        }
+        return $dlg.FileName
+    }
+    if ($_configs.Count -eq 1) { return $_configs[0].Path }
+
+    # Multiple configs: check for a saved default
+    $_savedSlug = try { (Get-ItemProperty -Path $script:EditRegPath -Name 'DefaultConfig' -ErrorAction Stop).DefaultConfig } catch { $null }
+    if ($_savedSlug) {
+        $_m = $_configs | Where-Object { $_.Slug -eq $_savedSlug } | Select-Object -First 1
+        if ($_m) { return $_m.Path }
+    }
+
+    # No usable default - show picker
+    $_p = Show-EditorConfigPicker -Configs $_configs -AllowCancel $false
+    if (-not $_p -or -not $_p.Config) { exit 0 }
+    if ($_p.SetDefault) {
+        if (-not (Test-Path $script:EditRegPath)) { try { New-Item -Path $script:EditRegPath -Force | Out-Null } catch {} }
+        try { Set-ItemProperty -Path $script:EditRegPath -Name 'DefaultConfig' -Value $_p.Config.Slug } catch {}
+    }
+    return $_p.Config.Path
+}
+
+$script:currentConfigFile = Resolve-EditorStartupConfig
 
 $script:lastConfigError = $null
 
@@ -444,6 +609,7 @@ $_rawXaml = @'
                        VerticalAlignment="Center" Margin="0,0,6,0"/>
             <ToggleButton x:Name="DarkToggle" Style="{StaticResource ToggleSwitch}"/>
           </StackPanel>
+          <Button x:Name="SwitchConfigBtn" Content="Switch Config" Style="{StaticResource ActionBtn}" Margin="0,0,8,0" Visibility="Collapsed"/>
           <Button x:Name="NewButton" Content="New" Style="{StaticResource ActionBtn}" Margin="0,0,8,0"/>
           <Button x:Name="BrowseButton" Content="Browse / Open..." Style="{StaticResource ActionBtn}"/>
         </StackPanel>
@@ -885,18 +1051,17 @@ $_rawXaml = @'
       <TabItem Header="Profile Tools">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel Margin="24,16,24,24">
-            <TextBlock Style="{StaticResource SectionHeader}" Text="Profile Tools (FSLogix)"/>
+            <TextBlock Style="{StaticResource SectionHeader}" Text="Compute Pricing"/>
             <Border Style="{StaticResource Rule}"/>
 
-            <TextBlock Style="{StaticResource FieldLabel}" Text="File Share Name"/>
-            <TextBox x:Name="FileShareNameBox"/>
+            <CheckBox x:Name="PricingWindowsLicenceBox" Margin="0,6,0,0"
+                      Content="Include Windows Server licence in compute price"
+                      Foreground="{DynamicResource Avd.Window.Fg}"/>
             <TextBlock Style="{StaticResource HintText}"
-                       Text="The Azure File Share name (e.g. fslogix)."/>
+                       Text="Tick only if session hosts are billed at the Windows Server PAYG rate (no AHB, no M365 licence). Leave unticked for Windows 10/11 AVD hosts — the Windows licence is covered by M365 and is not billed per-VM."/>
 
-            <TextBlock Style="{StaticResource FieldLabel}" Text="File Share Sub-Path"/>
-            <TextBox x:Name="FileShareSubPathBox"/>
-            <TextBlock Style="{StaticResource HintText}"
-                       Text="Sub-path within the share where profile folders live. Leave blank if profiles are at the share root."/>
+            <TextBlock Style="{StaticResource SectionHeader}" Text="Profile Tools (FSLogix)" Margin="0,16,0,0"/>
+            <Border Style="{StaticResource Rule}"/>
 
             <TextBlock Style="{StaticResource FieldLabel}" Text="Exclude Storage Accounts"/>
             <TextBox x:Name="ExcludeStorageBox" Height="60" AcceptsReturn="True"
@@ -909,7 +1074,7 @@ $_rawXaml = @'
                      VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12"
                      TextWrapping="NoWrap"/>
             <TextBlock Style="{StaticResource HintText}"
-                       Text="Format: accountname = \\server\share  (one entry per line)"/>
+                       Text="Format: accountname = \\server\share\subpath  (include subpath if profiles are not at the share root)"/>
 
             <TextBlock Style="{StaticResource FieldLabel}" Text="Region Labels"/>
             <TextBox x:Name="RegionLabelsBox" Height="80" AcceptsReturn="True"
@@ -1049,8 +1214,12 @@ $saveButton           = $win.FindName('SaveButton')
 $closeButton          = $win.FindName('CloseButton')
 $browseButton         = $win.FindName('BrowseButton')
 $newButton            = $win.FindName('NewButton')
+$switchConfigBtn      = $win.FindName('SwitchConfigBtn')
 $statusBar            = $win.FindName('StatusBar')
 $darkToggle           = $win.FindName('DarkToggle')
+
+# Show Switch Config button only when multiple configs are available
+if ($script:_editorAllConfigs.Count -gt 1) { $switchConfigBtn.Visibility = 'Visible' }
 
 # General
 $configNameBox        = $win.FindName('ConfigNameBox')
@@ -1143,9 +1312,10 @@ $adoOrgUrlBox         = $win.FindName('AdoOrgUrlBox')
 $adoRefreshBox        = $win.FindName('AdoRefreshBox')
 $hideTabAzureDevOps   = $win.FindName('HideTabAzureDevOps')
 
+# Costs / Pricing
+$pricingWindowsLicenceBox = $win.FindName('PricingWindowsLicenceBox')
+
 # Profile Tools
-$fileShareNameBox     = $win.FindName('FileShareNameBox')
-$fileShareSubPathBox  = $win.FindName('FileShareSubPathBox')
 $excludeStorageBox    = $win.FindName('ExcludeStorageBox')
 $storageShareMapBox   = $win.FindName('StorageShareMapBox')
 $regionLabelsBox      = $win.FindName('RegionLabelsBox')
@@ -1213,8 +1383,6 @@ function New-DefaultConfig {
         ProfileTools = @{
             StorageAccountShareMap = @{}
             ExcludeStorage         = @()
-            FileShareName          = 'fslogix'
-            FileShareSubPath       = ''
             RegionLabels           = @{}
         }
         LogAnalytics = @{
@@ -1244,6 +1412,9 @@ function New-DefaultConfig {
         AzureDevOps = @{
             OrganisationUrl        = ''
             RefreshIntervalSeconds = 30
+        }
+        Costs = @{
+            PricingWindowsLicence = $false
         }
     }
 }
@@ -1373,14 +1544,15 @@ function Initialize-Controls {
     $imgRegion2ReplicasBox.Text    = if ([int]$c.Images.ReplicationRegion2Replicas -gt 0) { [string][int]$c.Images.ReplicationRegion2Replicas } else { '1' }
 
 
+    # Costs / Pricing
+    $pricingWindowsLicenceBox.IsChecked = if ($null -ne $c.Costs) { [bool]$c.Costs.PricingWindowsLicence } else { $false }
+
     # Azure DevOps
     $adoOrgUrlBox.Text  = [string]$c.AzureDevOps.OrganisationUrl
     $adoRefreshBox.Text = if ([int]$c.AzureDevOps.RefreshIntervalSeconds -gt 0) {
         [string][int]$c.AzureDevOps.RefreshIntervalSeconds } else { '30' }
 
     # Profile Tools
-    $fileShareNameBox.Text    = [string]$c.ProfileTools.FileShareName
-    $fileShareSubPathBox.Text = [string]$c.ProfileTools.FileShareSubPath
     $excludeStorageBox.Text   = (@($c.ProfileTools.ExcludeStorage | Where-Object { $_ }) -join "`r`n")
     $storageShareMapBox.Text  = ConvertTo-KvText $c.ProfileTools.StorageAccountShareMap
     $regionLabelsBox.Text     = ConvertTo-KvText $c.ProfileTools.RegionLabels
@@ -1875,17 +2047,12 @@ function Save-Config {
     ProfileTools = @{
 
         # Storage accounts to check when searching for FSLogix profile folders.
-        # Key = storage account short name, Value = full UNC path to the share.
+        # Key = storage account short name, Value = full UNC path to the profiles folder
+        # (include subpath if profiles are not at the share root, e.g. \\server\share\subpath).
         StorageAccountShareMap = $(Format-PsdHashtable $saMap)
 
         # Account names to exclude from profile tool tabs and scans.
         ExcludeStorage = $(Format-PsdArray (ConvertFrom-Lines $excludeStorageBox.Text))
-
-        # Azure File Share name (must match the share name in the UNC paths above).
-        FileShareName = $(Format-PsdString $fileShareNameBox.Text)
-
-        # Sub-path within the file share where profile folders live.
-        FileShareSubPath = $(Format-PsdString $fileShareSubPathBox.Text)
 
         # Maps a substring of a storage account name to a human-readable Azure region label.
         RegionLabels = $(Format-PsdHashtable $regLabels)
@@ -2007,6 +2174,18 @@ function Save-Config {
 
         # How often the pipeline list auto-refreshes (seconds). Default: 30
         RefreshIntervalSeconds = $adoRefresh
+    }
+
+    # =========================================================================
+    # Costs - used by scripts\cost-lookup.ps1 (Session Hosts / Infrastructure tabs)
+    # =========================================================================
+
+    Costs = @{
+
+        # $false = Linux/base compute rate (correct for Windows 10/11 multisession AVD
+        #          and AHB VMs - Windows licence covered by M365, not billed per-VM).
+        # $true  = Windows Server PAYG rate (includes Windows Server licence cost).
+        PricingWindowsLicence = `$$([string]([bool]$pricingWindowsLicenceBox.IsChecked).ToString().ToLower())
     }
 }
 "@
@@ -2138,6 +2317,40 @@ $browseButton.Add_Click({
     }
 })
 
+$switchConfigBtn.Add_Click({
+    $_p = Show-EditorConfigPicker -Configs $script:_editorAllConfigs -AllowCancel $true
+    if (-not $_p) { return }
+    if ($_p.ClearDefault) {
+        try { Remove-ItemProperty -Path $script:EditRegPath -Name 'DefaultConfig' -ErrorAction SilentlyContinue } catch {}
+        return
+    }
+    if ($_p.SetDefault) {
+        if (-not (Test-Path $script:EditRegPath)) { try { New-Item -Path $script:EditRegPath -Force | Out-Null } catch {} }
+        try { Set-ItemProperty -Path $script:EditRegPath -Name 'DefaultConfig' -Value $_p.Config.Slug } catch {}
+    }
+    $_path = $_p.Config.Path
+    if ($_path -eq $script:currentConfigFile) { return }
+    $newCfg = Import-ConfigFile $_path
+    $script:currentConfigFile = $_path
+    $filePathText.Text = $script:currentConfigFile
+    if (-not $newCfg) {
+        $errorPanel.Visibility    = [System.Windows.Visibility]::Visible
+        $errorDetailText.Text     = $script:lastConfigError
+        $mainTabControl.IsEnabled = $false
+        $saveButton.IsEnabled     = $false
+        return
+    }
+    $script:isNewConfig = $false
+    $script:cfg = $newCfg
+    Merge-ConfigDefaults -Config $script:cfg -Defaults (New-DefaultConfig)
+    Initialize-Controls $script:cfg
+    $errorPanel.Visibility    = [System.Windows.Visibility]::Collapsed
+    $mainTabControl.IsEnabled = $true
+    $saveButton.IsEnabled     = $true
+    $statusText.Foreground = [System.Windows.Media.Brushes]::White
+    $statusText.Text = "Switched  -  $($script:currentConfigFile)"
+})
+
 $newButton.Add_Click({
     $dlg = New-Object Microsoft.Win32.SaveFileDialog
     $dlg.Title            = "Create New Config File"
@@ -2173,9 +2386,6 @@ try {
     }
 } catch {}
 
-try {
-    Add-Type -MemberDefinition '[DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);' -Name 'DwmApiEC' -Namespace 'Win32' -ErrorAction Stop
-} catch {}
 if ($_editDark) {
     $win.Add_SourceInitialized({
         try {

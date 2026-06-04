@@ -58,16 +58,14 @@ param(
     [string]   $StorageToken   = "",      # OAuth bearer token auth (preferred) - single token for all accounts
     [string]   $FolderName,
     [string[]] $SelectedAccounts,
-    [string]   $FileShareName,
-    [string]   $FileShareSubPath,
+    [hashtable]$ShareNameMap    = @{},    # per-account share names derived from the storage map
+    [hashtable]$ShareSubPathMap = @{},    # per-account subpaths derived from the storage map
     [string]   $LogFile = ""
 )
 
 # Load storage REST helper functions into this runspace.
 # $LogFile (if set) is visible to storage-api-helpers.ps1 for REST call logging.
 . ([scriptblock]::Create($StorageHelperCode))
-
-$BasePath = if ($FileShareSubPath) { "$FileShareSubPath/$FolderName" } else { $FolderName }
 $result   = [PSCustomObject]@{
     LockedAccounts      = [System.Collections.Generic.List[PSCustomObject]]::new()
     Messages            = [System.Collections.Generic.List[PSCustomObject]]::new()
@@ -91,6 +89,10 @@ foreach ($saName in $SelectedAccounts) {
     Msg "  Storage Account: $saName" "#E5E7EB"
     Msg ("  " + ("=" * 70)) "#E5E7EB"
 
+    $acctShareName = [string]$ShareNameMap[$saName]
+    $acctSubPath   = [string]$ShareSubPathMap[$saName]
+    $BasePath      = if ($acctSubPath) { "$acctSubPath/$FolderName" } else { $FolderName }
+
     # Determine auth method: OAuth bearer token (preferred) or SharedKey (legacy)
     $authSplat = @{ AccountName = $saName }
     if ($StorageToken) {
@@ -110,10 +112,10 @@ foreach ($saName in $SelectedAccounts) {
     # -- Check for .lock files ------------------------------------------------
     Msg ""
     Msg "  Checking for FSLogix .lock files..." "#F59E0B"
-    Msg "    Share: $FileShareName  Path: $BasePath" "#9CA3AF"
+    Msg "    Share: $acctShareName  Path: $BasePath" "#9CA3AF"
     try {
         $Files = Get-StorageDirectoryFiles @authSplat `
-                     -ShareName $FileShareName -DirectoryPath $BasePath
+                     -ShareName $acctShareName -DirectoryPath $BasePath
 
         if ($Files -and $Files.Count -gt 0) {
             Msg "    Files in folder:" "#9CA3AF"
@@ -162,7 +164,7 @@ foreach ($saName in $SelectedAccounts) {
         # Wrap in @() to ensure array even if API returns a single handle object.
         # Without this, Where-Object and .Count behave unexpectedly on scalar values.
         $Handles = @(Get-StorageFileHandles @authSplat `
-                       -ShareName $FileShareName -Path $BasePath -Recursive)
+                       -ShareName $acctShareName -Path $BasePath -Recursive)
 
         if ($Handles.Count -gt 0) {
             Msg "    Found $($Handles.Count) open handle(s):" "#F59E0B"

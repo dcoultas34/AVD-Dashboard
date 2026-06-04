@@ -140,7 +140,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-05-30b
+    Version       : 2026-06-01
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -174,7 +174,7 @@ param(
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-05-30b"
+$ScriptVersion = "2026-06-01"
 
 # All native type definitions and assembly loads are done here, before any WPF windows
 # are created. Show-ConfigPicker (the startup config picker) runs before the main
