@@ -140,7 +140,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-06-01
+    Version       : 2026-06-10
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -174,7 +174,7 @@ param(
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-06-01"
+$ScriptVersion = "2026-06-10"
 
 # All native type definitions and assembly loads are done here, before any WPF windows
 # are created. Show-ConfigPicker (the startup config picker) runs before the main
@@ -563,9 +563,13 @@ $DefaultInfraRGs             = @($_cfg.InfrastructureServers.ResourceGroups  | W
 $script:InfraExcludePatterns = @($_cfg.InfrastructureServers.ExcludePatterns | Where-Object { $_ })
 
 # Images  (consumed by scripts/tab-images.ps1)
-$script:ImgRGs             = @($_cfg.Images.ResourceGroups  | Where-Object { $_ })
-$script:ImgIncludePatterns = @($_cfg.Images.IncludePatterns | Where-Object { $_ })
-$script:ImgGalleryRGs      = @($_cfg.Images.GalleryRGs      | Where-Object { $_ })
+# Registry settings (loaded below) can override ResourceGroups/IncludePatterns/GalleryRGs at runtime.
+$DefaultImgRGs             = @($_cfg.Images.ResourceGroups  | Where-Object { $_ })
+$DefaultImgIncludePatterns = @($_cfg.Images.IncludePatterns | Where-Object { $_ })
+$DefaultImgGalleryRGs      = @($_cfg.Images.GalleryRGs      | Where-Object { $_ })
+$script:ImgRGs             = $DefaultImgRGs
+$script:ImgIncludePatterns = $DefaultImgIncludePatterns
+$script:ImgGalleryRGs      = $DefaultImgGalleryRGs
 $script:ImgPrepVMSizes     = @($_cfg.Images.PrepVMSizes     | Where-Object { $_ })
 if ($script:ImgPrepVMSizes.Count -eq 0) { $script:ImgPrepVMSizes = @('Standard_D2s_v5','Standard_D4s_v5','Standard_D8s_v5') }
 $script:ImgPrepVMSizeDefault = if ($_cfg.Images.PrepVMSizeDefault) { [string]$_cfg.Images.PrepVMSizeDefault } else { 'Standard_D4s_v5' }
@@ -1666,7 +1670,7 @@ function ConvertTo-DataTable {
 # =============================================================================
 
 function Read-Settings {
-    $defaults = @{ RefreshInterval = 30; FilesRefreshInterval = 900; StorageWarningPct = 90; ShadowMethod = 'MSTSC'; ShadowNoConsent = 0; ShadowUseIP = 0; ExcludedPools = @(); AvdIncludeRGs = @(); AvdExcludeRGs = @(); FilesRGs = @(); InfraRGs = @(); SecondaryRegionHighlight = 1; HiddenTabs = @(); HiddenTabsSaved = $false; HiddenColumns = @(); LowPriorityPatterns = @(); SecondaryRegions = @(); ScalingExcludeTag = ''; StorageAccountKinds = @(); InfraExcludePatterns = @(); DrainSetScalingTag = 1; AdoOrgUrl = ''; AdoRefreshInterval = 0; ShowRGVMCount = $null; DarkTheme = 0 }
+    $defaults = @{ RefreshInterval = 30; FilesRefreshInterval = 900; StorageWarningPct = 90; ShadowMethod = 'MSTSC'; ShadowNoConsent = 0; ShadowUseIP = 0; ExcludedPools = @(); AvdIncludeRGs = @(); AvdExcludeRGs = @(); FilesRGs = @(); InfraRGs = @(); ImgRGs = @(); ImgIncludePatterns = @(); ImgGalleryRGs = @(); SecondaryRegionHighlight = 1; HiddenTabs = @(); HiddenTabsSaved = $false; HiddenColumns = @(); LowPriorityPatterns = @(); SecondaryRegions = @(); ScalingExcludeTag = ''; StorageAccountKinds = @(); InfraExcludePatterns = @(); DrainSetScalingTag = 1; AdoOrgUrl = ''; AdoRefreshInterval = 0; ShowRGVMCount = $null; DarkTheme = 0 }
     try {
         if (-not (Test-Path $script:RegPath)) { return $defaults }
         $k = Get-ItemProperty -Path $script:RegPath -ErrorAction Stop
@@ -1680,8 +1684,11 @@ function Read-Settings {
             ShadowUseIP          = if ($k.ShadowUseIP)          { [int]$k.ShadowUseIP }          else { 0 }
             AvdIncludeRGs        = @(if ($k.AvdIncludeRGs) { $k.AvdIncludeRGs -split ',' | Where-Object { $_ } } else { @() })
             AvdExcludeRGs        = @(if ($k.AvdExcludeRGs) { $k.AvdExcludeRGs -split ',' | Where-Object { $_ } } else { @() })
-            FilesRGs             = @(if ($k.FilesRGs)  { $k.FilesRGs  -split ',' | Where-Object { $_ } } else { @() })
-            InfraRGs             = @(if ($k.InfraRGs)  { $k.InfraRGs  -split ',' | Where-Object { $_ } } else { @() })
+            FilesRGs             = @(if ($k.FilesRGs)             { $k.FilesRGs             -split ',' | Where-Object { $_ } } else { @() })
+            InfraRGs             = @(if ($k.InfraRGs)             { $k.InfraRGs             -split ',' | Where-Object { $_ } } else { @() })
+            ImgRGs               = @(if ($k.ImgRGs)               { $k.ImgRGs               -split ',' | Where-Object { $_ } } else { @() })
+            ImgIncludePatterns   = @(if ($k.ImgIncludePatterns)   { $k.ImgIncludePatterns   -split ',' | Where-Object { $_ } } else { @() })
+            ImgGalleryRGs        = @(if ($k.ImgGalleryRGs)        { $k.ImgGalleryRGs        -split ',' | Where-Object { $_ } } else { @() })
             ExcludedPools        = @($excl)
             SecondaryRegionHighlight = if ($null -ne $k.SecondaryRegionHighlight) { [int]$k.SecondaryRegionHighlight } else { 1 }
             # Display/filter settings.
@@ -1711,7 +1718,9 @@ function Write-Settings {
         [int]$RefreshInterval, [int]$FilesRefreshInterval, [int]$StorageWarningPct,
         [string]$ShadowMethod, [int]$ShadowNoConsent, [int]$ShadowUseIP,
         [string[]]$ExcludedPools, [string[]]$AvdIncludeRGs, [string[]]$AvdExcludeRGs,
-        [string[]]$FilesRGs, [string[]]$InfraRGs, [int]$SecondaryRegionHighlight,
+        [string[]]$FilesRGs, [string[]]$InfraRGs,
+        [string[]]$ImgRGs = @(), [string[]]$ImgIncludePatterns = @(), [string[]]$ImgGalleryRGs = @(),
+        [int]$SecondaryRegionHighlight,
         # Display/filter settings (registry overrides config.psd1)
         [string[]]$HiddenTabs, [string[]]$HiddenColumns, [string[]]$LowPriorityPatterns,
         [string[]]$SecondaryRegions, [string]$ScalingExcludeTag, [string[]]$StorageAccountKinds,
@@ -1732,6 +1741,9 @@ function Write-Settings {
     Set-ItemProperty -Path $script:RegPath -Name 'AvdExcludeRGs'             -Value ($AvdExcludeRGs -join ',')
     Set-ItemProperty -Path $script:RegPath -Name 'FilesRGs'                  -Value ($FilesRGs -join ',')
     Set-ItemProperty -Path $script:RegPath -Name 'InfraRGs'                  -Value ($InfraRGs -join ',')
+    Set-ItemProperty -Path $script:RegPath -Name 'ImgRGs'                    -Value ($ImgRGs -join ',')
+    Set-ItemProperty -Path $script:RegPath -Name 'ImgIncludePatterns'        -Value ($ImgIncludePatterns -join ',')
+    Set-ItemProperty -Path $script:RegPath -Name 'ImgGalleryRGs'             -Value ($ImgGalleryRGs -join ',')
     Set-ItemProperty -Path $script:RegPath -Name 'SecondaryRegionHighlight'  -Value $SecondaryRegionHighlight
     # Display/filter settings
     # '__none__' sentinel: user explicitly saved an empty HiddenTabs list.
@@ -1786,6 +1798,9 @@ function Invoke-ConfigReload {
     $script:DefaultShadowMethod          = if ([string]::IsNullOrWhiteSpace([string]$c.ShadowRDP.ShadowMethod)) { 'MSTSC' } else { [string]$c.ShadowRDP.ShadowMethod }
     $script:DefaultShadowUseIP           = [bool]$c.ShadowRDP.ShadowUseIP
     $script:DefaultInfraRGs              = @($c.InfrastructureServers.ResourceGroups   | Where-Object { $_ })
+    $script:DefaultImgRGs                = @($c.Images.ResourceGroups  | Where-Object { $_ })
+    $script:DefaultImgIncludePatterns    = @($c.Images.IncludePatterns | Where-Object { $_ })
+    $script:DefaultImgGalleryRGs         = @($c.Images.GalleryRGs      | Where-Object { $_ })
     $script:DefaultScalingExcludeTag     = if ($c.AVDHostPools.ScalingExcludeTag) { $c.AVDHostPools.ScalingExcludeTag } else { 'ExcludeFromScaling' }
     if ($script:DefaultStorageAccountKinds.Count -eq 0) { $script:DefaultStorageAccountKinds = @('FileStorage', 'StorageV2') }
 
@@ -1796,7 +1811,6 @@ function Invoke-ConfigReload {
     $script:InputDelayExcludeProcesses = @($c.LogAnalytics.InputDelayExcludeProcesses)
     if (-not $script:InputDelayExcludeProcesses) { $script:InputDelayExcludeProcesses = @() }
     $script:InfraExcludePatterns    = @($c.InfrastructureServers.ExcludePatterns | Where-Object { $_ })
-    $script:ImgGalleryRGs          = @($c.Images.GalleryRGs | Where-Object { $_ })
     $script:ImgPrepVMSizes         = @($c.Images.PrepVMSizes | Where-Object { $_ })
     if ($script:ImgPrepVMSizes.Count -eq 0) { $script:ImgPrepVMSizes = @('Standard_D2s_v5','Standard_D4s_v5','Standard_D8s_v5') }
     $script:ImgPrepVMSizeDefault   = if ($c.Images.PrepVMSizeDefault) { [string]$c.Images.PrepVMSizeDefault } else { 'Standard_D4s_v5' }
@@ -1817,9 +1831,12 @@ function Invoke-ConfigReload {
     $script:ShadowUseIP                 = if ($saved.ShadowUseIP) { [bool][int]$saved.ShadowUseIP } else { $script:DefaultShadowUseIP }
     $script:AvdIncludeRGs               = if ($saved.AvdIncludeRGs.Count -gt 0)  { $saved.AvdIncludeRGs }  else { $script:DefaultAvdIncludeRGs }
     $script:AvdExcludeRGs               = if ($saved.AvdExcludeRGs.Count -gt 0)  { $saved.AvdExcludeRGs }  else { $script:DefaultAvdExcludeRGs }
-    $script:FilesRGs                    = if ($saved.FilesRGs.Count -gt 0)        { $saved.FilesRGs }        else { $script:DefaultFilesRGs }
-    $script:InfraRGs                    = if ($saved.InfraRGs.Count -gt 0)        { $saved.InfraRGs }        else { $script:DefaultInfraRGs }
-    $script:ExcludedPools               = if ($saved.ExcludedPools.Count -gt 0)   { $saved.ExcludedPools }   else { $script:DefaultExcludedPools }
+    $script:FilesRGs                    = if ($saved.FilesRGs.Count -gt 0)             { $saved.FilesRGs }             else { $script:DefaultFilesRGs }
+    $script:InfraRGs                    = if ($saved.InfraRGs.Count -gt 0)             { $saved.InfraRGs }             else { $script:DefaultInfraRGs }
+    $script:ImgRGs                      = if ($saved.ImgRGs.Count -gt 0)               { $saved.ImgRGs }               else { $script:DefaultImgRGs }
+    $script:ImgIncludePatterns          = if ($saved.ImgIncludePatterns.Count -gt 0)   { $saved.ImgIncludePatterns }   else { $script:DefaultImgIncludePatterns }
+    $script:ImgGalleryRGs               = if ($saved.ImgGalleryRGs.Count -gt 0)        { $saved.ImgGalleryRGs }        else { $script:DefaultImgGalleryRGs }
+    $script:ExcludedPools               = if ($saved.ExcludedPools.Count -gt 0)        { $saved.ExcludedPools }        else { $script:DefaultExcludedPools }
     $script:StorageAccountKinds         = if ($saved.StorageAccountKinds.Count -gt 0) { $saved.StorageAccountKinds } else { $script:DefaultStorageAccountKinds }
     $script:SecondaryRegions            = if ($saved.SecondaryRegions.Count -gt 0)    { $saved.SecondaryRegions }    else { $script:DefaultSecondaryRegions }
     $script:SecondaryRegionHighlight    = if ($null -ne $saved.SecondaryRegionHighlight) { [bool][int]$saved.SecondaryRegionHighlight } else { $script:DefaultSecondaryRegionHighlight }
@@ -1842,9 +1859,12 @@ $script:ShadowNoConsent              = if ($null -ne $savedSettings.ShadowNoCons
 $script:ShadowUseIP                  = if ($savedSettings.ShadowUseIP) { [bool][int]$savedSettings.ShadowUseIP } else { $ShadowUseIP }
 $script:AvdIncludeRGs                = if ($savedSettings.AvdIncludeRGs.Count -gt 0) { $savedSettings.AvdIncludeRGs } else { $DefaultAvdIncludeRGs }
 $script:AvdExcludeRGs                = if ($savedSettings.AvdExcludeRGs.Count -gt 0) { $savedSettings.AvdExcludeRGs } else { $DefaultAvdExcludeRGs }
-$script:FilesRGs                     = if ($savedSettings.FilesRGs.Count -gt 0) { $savedSettings.FilesRGs } else { $DefaultFilesRGs }
-$script:InfraRGs                     = if ($savedSettings.InfraRGs.Count -gt 0) { $savedSettings.InfraRGs } else { $DefaultInfraRGs }
-$script:ExcludedPools                = if ($savedSettings.ExcludedPools.Count -gt 0) { $savedSettings.ExcludedPools } else { $DefaultExcludedPools }
+$script:FilesRGs                     = if ($savedSettings.FilesRGs.Count -gt 0)             { $savedSettings.FilesRGs }             else { $DefaultFilesRGs }
+$script:InfraRGs                     = if ($savedSettings.InfraRGs.Count -gt 0)             { $savedSettings.InfraRGs }             else { $DefaultInfraRGs }
+$script:ImgRGs                       = if ($savedSettings.ImgRGs.Count -gt 0)               { $savedSettings.ImgRGs }               else { $DefaultImgRGs }
+$script:ImgIncludePatterns           = if ($savedSettings.ImgIncludePatterns.Count -gt 0)   { $savedSettings.ImgIncludePatterns }   else { $DefaultImgIncludePatterns }
+$script:ImgGalleryRGs                = if ($savedSettings.ImgGalleryRGs.Count -gt 0)        { $savedSettings.ImgGalleryRGs }        else { $DefaultImgGalleryRGs }
+$script:ExcludedPools                = if ($savedSettings.ExcludedPools.Count -gt 0)        { $savedSettings.ExcludedPools }        else { $DefaultExcludedPools }
 
 # Display/filter settings - registry overrides config.psd1 when a value has been saved
 $script:StorageAccountKinds          = if ($savedSettings.StorageAccountKinds.Count -gt 0)  { $savedSettings.StorageAccountKinds }  else { $StorageAccountKinds }
@@ -4480,6 +4500,9 @@ function Show-Settings {
                 -AvdExcludeRGs $avdExcRgs `
                 -FilesRGs $filesRgs `
                 -InfraRGs $infraRgs `
+                -ImgRGs $imgRgs `
+                -ImgIncludePatterns $imgInclPats `
+                -ImgGalleryRGs $imgGalleryRgs `
                 -SecondaryRegionHighlight ([int]$secondaryHighlight) `
                 -HiddenTabs $hiddenTabs `
                 -HiddenColumns $hiddenCols `

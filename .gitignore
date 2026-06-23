@@ -1,4 +1,0 @@
-config/*.psd1
-!config/EXAMPLE-config.psd1
-ISSUES.md
-logs/

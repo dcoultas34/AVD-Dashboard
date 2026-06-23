@@ -202,26 +202,20 @@
 
         # Storage accounts to check when searching for FSLogix profile folders.
         # Key   = storage account short name (no domain suffix)
-        # Value = full UNC path to the share including the fslogix subfolder
+        # Value = full UNC path pointing directly to the folder that contains profile folders.
+        #         Include a subpath if profiles are not at the share root.
+        #         e.g. '\\account.file.core.windows.net\share\profiles'
         StorageAccountShareMap = @{
-            'salivedashboard2'    = '\\salivedashboard2.file.core.windows.net\fslogix'
-            'salivedashboardtest' = '\\salivedashboardtest.file.core.windows.net\fslogix'
-            'sauksprofiles1'      = '\\sauksprofiles1.file.core.windows.net\fslogix'
-            'saukwprofiles1'      = '\\saukwprofiles1.file.core.windows.net\fslogix'
+            'salivedashboard2'    = '\\salivedashboard2.file.core.windows.net\fslogix\profiles'
+            'salivedashboardtest' = '\\salivedashboardtest.file.core.windows.net\fslogix\profiles'
+            'sauksprofiles1'      = '\\sauksprofiles1.file.core.windows.net\fslogix\profiles'
+            'saukwprofiles1'      = '\\saukwprofiles1.file.core.windows.net\fslogix\profiles'
         }
 
         # Account names to exclude from profile tool tabs and scans.
         # Excluded accounts are still checked during profile deletion operations.
         # Leave as @() to include all accounts.
         ExcludeStorage = @()
-
-        # Azure File Share name (the share itself — must match the share name in the UNC paths above).
-        FileShareName = 'fslogix'
-
-        # Sub-path within the file share where profile folders live.
-        # e.g. 'fslogix' if profiles are at \\share\profiles\fslogix\<username>
-        # Leave as '' if profiles are directly at the share root (\\share\profiles\<username>).
-        FileShareSubPath = ''
 
         # Maps a substring of a storage account name to a human-readable Azure region label.
         # Used to display the region badge on Storage Location cards.

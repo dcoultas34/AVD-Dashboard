@@ -868,12 +868,10 @@ function Invoke-InfrastructureTabTimer {
     if ($script:infraHandle -and $script:infraHandle.IsCompleted) {
         try {
             $infraData = $script:infraPS.EndInvoke($script:infraHandle)
-            # Always call _IS_UpdateGrid - even with 0 VMs so the status text
-            # and timestamp update. An empty array is falsy in PowerShell so
-            # the old "if ($infraData.VmRows)" check skipped this when the RG
-            # had no VMs, leaving the status stuck at "Refreshing..." forever.
-            if ($null -ne $infraData) {
-                _IS_UpdateGrid -VmRows @($infraData.VmRows) -Timestamp $infraData.Timestamp
+            # EndInvoke returns a PSDataCollection - use [0] to get the actual result object.
+            # Always call _IS_UpdateGrid even with 0 VMs so the status text and timestamp update.
+            if ($null -ne $infraData -and $null -ne $infraData[0]) {
+                _IS_UpdateGrid -VmRows @($infraData[0].VmRows) -Timestamp $infraData[0].Timestamp
             }
             $script:infraNextRefresh = [DateTime]::Now.AddSeconds($script:InfraRefreshIntervalSeconds)
         } catch {
@@ -976,7 +974,9 @@ function _IS_UpdateGrid {
     param($VmRows, $Timestamp)
 
     $script:infraLastVmRows = @($VmRows)
+    Write-Log "DEBUG [Infra] _IS_UpdateGrid - VmRows.Count=$(@($VmRows).Count)"
     $script:infraDataTable  = ConvertTo-DataTable -Objects @($VmRows)
+    Write-Log "DEBUG [Infra] DataTable rows=$($script:infraDataTable.Rows.Count)  cols=$($script:infraDataTable.Columns.Count)"
 
     # Reapply any cached costs so they survive the auto-refresh cycle
     if ($script:isCostCache -and $script:isCostCache.Count -gt 0) {

@@ -437,6 +437,8 @@ $script:imgRefreshScript = {
 
     $vmRows = [System.Collections.Generic.List[PSCustomObject]]::new()
 
+
+
     foreach ($rg in $imgRGs) {
         $vms = @(Invoke-Arm -Path "/subscriptions/$SubId/resourceGroups/$rg/providers/Microsoft.Compute/virtualMachines" -Token $ArmToken -ApiVersion '2024-07-01')
         if ($vms.Count -eq 0) { continue }
@@ -465,11 +467,12 @@ $script:imgRefreshScript = {
             if ($powerState.Length -gt 0) {
                 $powerState = $powerState.Substring(0,1).ToUpper() + $powerState.Substring(1)
             }
+            $osName    = if ($iv -and $iv.osName)    { [string]$iv.osName }    else { '-' }
+            $osVersion = if ($iv -and $iv.osVersion) { [string]$iv.osVersion } else { '-' }
 
-            $vmSku        = [string]$vm.properties.hardwareProfile.vmSize
-            $availZone    = if ($vm.zones -and $vm.zones.Count -gt 0) { [string]$vm.zones[0] } else { 'N/A' }
-            $osType       = [string]$vm.properties.storageProfile.osDisk.osType
-            $osDiskName   = [string]$vm.properties.storageProfile.osDisk.name
+            $vmSku      = [string]$vm.properties.hardwareProfile.vmSize
+            $availZone  = if ($vm.zones -and $vm.zones.Count -gt 0) { [string]$vm.zones[0] } else { 'N/A' }
+            $osDiskName = [string]$vm.properties.storageProfile.osDisk.name
 
             # Resolve private IP from the first NIC
             $ip = '-'
@@ -489,7 +492,8 @@ $script:imgRefreshScript = {
                 'Resource Group' = $rg
                 'Region'         = $vm.location
                 'Power State'    = $powerState
-                'OS Type'        = $osType
+                'OS Name'        = $osName
+                'OS Version'     = $osVersion
                 'IP Address'     = $ip
                 'Avail Zone'     = $availZone
                 'VM SKU'         = $vmSku
@@ -636,7 +640,7 @@ function Initialize-ImagesTab {
         $script:imgDataTable.DefaultView.RowFilter = if ([string]::IsNullOrEmpty($text)) {
             ''
         } else {
-            "([VM Name] LIKE '%$text%') OR ([Resource Group] LIKE '%$text%') OR ([Power State] LIKE '%$text%') OR ([OS Type] LIKE '%$text%')"
+            "([VM Name] LIKE '%$text%') OR ([Resource Group] LIKE '%$text%') OR ([Power State] LIKE '%$text%')"
         }
         if ([string]::IsNullOrEmpty($text)) {
             $script:imgFilteredCountText = $null
@@ -737,6 +741,12 @@ function Initialize-ImagesTab {
     $menuIMGOpenPortal         = New-Object System.Windows.Controls.MenuItem
     $menuIMGOpenPortal.Header  = "Open Resource Group in Portal"
     [void]$imgCtxMenu.Items.Add($menuIMGOpenPortal)
+    # --- Experimental section ---
+    [void]$imgCtxMenu.Items.Add((New-Object System.Windows.Controls.Separator))
+    $menuIMGIntuneEnrol          = New-Object System.Windows.Controls.MenuItem
+    $menuIMGIntuneEnrol.Header   = 'Intune Enrol [Experimental]'
+    $menuIMGIntuneEnrol.IsEnabled = $false
+    [void]$imgCtxMenu.Items.Add($menuIMGIntuneEnrol)
 
     $imgGrid = $script:IMGGrid
 
@@ -757,6 +767,7 @@ function Initialize-ImagesTab {
         $imgCtxMenu.Items[2].IsEnabled = $hasOne -and ($activeJobs -lt 2)
         $imgCtxMenu.Items[4].IsEnabled = $hasOne
         $imgCtxMenu.Items[6].IsEnabled = $hasOne
+        $menuIMGIntuneEnrol.IsEnabled  = $hasOne
     }.GetNewClosure())
 
     $menuIMGRDP.Add_Click({
@@ -802,6 +813,19 @@ function Initialize-ImagesTab {
         $rg  = [string]$sel[0]['_RG']
         $url = "https://portal.azure.com/#@$imgPortalTenantId/resource/subscriptions/$imgPortalSubId/resourceGroups/$rg/overview"
         Start-Process $url
+    }.GetNewClosure())
+
+    $menuIMGIntuneEnrol.Add_Click({
+        $sel = @($imgGrid.SelectedItems)
+        if ($sel.Count -eq 0 -or $null -eq $sel[0]) { return }
+        $vmName   = [string]$sel[0]['VM Name']
+        $vmRG     = [string]$sel[0]['_RG']
+        $vmRegion = [string]$sel[0]['Region']
+        $confirm  = Show-ThemedDialog -Title 'Intune Enrol [Experimental]' `
+            -Message "Assign system-managed identity and install AADLoginForWindows on:`n`n  $vmName`n`nThis is an experimental operation. Continue?" `
+            -Buttons YesNo -Icon Warning
+        if ($confirm -ne 'Yes') { return }
+        Invoke-ImagesIntuneEnrol -VMName $vmName -RG $vmRG -Location $vmRegion
     }.GetNewClosure())
 
     $imgGrid.ContextMenu = $imgCtxMenu
@@ -1352,6 +1376,76 @@ function Invoke-ImagesViewSysprepLog {
 # 9. Create Image dialog - discovers resources from Azure, caches for session
 # =============================================================================
 
+# =============================================================================
+# 8a. Intune Enrolment [Experimental]
+# =============================================================================
+
+function Invoke-ImagesIntuneEnrol {
+    param([string]$VMName, [string]$RG, [string]$Location)
+
+    $enrollScript = Join-Path $PSScriptRoot 'enrol-intune.ps1'
+    if (-not (Test-Path $enrollScript)) {
+        Show-ThemedDialog -Title 'Script Not Found' `
+            -Message "Cannot find enrol-intune.ps1 at:`n$enrollScript" `
+            -Buttons OK -Icon Error
+        return
+    }
+
+    $envVars = @{
+        VM_NAME         = $VMName
+        RESOURCE_GROUP  = $RG
+        LOCATION        = $Location
+        ARM_TOKEN       = Get-ArmToken
+        SUBSCRIPTION_ID = $script:imgSubId
+        REST_HELPER_DEF = $script:restHelperDef
+    }
+    $envVarsJson = $envVars | ConvertTo-Json -Compress
+
+    $consoleTab, $consoleBox = _IMG_AddConsoleTab -VMName $VMName -GalleryName '' -ImageDefName 'Intune Enrol'
+    _IMG_ShowConsole
+    $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $consoleBox.AppendText("[$stamp] Starting Intune enrolment for $VMName`n")
+    $consoleBox.AppendText("  Resource Group : $RG`n")
+    $consoleBox.AppendText("  Location       : $Location`n")
+    $consoleBox.AppendText(('-' * 60) + "`n")
+
+    $queue     = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+    $jobScript = {
+        param($ScriptPath, $EnvVarsJson, $Queue)
+        $envMap = $EnvVarsJson | ConvertFrom-Json
+        foreach ($prop in $envMap.PSObject.Properties) {
+            [System.Environment]::SetEnvironmentVariable($prop.Name, $prop.Value, 'Process')
+        }
+        try {
+            & $ScriptPath *>&1 | ForEach-Object {
+                $line = if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                    "ERROR: $($_.ToString())"
+                } elseif ($_ -is [System.Management.Automation.WarningRecord]) {
+                    "WARN:  $($_.Message)"
+                } else {
+                    $_.ToString()
+                }
+                $Queue.Enqueue($line)
+            }
+            $Queue.Enqueue('--- Intune enrolment completed successfully ---')
+        } catch {
+            $Queue.Enqueue("FATAL: $_")
+            $Queue.Enqueue('--- Intune enrolment terminated with error ---')
+        }
+    }
+
+    $rs               = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+    $rs.ApartmentState = 'MTA'
+    $rs.Open()
+    $ps          = [System.Management.Automation.PowerShell]::Create()
+    $ps.Runspace = $rs
+    $null = $ps.AddScript($jobScript).AddArgument($enrollScript).AddArgument($envVarsJson).AddArgument($queue)
+
+    $job = @{ RS = $rs; PS = $ps; Handle = $ps.BeginInvoke(); Queue = $queue; ConsoleBox = $consoleBox; Tab = $consoleTab; LogPath = $null }
+    $script:imgJobs.Add($job)
+    $script:IMGConsoleStopButton.IsEnabled = $true
+}
+
 # Session-scoped caches so repeated opens don't re-fetch
 $script:imgCachedGalleries   = $null   # @{ RG = '...'; Name = '...' }[]
 $script:imgCachedDefs        = @{}     # key = "RG/GalleryName", value = string[]
@@ -1608,7 +1702,7 @@ function Invoke-ImagesCreateImageDialog {
                 Write-Log "INFO [Images/CreateImage] Fetching subnets for initial VNet '$($firstVNet.Name)' RG='$($firstVNet.RG)'"
                 $vnetDetail = Invoke-Arm -Path "/subscriptions/$subId/resourceGroups/$($firstVNet.RG)/providers/Microsoft.Network/virtualNetworks/$($firstVNet.Name)" `
                                           -Token $tok -ApiVersion '2023-05-01' -FullResponse
-                $initSubnets = @($vnetDetail.properties.subnets | ForEach-Object { [string]$_.name } | Sort-Object)
+                $initSubnets = @($vnetDetail.properties.subnets | ForEach-Object { [string]$_.name } | Where-Object { $_ -ine 'GatewaySubnet' } | Sort-Object)
                 Write-Log "INFO [Images/CreateImage] Initial subnet fetch returned $($initSubnets.Count) subnet(s): $($initSubnets -join ', ')"
                 if ($initSubnets.Count -gt 0) {
                     $subnetCombo.ItemsSource   = $initSubnets
@@ -1692,7 +1786,7 @@ function Invoke-ImagesCreateImageDialog {
             Write-Log "INFO [Images/CreateImage] Fetching subnets for VNet '$($selVNet.Name)' (subId='$subId')"
             $vnetDet = Invoke-Arm -Path "/subscriptions/$subId/resourceGroups/$($selVNet.RG)/providers/Microsoft.Network/virtualNetworks/$($selVNet.Name)" `
                                    -Token $tok -ApiVersion '2023-05-01' -FullResponse
-            $subnetNames = @($vnetDet.properties.subnets | ForEach-Object { [string]$_.name } | Sort-Object)
+            $subnetNames = @($vnetDet.properties.subnets | ForEach-Object { [string]$_.name } | Where-Object { $_ -ine 'GatewaySubnet' } | Sort-Object)
             Write-Log "INFO [Images/CreateImage] Subnet fetch returned $($subnetNames.Count) subnet(s): $($subnetNames -join ', ')"
         } catch {
             Write-Log "ERROR [Images/CreateImage] Subnet fetch failed for VNet '$($selVNet.Name)': $_"
@@ -2058,7 +2152,7 @@ function _IMG_UpdateGrid {
 
     $filter = $script:IMGFilterBox.Text.Trim()
     if (-not [string]::IsNullOrEmpty($filter)) {
-        $script:imgDataTable.DefaultView.RowFilter = "([VM Name] LIKE '%$filter%') OR ([Resource Group] LIKE '%$filter%') OR ([Power State] LIKE '%$filter%') OR ([OS Type] LIKE '%$filter%')"
+        $script:imgDataTable.DefaultView.RowFilter = "([VM Name] LIKE '%$filter%') OR ([Resource Group] LIKE '%$filter%') OR ([Power State] LIKE '%$filter%')"
         $view   = $script:imgDataTable.DefaultView
         $fTotal = $view.Count
         $fRun   = @($view | Where-Object { $_['Power State'] -eq 'Running' }).Count

@@ -1,5 +1,12 @@
 # AVD Live Dashboard - Changelog
 
+## 2026-06-10
+- Images tab: added "Intune Enrol [Experimental]" right-click option. Assigns a system-managed identity and installs the AADLoginForWindows extension (multi-session mode, `multiSessionEnabled: true`) via ARM REST API. Output streams to a console tab.
+
+## 2026-06-09
+- Settings: Images ResourceGroups, IncludePatterns, and GalleryRGs are now persisted to the registry, matching the behaviour of InfraRGs, FilesRGs, and other RG settings. Previously, changes made in the Settings UI were lost on restart.
+- Create Image dialog: GatewaySubnet is now excluded from the subnet dropdown.
+
 ## 2026-06-01
 - Session Hosts tab: fixed compute pricing showing Windows Server PAYG rate (~£400/mo) instead of the correct Linux/base rate (~£200/mo) for Windows 10/11 AVD session hosts deployed from a Shared Image Gallery image. Root cause: gallery images built from a Windows Server marketplace base carry a `WindowsServer` imageOffer string in Resource Graph; the imageOffer detection matched `'Server'` and hard-coded `_PricingOsType = 'Windows'` regardless of the configured pricing preference. Additionally, the `Costs` config section was absent from Frontier.psd1, so `PricingWindowsLicence` was never applied and `PricingWindowsFallback` defaulted to `$true` (Windows pricing). Fixed by changing the default `$script:UseAHBPricing` from `$false` to `$true` in `cost-lookup.ps1`, ensuring configs without a `Costs` section correctly default to the Linux/base rate.
 - Config editor: added Costs / `PricingWindowsLicence` field to the Profile Tools tab. The editor previously omitted this section from saved files entirely, silently stripping it on every save. The new "Include Windows Server licence" checkbox is loaded from and written to the `Costs` block on every save, and is included in the default config template.
