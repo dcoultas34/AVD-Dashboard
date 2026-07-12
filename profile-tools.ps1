@@ -430,7 +430,7 @@ if (-not (Test-Path $_configFile)) {
     if (Test-Path $_editorScript) {
         Show-DashboardMessageDialog -Title 'No Configuration Found' -Heading 'No configuration found' -Icon Information `
             -Message 'The Config Editor will now open so you can create one. Fill in your environment details, click Save, then launch Profile Tools again.'
-        Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $_editorScript + '"'))
+        Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $_editorScript + '"'))
         exit 0
     }
     Show-DashboardMessageDialog -Title 'Missing Configuration File' -Heading 'Configuration file not found' -Icon Error `

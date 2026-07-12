@@ -9,8 +9,8 @@
                   },
                   {
                       "path":  "avd-live-dashboard.ps1",
-                      "sha256":  "9DBAE636CC3B6B7764BE99AC2B78F85182DB1E3EE930CE61F35CB39BF96396A3",
-                      "size":  293014
+                      "sha256":  "786F77C5B317148C8CCA3A85EF16B8B731BAAA01FBC5A4907D01DE3B68FE5762",
+                      "size":  293008
                   },
                   {
                       "path":  "CHANGELOG.md",
@@ -179,8 +179,8 @@
                   },
                   {
                       "path":  "profile-tools.ps1",
-                      "sha256":  "6F2995337D93BD0507F91BC8F727C9B7AF1806C23ACECC7A172F2B44D878872F",
-                      "size":  203748
+                      "sha256":  "CA68B0FF81833D91A5A663F3453029B0DFC2618B6F24A962ED03D99D64DC9161",
+                      "size":  203742
                   },
                   {
                       "path":  "README.md",
@@ -194,8 +194,8 @@
                   },
                   {
                       "path":  "scripts/check-permissions.ps1",
-                      "sha256":  "ABE89AF43A9A9197C3B258F8C17067EF5AB0A2E8666A72DF1E4D16D55AA530ED",
-                      "size":  76366
+                      "sha256":  "B476820A094934054CC2C45C971CDD6ACEE6F6805347ECD1A52C15740E173AB1",
+                      "size":  76360
                   },
                   {
                       "path":  "scripts/connect-azure.ps1",
