@@ -1,6 +1,6 @@
 {
-    "version":  "2026-07-12",
-    "notes":  "## 2026-07-12\n- **All remaining message boxes converted to styled WPF dialogs** (68 native boxes across the dashboard, Profile Tools, permissions checker, config editor, log viewer and audit viewer). In-app messages and confirmations (Start/Stop VM, drain mode, snapshot/image-version cleanup, MFA elevation) now use the theme-aware dialog; startup and standalone-tool messages use the same styled dialog as the update prompt, which gained Yes/No and Yes/No/Cancel button support for confirmations. Native boxes remain only as internal fallbacks, OS file pickers, and the restricted-language-mode warning in the tools (where WPF may be unavailable).",
+    "version":  "2026-07-12.2",
+    "notes":  "## 2026-07-12.2\n- **Fresh installs open the Config Editor instead of dead-ending.** When no configuration exists (only the shipped EXAMPLE file), the dashboard, Profile Tools and the permissions checker now launch the Config Editor rather than showing a \"Missing Configuration File\" error and exiting. The editor starts pre-filled with defaults targeting `config\\config.psd1` - fill in your details, Save, and relaunch the app.",
     "files":  [
                   {
                       "path":  ".gitattributes",
@@ -9,13 +9,13 @@
                   },
                   {
                       "path":  "avd-live-dashboard.ps1",
-                      "sha256":  "25C948AA0C7F38006C547BCB68B52E841F1F44B9C7503249751BC44F7652AB91",
-                      "size":  292278
+                      "sha256":  "9DBAE636CC3B6B7764BE99AC2B78F85182DB1E3EE930CE61F35CB39BF96396A3",
+                      "size":  293014
                   },
                   {
                       "path":  "CHANGELOG.md",
-                      "sha256":  "808975A4AC0B7647282457FC4E485DCDFE6469CFCA97B52F17AD6BA9860D72C3",
-                      "size":  50406
+                      "sha256":  "2C7BCA77D2891A9503548C78229A8ACE04001344F4AA5302D1D0C42B44AC46E8",
+                      "size":  50835
                   },
                   {
                       "path":  "Check-AVD-Permissions.cmd",
@@ -179,8 +179,8 @@
                   },
                   {
                       "path":  "profile-tools.ps1",
-                      "sha256":  "E0211268ECDA00C64F1C59A9BEE499B5740215F0A70104DE978B8ABBC8608014",
-                      "size":  203014
+                      "sha256":  "6F2995337D93BD0507F91BC8F727C9B7AF1806C23ACECC7A172F2B44D878872F",
+                      "size":  203748
                   },
                   {
                       "path":  "README.md",
@@ -194,8 +194,8 @@
                   },
                   {
                       "path":  "scripts/check-permissions.ps1",
-                      "sha256":  "F36C51EE51F801D74407741559AC04B82A5B6F4834194C2EDE6290B4E2B6FB19",
-                      "size":  75635
+                      "sha256":  "ABE89AF43A9A9197C3B258F8C17067EF5AB0A2E8666A72DF1E4D16D55AA530ED",
+                      "size":  76366
                   },
                   {
                       "path":  "scripts/connect-azure.ps1",
@@ -219,8 +219,8 @@
                   },
                   {
                       "path":  "scripts/edit-config.ps1",
-                      "sha256":  "DEE59EC47B33CB90EFC5CC55AC9A63AD4C5BEA19139F2D2193B6DD45E3B190AF",
-                      "size":  118465
+                      "sha256":  "7A56437136D41B21817CC74CFA93EDEEC6208C54CC79E426D820A439AF5EEEC5",
+                      "size":  118620
                   },
                   {
                       "path":  "scripts/enrol-intune.ps1",

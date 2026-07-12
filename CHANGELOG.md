@@ -1,5 +1,8 @@
 # AVD Live Dashboard - Changelog
 
+## 2026-07-12.2
+- **Fresh installs open the Config Editor instead of dead-ending.** When no configuration exists (only the shipped EXAMPLE file), the dashboard, Profile Tools and the permissions checker now launch the Config Editor rather than showing a "Missing Configuration File" error and exiting. The editor starts pre-filled with defaults targeting `config\config.psd1` - fill in your details, Save, and relaunch the app.
+
 ## 2026-07-12
 - **All remaining message boxes converted to styled WPF dialogs** (68 native boxes across the dashboard, Profile Tools, permissions checker, config editor, log viewer and audit viewer). In-app messages and confirmations (Start/Stop VM, drain mode, snapshot/image-version cleanup, MFA elevation) now use the theme-aware dialog; startup and standalone-tool messages use the same styled dialog as the update prompt, which gained Yes/No and Yes/No/Cancel button support for confirmations. Native boxes remain only as internal fallbacks, OS file pickers, and the restricted-language-mode warning in the tools (where WPF may be unavailable).
 

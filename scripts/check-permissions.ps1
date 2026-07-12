@@ -104,6 +104,15 @@ try {
 
 $_configFile = if ($ConfigFile) { $ConfigFile } else { Join-Path $PSScriptRoot '..\config\config.psd1' }
 if (-not (Test-Path $_configFile)) {
+    # No config yet (fresh install): open the Config Editor to create one instead of
+    # dead-ending with an error. The checker exits; relaunch it after saving.
+    $_editorScript = Join-Path $PSScriptRoot 'edit-config.ps1'
+    if (Test-Path $_editorScript) {
+        Show-DashboardMessageDialog -Title 'No Configuration Found' -Heading 'No configuration found' -Icon Information `
+            -Message 'The Config Editor will now open so you can create one. Fill in your environment details, click Save, then run the permissions checker again.'
+        Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $_editorScript + '"'))
+        exit 0
+    }
     Show-DashboardMessageDialog -Title 'Missing Configuration File' -Heading 'Configuration file not found' -Icon Error `
         -Message 'Ensure config.psd1 is in the config folder.' -Detail $_configFile
     exit 1

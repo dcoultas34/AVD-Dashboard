@@ -424,6 +424,15 @@ $script:profileDeleteScript      = Join-Path $PSScriptRoot 'scripts\profile-dele
 $script:profileDeleteLocksScript = Join-Path $PSScriptRoot 'scripts\profile-delete-unlock.ps1'
 $script:profileDeleteRemoveScript= Join-Path $PSScriptRoot 'scripts\profile-delete-remove.ps1'
 if (-not (Test-Path $_configFile)) {
+    # No config yet (fresh install): open the Config Editor to create one instead of
+    # dead-ending with an error. Profile Tools exits; relaunch it after saving.
+    $_editorScript = Join-Path $PSScriptRoot 'scripts\edit-config.ps1'
+    if (Test-Path $_editorScript) {
+        Show-DashboardMessageDialog -Title 'No Configuration Found' -Heading 'No configuration found' -Icon Information `
+            -Message 'The Config Editor will now open so you can create one. Fill in your environment details, click Save, then launch Profile Tools again.'
+        Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $_editorScript + '"'))
+        exit 0
+    }
     Show-DashboardMessageDialog -Title 'Missing Configuration File' -Heading 'Configuration file not found' -Icon Error `
         -Message 'Ensure config.psd1 is in the config subfolder alongside this script.' -Detail $_configFile
     exit 1

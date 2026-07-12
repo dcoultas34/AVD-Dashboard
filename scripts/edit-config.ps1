@@ -221,17 +221,11 @@ $script:_editorAllConfigs = Get-EditorAvailableConfigs
 function Resolve-EditorStartupConfig {
     $_configs = $script:_editorAllConfigs
     if ($_configs.Count -eq 0) {
-        # No .psd1 files in config folder - fall back to OpenFileDialog
-        $dlg = New-Object Microsoft.Win32.OpenFileDialog
-        $dlg.Title  = "Locate config.psd1"
-        $dlg.Filter = "Config Files (*.psd1)|*.psd1|All Files (*.*)|*.*"
-        $dlg.InitialDirectory = Join-Path $PSScriptRoot '..\config'
-        if (-not $dlg.ShowDialog()) {
-            Show-DashboardMessageDialog -Title 'No Config Selected' -Icon Information `
-                -Message 'No config file selected. The editor will exit.'
-            exit 0
-        }
-        return $dlg.FileName
+        # No configs exist at all (fresh install). The apps launch this editor in exactly
+        # that situation, so start a brand-new config with defaults targeting the standard
+        # path - Save creates it.
+        $script:_editorStartNew = $true
+        return (Join-Path $PSScriptRoot '..\config\config.psd1')
     }
     if ($_configs.Count -eq 1) { return $_configs[0].Path }
 
@@ -283,7 +277,7 @@ function Import-ConfigFile {
 
 $script:cfg = Import-ConfigFile $script:currentConfigFile
 # Do NOT exit on parse error - the window opens and shows an error panel instead.
-$script:isNewConfig = $false
+$script:isNewConfig = [bool]$script:_editorStartNew
 # Back-fill any keys added in newer versions so the UI always has valid values.
 # Merge-ConfigDefaults is defined later in this file; it is called after the window
 # loads in Initialize-Controls, at which point all functions are defined.
@@ -1587,6 +1581,13 @@ function Initialize-Controls {
     $logAnalyticsRGsBox.Text  = (@($c.PermissionsChecker.LogAnalyticsRGs | Where-Object { $_ }) -join "`r`n")
 }
 
+if (-not $script:cfg -and $script:isNewConfig) {
+    # Fresh install (no configs found) - preload the editor with defaults; Save creates
+    # the file. Clears lastConfigError so the error panel below stays hidden.
+    $script:cfg = New-DefaultConfig
+    $script:lastConfigError = $null
+    $statusText.Text = "New configuration - fill in your environment details and click Save."
+}
 if ($script:cfg) {
     Merge-ConfigDefaults -Config $script:cfg -Defaults (New-DefaultConfig)
     Initialize-Controls $script:cfg

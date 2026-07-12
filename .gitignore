@@ -1,4 +1,4 @@
-config/*.psd1
+config/*
 !config/EXAMPLE-config.psd1
 ISSUES.md
 logs/

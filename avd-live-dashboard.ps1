@@ -174,7 +174,7 @@ param(
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-07-12"
+$ScriptVersion = "2026-07-12.2"
 
 # Captured once, at top level, so the update-check flow can relaunch this exact script
 # with the same arguments the user originally passed (Show-About's manual check needs
@@ -521,6 +521,15 @@ function Resolve-StartupConfig {
 $_configFile = if ($ConfigFile) { $ConfigFile } else { Resolve-StartupConfig }
 $script:_configFile = $_configFile   # exposed for Invoke-ConfigReload
 if (-not (Test-Path $_configFile)) {
+    # No config yet (fresh install): open the Config Editor to create one instead of
+    # dead-ending with an error. The dashboard exits; relaunch it after saving.
+    $_editorScript = Join-Path $PSScriptRoot 'scripts\edit-config.ps1'
+    if (Test-Path $_editorScript) {
+        Show-DashboardMessageDialog -Title 'No Configuration Found' -Heading 'No configuration found' -Icon Information `
+            -Message 'The Config Editor will now open so you can create one. Fill in your environment details, click Save, then launch the dashboard again.'
+        Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $_editorScript + '"'))
+        exit 0
+    }
     Show-DashboardMessageDialog -Title 'Missing Configuration File' -Heading 'Configuration file not found' -Icon Error `
         -Message 'Ensure config.psd1 is in the config subfolder alongside this script.' -Detail $_configFile
     exit 1
