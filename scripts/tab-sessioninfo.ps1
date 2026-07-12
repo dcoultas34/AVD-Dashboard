@@ -43,9 +43,10 @@
 # - Microsoft.Graph.Users module:  Entra ID enrichment
 # - Microsoft.Graph.Groups module: Entra Group Export
 # Both enrichment paths fall back gracefully if modules are not installed.
-# The Entra enrichment also has a REST API fallback using Get-AzAccessToken,
-# though this may return 401 if the Azure PowerShell app registration
-# lacks User.Read.All consent in the tenant.
+# The Entra enrichment also has a REST API fallback using Get-ArmToken
+# (MSAL, scoped to https://graph.microsoft.com), though this may return
+# 401 if the Azure PowerShell app registration lacks User.Read.All
+# consent in the tenant.
 #
 # INTEGRATION
 # -----------
@@ -598,7 +599,7 @@ union (u24h | extend Period="24h"), (u7d | extend Period="7d"), (u30d | extend P
 #     Pass 2: mailNickname compound 'or' filter (for unmatched users).
 #     Pass 3: startswith(UPN) individual fallback (can't batch startswith).
 #     Uses Microsoft.Graph module (Get-MgUser) if installed, otherwise
-#     falls back to REST API with Get-AzAccessToken.
+#     falls back to REST API with Get-ArmToken (MSAL, Graph-scoped).
 #
 # Both buttons are re-clickable (re-enabled after completion).
 # Export CSV button exports the current grid state (with/without enrichment).
@@ -986,7 +987,7 @@ Event
 
     # ── Enrich from Entra ID (Microsoft Graph) ──
     # Uses Microsoft.Graph module (Get-MgUser) if available - handles its own auth/consent.
-    # Falls back to REST API with Get-AzAccessToken if module not installed.
+    # Falls back to REST API with Get-ArmToken (MSAL, Graph-scoped) if module not installed.
     # The REST fallback may fail with 401 if the Azure PowerShell app registration
     # doesn't have User.Read.All consent in the tenant.
     $script:_uuEnrichEntra.Add_Click({
@@ -1025,7 +1026,7 @@ Event
             if ($useMgGraph) {
                 # ── Microsoft.Graph module approach (batched) ──
                 Import-Module Microsoft.Graph.Users -ErrorAction Stop
-                # Use the existing Az.Accounts Graph token instead of the MgGraph module's own auth.
+                # Use the existing MSAL Graph token instead of the MgGraph module's own auth.
                 # This avoids an interactive sign-in popup and ensures we query the correct tenant
                 # (the one the dashboard is already authenticated against, not the admin's home tenant).
                 $mgGraphToken = Get-ArmToken -ResourceUrl 'https://graph.microsoft.com'
@@ -1280,10 +1281,7 @@ Event
                 $script:_uuTitle.Text = "Exported $($dt.Rows.Count) row(s) to $($dlg.FileName)"
                 Write-Log "[UniqueUsers] Exported $($dt.Rows.Count) row(s) to $($dlg.FileName)"
             } catch {
-                [System.Windows.MessageBox]::Show(
-                    "Export failed:`n$_", 'Export Error',
-                    [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Error) | Out-Null
+                Show-ThemedDialog -Message "Export failed:`n$_" -Title 'Export Error' -Icon Error | Out-Null
             }
         }
     })
@@ -1392,10 +1390,7 @@ function Initialize-SessionInfoTab {
                     Export-Csv -Path $dlg.FileName -NoTypeInformation -Force
                 $script:StatusText.Text = "Session History: Exported $($tbl.Rows.Count) row(s) to $($dlg.FileName)"
             } catch {
-                [System.Windows.MessageBox]::Show(
-                    "Export failed:`n$_", 'Export Error',
-                    [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Error) | Out-Null
+                Show-ThemedDialog -Message "Export failed:`n$_" -Title 'Export Error' -Icon Error | Out-Null
             }
         }
     })

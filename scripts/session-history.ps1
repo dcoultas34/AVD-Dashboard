@@ -1393,17 +1393,15 @@ union lockEvents, disconnects, otherev
 function script:Show-SessionHistory {
     # Validate that the parent session detail has loaded data
     if (-not $script:sdDataTable -or $script:sdDataTable.Rows.Count -eq 0) {
-        [System.Windows.MessageBox]::Show(
-            "No session data loaded yet. Please wait for the session detail to finish loading.",
-            "No Data", "OK", "Warning") | Out-Null
+        Show-ThemedDialog -Message 'No session data loaded yet. Please wait for the session detail to finish loading.' `
+            -Title 'No Data' -Icon Warning | Out-Null
         return
     }
 
     # Validate that Log Analytics Workspace is configured
     if (-not $script:LawWorkspaceResourceId) {
-        [System.Windows.MessageBox]::Show(
-            "Log Analytics WorkspaceResourceId is not configured.`nSet it in config.psd1 under LogAnalytics.WorkspaceResourceId.",
-            "LAW Not Configured", "OK", "Warning") | Out-Null
+        Show-ThemedDialog -Message "Log Analytics WorkspaceResourceId is not configured.`nSet it in config.psd1 under LogAnalytics.WorkspaceResourceId." `
+            -Title 'LAW Not Configured' -Icon Warning | Out-Null
         return
     }
 
@@ -1799,10 +1797,7 @@ function script:Show-SessionHistory {
                     Export-Csv -Path $dlg.FileName -NoTypeInformation -Force
                 $script:_advStatus.Text = "Exported $($tbl.Rows.Count) row(s) to $($dlg.FileName)"
             } catch {
-                [System.Windows.MessageBox]::Show(
-                    "Export failed:`n$_", 'Export Error',
-                    [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Error) | Out-Null
+                Show-ThemedDialog -Message "Export failed:`n$_" -Title 'Export Error' -Icon Error | Out-Null
             }
         }
     })

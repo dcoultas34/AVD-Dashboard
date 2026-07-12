@@ -2329,7 +2329,7 @@ perfMetrics | union (inputDelayAvg) | union (inputDelayP95)
 #
 # Parameters (supplied by the main script after the window is shown):
 #   $Window         - the loaded System.Windows.Window object
-#   $ContextFile    - path to the saved Az context JSON file (for Az.Accounts)
+#   $ContextFile    - reserved (unused, kept for API compatibility)
 #   $SubscriptionId - current Azure subscription ID for REST API calls
 #   $HpPool         - persistent RunspacePool shared with the main refresh cycle
 # =============================================================================
@@ -3939,7 +3939,7 @@ function Initialize-SessionHostsTab {
     })
 
     # ── Initialise module-scope state variables ───────────────────────────────
-    $script:vmContextFile            = $ContextFile   # stored for subscription switch (Az.Accounts)
+    $script:vmContextFile            = $ContextFile
     $script:vmSubId                  = $SubscriptionId # stored for REST API calls
     $script:vmHpPool                 = $HpPool        # stored so Invoke-SessionHostsTabRefresh can inject it
     $script:vmDataTable              = $null           # current DataTable bound to SHGrid
@@ -4618,7 +4618,7 @@ function Initialize-SessionHostsTab {
             Show-PerformanceHistory -VmName ([string]$sel[0]['VM Name']) -VMResourceId ([string]$sel[0]['_VMResourceId'])
         }
         catch {
-            [System.Windows.MessageBox]::Show("Failed to open Performance History: $_", "Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Failed to open Performance History: $_" -Title 'Error' -Icon Error | Out-Null
         }
     }.GetNewClosure())
 
@@ -4633,7 +4633,7 @@ function Initialize-SessionHostsTab {
             Invoke-RDPToSessionHost -SessionHost $fqdn -IPAddress $ip
         }
         catch {
-            [System.Windows.MessageBox]::Show("Failed to launch RDP: $_", "RDP Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Failed to launch RDP: $_" -Title 'RDP Error' -Icon Error | Out-Null
         }
     }.GetNewClosure())
 
@@ -4665,7 +4665,7 @@ function Initialize-SessionHostsTab {
             Start-Process "explorer.exe" "\\$target\C$"
         }
         catch {
-            [System.Windows.MessageBox]::Show("Failed to open C$ share: $_", "Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Failed to open C$ share: $_" -Title 'Error' -Icon Error | Out-Null
         }
     })
 
@@ -4688,7 +4688,7 @@ function Initialize-SessionHostsTab {
             Start-Process "eventvwr.exe" "/computer:$target"
         }
         catch {
-            [System.Windows.MessageBox]::Show("Failed to open Event Viewer: $_", "Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Failed to open Event Viewer: $_" -Title 'Error' -Icon Error | Out-Null
         }
     })
 
@@ -4702,7 +4702,7 @@ function Initialize-SessionHostsTab {
             Show-RunCommandPicker -VmName $vmName -RG $rg
         }
         catch {
-            [System.Windows.MessageBox]::Show("Failed to open Run Command dialog: $_", "Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Failed to open Run Command dialog: $_" -Title 'Error' -Icon Error | Out-Null
         }
     }.GetNewClosure())
 
@@ -4717,7 +4717,7 @@ function Initialize-SessionHostsTab {
             Show-InputDelayBreakdown -VmName ([string]$sel[0]['VM Name'])
         }
         catch {
-            [System.Windows.MessageBox]::Show("Failed to open Input Delay Breakdown: $_", "Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Failed to open Input Delay Breakdown: $_" -Title 'Error' -Icon Error | Out-Null
         }
     }.GetNewClosure())
 
@@ -4734,7 +4734,7 @@ function Initialize-SessionHostsTab {
                                    -VMResourceId ([string]$sel[0]['_VMResourceId'])
         }
         catch {
-            [System.Windows.MessageBox]::Show("Failed to open CPU Credits History: $_", "Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Failed to open CPU Credits History: $_" -Title 'Error' -Icon Error | Out-Null
         }
     }.GetNewClosure())
 
@@ -4895,11 +4895,8 @@ function Invoke-SessionHostsPowerAction {
 
     # Guard: prevent starting a second action while one is already in flight
     if ($script:vmActionHandle -and -not $script:vmActionHandle.IsCompleted) {
-        [System.Windows.MessageBox]::Show(
-            'A power action is already in progress. Please wait for it to complete.',
-            'Action In Progress',
-            [System.Windows.MessageBoxButton]::OK,
-            [System.Windows.MessageBoxImage]::Information) | Out-Null
+        Show-ThemedDialog -Message 'A power action is already in progress. Please wait for it to complete.' `
+            -Title 'Action In Progress' -Icon Information | Out-Null
         return
     }
 
@@ -4946,13 +4943,10 @@ function Invoke-SessionHostsPowerAction {
     # Deallocate and Restart are destructive/disruptive - require explicit confirmation.
     # Start is safe to fire without confirmation.
     if ($Action -in @('Deallocate', 'Restart')) {
-        $icon    = if ($Action -eq 'Deallocate') { [System.Windows.MessageBoxImage]::Warning } else { [System.Windows.MessageBoxImage]::Question }
-        $confirm = [System.Windows.MessageBox]::Show(
-            "$Action the following VM(s)?`n`n$vmList",
-            "Confirm $Action",
-            [System.Windows.MessageBoxButton]::YesNo,
-            $icon)
-        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+        $icon    = if ($Action -eq 'Deallocate') { 'Warning' } else { 'Question' }
+        $confirm = Show-ThemedDialog -Message "$Action the following VM(s)?`n`n$vmList" `
+            -Title "Confirm $Action" -Buttons YesNo -Icon $icon
+        if (-not $confirm) { return }
     }
 
     # Audit log - record each VM power action
@@ -5033,11 +5027,8 @@ function Invoke-SessionHostsDrainAction {
 
     # Guard: prevent starting a second action while one is already in flight
     if ($script:vmActionHandle -and -not $script:vmActionHandle.IsCompleted) {
-        [System.Windows.MessageBox]::Show(
-            'An action is already in progress. Please wait for it to complete.',
-            'Action In Progress',
-            [System.Windows.MessageBoxButton]::OK,
-            [System.Windows.MessageBoxImage]::Information) | Out-Null
+        Show-ThemedDialog -Message 'An action is already in progress. Please wait for it to complete.' `
+            -Title 'Action In Progress' -Icon Information | Out-Null
         return
     }
 
@@ -5065,12 +5056,9 @@ function Invoke-SessionHostsDrainAction {
                                     else { "`nScaling exclude tag '$($script:ScalingExcludeTag)' will also be removed from the VM(s)." }
     }
 
-    $confirm = [System.Windows.MessageBox]::Show(
-        "$label on the following host(s)?`n$tip$tagTip`n`n$vmList",
-        "Confirm $label",
-        [System.Windows.MessageBoxButton]::YesNo,
-        [System.Windows.MessageBoxImage]::Question)
-    if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+    $confirm = Show-ThemedDialog -Message "$label on the following host(s)?`n$tip$tagTip`n`n$vmList" `
+        -Title "Confirm $label" -Buttons YesNo -Icon Question
+    if (-not $confirm) { return }
 
     # Audit log - record drain mode change for each host
     $drainAction = if ($EnableDrain) { 'DrainEnable' } else { 'DrainDisable' }
@@ -5459,10 +5447,7 @@ function Invoke-SessionHostsExport {
                 Export-Csv -Path $dlg.FileName -NoTypeInformation -Force
             $script:SHStatusText.Text = "Exported $($script:vmDataTable.Rows.Count) row(s) to $($dlg.FileName)"
         } catch {
-            [System.Windows.MessageBox]::Show(
-                "Export failed:`n$_", 'Export Error',
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Error) | Out-Null
+            Show-ThemedDialog -Message "Export failed:`n$_" -Title 'Export Error' -Icon Error | Out-Null
         }
     }
 }
@@ -5589,11 +5574,8 @@ function _SH_BackfillMetrics {
         if (-not $script:shLawErrorShown) {
             $script:shLawErrorShown = $true
             $errMsg = $Phase4Error
-            $null = [System.Windows.MessageBox]::Show(
-                "Log Analytics data could not be fetched.`n`nCPU %, Memory %, Disk % and Input Delay columns will be unavailable.`n`nThis is usually caused by the Log Analytics workspace being accessible only via a private endpoint from an Azure VM, and not from this machine.`n`nError detail:`n$errMsg",
-                'Log Analytics Unavailable',
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Warning)
+            $null = Show-ThemedDialog -Message "Log Analytics data could not be fetched.`n`nCPU %, Memory %, Disk % and Input Delay columns will be unavailable.`n`nThis is usually caused by the Log Analytics workspace being accessible only via a private endpoint from an Azure VM, and not from this machine.`n`nError detail:`n$errMsg" `
+                -Title 'Log Analytics Unavailable' -Icon Warning
         }
     }
     if ($Phase5Error) {

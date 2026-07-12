@@ -1,0 +1,14 @@
+#!/bin/sh
+# Regenerates update-manifest.json on every commit so the published manifest can never go
+# stale (the auto-update feature compares its hashes against raw.githubusercontent.com).
+# Never blocks the commit: any failure just leaves the manifest as-is.
+#
+# One-time setup after cloning:  git config core.hooksPath .githooks
+
+# stdout is discarded; stderr is kept so the generator's staged-vs-working-tree divergence
+# warning reaches the committer. PSModulePath is unset because a commit made from inside a
+# PowerShell 7 session leaks PS7 module paths into powershell.exe 5.1, which then cannot
+# find its own core modules (Get-FileHash etc.) and the manifest silently fails to build.
+env -u PSModulePath powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tools/New-UpdateManifest.ps1" >/dev/null || exit 0
+git add update-manifest.json 2>/dev/null
+exit 0

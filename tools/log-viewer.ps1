@@ -70,6 +70,10 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
+# Styled message dialog (Show-DashboardMessageDialog) - shared with the apps.
+# update-check.ps1 only defines functions at dot-source time; no update check runs.
+. "$PSScriptRoot\..\scripts\update-check.ps1"
+
 # Set a unique AppUserModelID so the log viewer appears as its own taskbar entry
 # (separate from the PowerShell group) and shows the custom window icon.
 try {
@@ -651,19 +655,16 @@ $deleteOldBtn.Add_Click({
     }
 
     if ($oldFiles.Count -eq 0) {
-        [System.Windows.MessageBox]::Show(
-            "No log files older than 7 days found.",
-            "Delete Old Logs",
-            'OK', 'Information')
+        Show-DashboardMessageDialog -Title 'Delete Old Logs' -Icon Information `
+            -Message 'No log files older than 7 days found.'
         return
     }
 
-    $result = [System.Windows.MessageBox]::Show(
-        "Delete $($oldFiles.Count) log file(s) last modified before $($cutoff.ToString('yyyy-MM-dd HH:mm'))?`n`nThis cannot be undone.",
-        "Delete Old Logs",
-        'YesNo', 'Warning')
+    $result = Show-DashboardMessageDialog -Title 'Delete Old Logs' -Heading 'Delete old log files?' -Icon Warning `
+        -Message "Delete $($oldFiles.Count) log file(s) last modified before $($cutoff.ToString('yyyy-MM-dd HH:mm'))?`n`nThis cannot be undone." `
+        -Buttons YesNo
 
-    if ($result -eq 'Yes') {
+    if ($result) {
         $deleted = 0
         $failed  = 0
         foreach ($f in $oldFiles) {

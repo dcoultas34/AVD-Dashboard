@@ -21,10 +21,10 @@ A Windows Presentation Foundation (WPF) live dashboard for monitoring Azure Virt
 | `avd-live-dashboard.ps1` | Main dashboard script — do not edit per deployment |
 | `profile-tools.ps1` | FSLogix profile management tool — can be run standalone or launched from the dashboard. Do not edit per deployment |
 | `Launch-AVD-Dashboard.cmd` | Quick-launch shortcut — runs the dashboard with a hidden console window |
-| `Launch-AVD-Dashboard-Select.cmd` | Quick-launch shortcut — prompts to choose between Device Authentication, Existing Context, PowerShell 7, or Service Principal before launching |
+| `Launch-AVD-Dashboard-Select.cmd` | Quick-launch shortcut — prompts to choose between Device Authentication, Existing Context, or PowerShell 7 before launching |
 | `Launch-AVD-Dashboard-Logging.cmd` | Quick-launch shortcut — runs the dashboard with REST API logging enabled |
 | `Launch-Profile-Tools.cmd` | Quick-launch shortcut — runs Profile Tools with a hidden console window |
-| `Launch-Profile-Tools-Select.cmd` | Quick-launch shortcut — prompts to choose between Interactive Browser, Device Authentication, Existing Context, or Service Principal before launching |
+| `Launch-Profile-Tools-Select.cmd` | Quick-launch shortcut — prompts to choose between Interactive Browser, Device Authentication, or Existing Context before launching |
 | `Launch-Profile-Tools-Logging.cmd` | Quick-launch shortcut — runs Profile Tools with REST API logging enabled |
 | `Check-AVD-Permissions.cmd` | Quick-launch shortcut — runs the Azure RBAC permissions checker |
 | `Create-Dashboard-Role.cmd` | Quick-launch shortcut — creates a custom Azure RBAC role with the minimum permissions required to run the dashboard |
@@ -44,7 +44,7 @@ A Windows Presentation Foundation (WPF) live dashboard for monitoring Azure Virt
 | `scripts/cost-lookup.ps1` | Cost fetch module for Session Hosts and Azure Files tabs — dot-sourced by avd-live-dashboard.ps1; queries the Azure Retail Prices API (no auth required) in background runspaces. Session Hosts: Compute GBP/mo, Disk GBP/mo, Txn GBP/10K. Azure Files: Storage GBP/mo. Currency, country, and Azure Hybrid Benefit toggle are configured at the top of this file |
 | `scripts/tab-sessioninfo.ps1` | Session History tab module — dot-sourced by avd-live-dashboard.ps1 at startup |
 | `scripts/adv-session-detail.ps1` | Advanced Session Detail module — dot-sourced by session-detail.ps1; queries LAW for lock/unlock and session lifecycle events per user across all hosts |
-| `scripts/connect-azure.ps1` | Shared Azure authentication helper — dot-sourced by avd-live-dashboard.ps1 and profile-tools.ps1; provides `Connect-AzureDashboard` supporting interactive browser, device code, existing context, and service principal modes |
+| `scripts/connect-azure.ps1` | Shared Azure authentication helper — dot-sourced by avd-live-dashboard.ps1 and profile-tools.ps1; provides `Connect-AzureDashboard`, which authenticates via bundled MSAL.NET (interactive browser, device code, or silent reuse of a cached token) |
 | `scripts/check-permissions.ps1` | Azure RBAC permissions checker — validates that the signed-in account holds all roles required by the dashboard and its supporting scripts |
 | `scripts/edit-config.ps1` | WPF GUI editor for `config.psd1` — opens a tabbed form covering every section of the configuration file; saves a clean, fully commented PSD1 |
 | `data/run-commands.psd1` | Predefined Run Command definitions — edit to add, remove or reorder commands without modifying the main scripts |
@@ -77,13 +77,18 @@ PowerShell 5.1 (Windows PowerShell) or PowerShell 7 (pwsh.exe) on Windows. WPF i
 
 ### PowerShell Modules
 
-The following Az PowerShell module must be installed. The script will detect if it is missing on launch and offer to install it automatically.
+No Az PowerShell modules are required to run the dashboard or Profile Tools. Authentication is handled directly via bundled MSAL.NET libraries — no `Install-Module` step needed.
 
-| Module | Purpose |
+| File | Purpose |
 | --- | --- |
-| `Az.Accounts` | Azure authentication and token acquisition |
+| `lib/Microsoft.Identity.Client.dll` | MSAL.NET — interactive browser, device code, and silent token acquisition |
+| `lib/Microsoft.IdentityModel.Abstractions.dll` | Required dependency of MSAL.NET (must be present alongside it) |
 
-All Azure data queries (host pools, session hosts, VMs, storage accounts, metrics, etc.) use direct Azure REST API calls with bearer tokens via `scripts/rest-api-helpers.ps1`. Profile Tools storage operations (lock detection, handle closure, file deletion) use the Azure Files data plane REST API with OAuth bearer token authentication via `scripts/storage-api-helpers.ps1` — no storage account keys are required. No other Az modules are required.
+Both files ship with the repository under `lib/`. If either is missing, the dashboard shows an error dialog with download instructions on launch (see `misc/az-accounts-reference.md` for the download source and version).
+
+All Azure data queries (host pools, session hosts, VMs, storage accounts, metrics, etc.) use direct Azure REST API calls with bearer tokens via `scripts/rest-api-helpers.ps1`. Profile Tools storage operations (lock detection, handle closure, file deletion) use the Azure Files data plane REST API with OAuth bearer token authentication via `scripts/storage-api-helpers.ps1` — no storage account keys are required.
+
+> **Note:** `scripts/check-permissions.ps1` (the standalone RBAC checker) has not yet been migrated and still requires the `Az.Accounts` PowerShell module. This is the only script in the suite with that dependency.
 
 #### Optional Modules
 
@@ -178,11 +183,6 @@ See [Multi-Config Support](#multi-config-support) for full details.
 ```
 
 ```powershell
-# Use a service principal for non-interactive authentication
-.\avd-live-dashboard.ps1 -UseServicePrincipal
-```
-
-```powershell
 # Enable REST API call logging to a timestamped file in %TEMP%
 .\avd-live-dashboard.ps1 -EnableLogging
 ```
@@ -192,7 +192,7 @@ See [Multi-Config Support](#multi-config-support) for full details.
 .\avd-live-dashboard.ps1 -ConfigFile "C:\Configs\prod-config.psd1"
 ```
 
-The `.cmd` launcher files in the root folder provide quick-launch shortcuts without needing to open a PowerShell window. `Launch-AVD-Dashboard-Select.cmd` presents a numbered menu: **[1] Device Authentication** (opens with a visible console window so the device code prompt is readable), **[2] Existing Context**, **[3] PowerShell 7**, and **[4] Service Principal**.
+The `.cmd` launcher files in the root folder provide quick-launch shortcuts without needing to open a PowerShell window. `Launch-AVD-Dashboard-Select.cmd` presents a numbered menu: **[1] Device Authentication** (opens with a visible console window so the device code prompt is readable), **[2] Existing Context**, and **[3] PowerShell 7**.
 
 The script will prompt for Azure sign-in if no active context is found. Once authenticated, a brief splash screen is shown while runspaces initialise, then the main dashboard opens.
 
@@ -216,66 +216,25 @@ The script will prompt for Azure sign-in if no active context is found. Once aut
 
 ## Authentication
 
-The dashboard supports four authentication modes, selectable at launch:
+Authentication is handled by `Connect-AzureDashboard` (`scripts/connect-azure.ps1`) via bundled MSAL.NET — no `Az.Accounts` module and no app registration setup are required (the well-known Azure PowerShell client ID is used, which is pre-trusted in every Entra tenant). The dashboard supports three authentication modes, selectable at launch:
 
 | Switch | CMD option | Description |
 | --- | --- | --- |
 | *(none)* | — | Interactive browser sign-in (default). Opens a browser popup for the signed-in user. |
 | `-UseDeviceAuthentication` | `[1]` | Device code flow. Prints a URL and one-time code to the console; useful when a browser popup is blocked by a proxy. Requires a visible console window — option `[1]` in `Launch-AVD-Dashboard-Select.cmd` handles this automatically. |
-| `-UseExistingContext` | `[2]` | Skips authentication entirely and uses an existing `Az` context from a prior `Connect-AzAccount` call in the same session. |
-| `-UseServicePrincipal` | `[4]` | Non-interactive service principal authentication using a stored App ID and Client Secret (see below). |
+| `-UseExistingContext` | `[2]` | Tries silent token acquisition from the local MSAL token cache first (no prompt). Falls back to interactive browser sign-in automatically if no cached token is found. |
 
-### Service Principal Authentication
+### Token Cache
 
-Service principal authentication allows the dashboard to connect to Azure without any user interaction — useful for shared admin machines, automated environments, or scenarios where interactive browser sign-in is not practical.
+After the first successful sign-in, MSAL persists an encrypted token cache to `%APPDATA%\AVDDashboard\token-cache.bin` (DPAPI-protected, bound to the current Windows user account and machine). Subsequent launches with `-UseExistingContext` reuse this cache silently — no repeated browser prompts. Delete the file to force a fresh sign-in on the next launch.
 
-#### How It Works
+### Service Principal Authentication (Removed)
 
-1. **First launch** (`-UseServicePrincipal` or option `[4]`): A WPF dialog prompts for the **App (Client) ID** and **Client Secret** of the service principal.
-2. The credential is saved as a **DPAPI-encrypted PSCredential file** at `%APPDATA%\AVDDashboard\` using PowerShell's `Export-Clixml`. DPAPI binds the encryption to the current Windows user account and machine — the file cannot be decrypted by any other user or on any other machine.
-3. **Subsequent launches**: The credential is loaded silently from the file with `Import-Clixml` and no prompt is shown.
-4. If sign-in fails (e.g. the secret has expired or been rotated), the dashboard offers to **clear the saved credential** so fresh details can be entered on the next launch.
+Service principal / client-secret authentication is no longer supported. Passing `-UseServicePrincipal` to the dashboard or Profile Tools now shows a "Not Supported" dialog and exits — the parameter is retained only so existing config files and shortcuts don't error outright. If non-interactive, unattended authentication is required, use `-UseDeviceAuthentication` on a machine with a persisted token cache, or restore the previous Az.Accounts-based implementation (see `misc/az-accounts-reference.md` for the full pre-migration code and a step-by-step rollback guide).
 
-> No secrets are stored in `config.psd1` or anywhere else in plain text. The encrypted file lives entirely within the user's own AppData profile.
+### Compatibility with Profile Tools
 
-#### Multiple Service Principals
-
-Each config file gets its own isolated credential file, derived from the config filename:
-
-| Config file | Credential file |
-| --- | --- |
-| `config.psd1` (default) | `sp-credential.xml` |
-| `prod.psd1` | `sp-credential-prod.xml` |
-| `customer-a.psd1` | `sp-credential-customer-a.xml` |
-
-This allows different environments to use different service principals without conflict. Combine with `-ConfigFile` to switch between environments:
-
-```powershell
-.\avd-live-dashboard.ps1 -UseServicePrincipal -ConfigFile "config\prod.psd1"
-```
-
-#### Setup
-
-1. In Azure Active Directory (Entra ID), register an App Registration and note the **Application (Client) ID** and the **Tenant ID**.
-2. Create a **Client Secret** on the app registration and copy the value immediately — it is only shown once.
-3. Assign the required RBAC roles (see [Azure RBAC Roles](#azure-rbac-roles)) to the service principal (the app registration's Object ID) at the appropriate scope.
-4. Ensure `Azure.TenantId` is set in `config.psd1` — this is required for service principal authentication (unlike interactive sign-in where it is optional).
-5. Launch with option `[4]` from `Launch-AVD-Dashboard-Select.cmd`, or pass `-UseServicePrincipal` directly. Enter the App ID and Client Secret when prompted. The credential is saved and subsequent launches will be fully silent.
-
-#### Rotating the Secret
-
-When a client secret expires:
-
-1. Generate a new secret on the app registration in Entra ID.
-2. Launch the dashboard with `-UseServicePrincipal`. Sign-in will fail with an authentication error.
-3. When prompted, choose **Yes** to clear the saved credential.
-4. Relaunch — the prompt will appear again to enter the new secret.
-
-Alternatively, delete the corresponding credential file from `%APPDATA%\AVDDashboard\` manually before relaunching (see [Multiple Service Principals](#multiple-service-principals) for the naming convention).
-
-#### Compatibility with Profile Tools
-
-When launched from the dashboard's **Profile Tools** button, Profile Tools inherits the Azure context from the parent PowerShell session. No additional configuration is needed. When run standalone, Profile Tools uses `Get-AzContext` and will prompt for sign-in if no active context exists.
+Profile Tools calls the same `Connect-AzureDashboard` function and supports the same three modes independently — it does not automatically inherit a session from the main dashboard process. Pass the same authentication switch (e.g. `-UseExistingContext`) to both if you want them to reuse the same cached MSAL token without re-prompting.
 
 ---
 
@@ -936,7 +895,7 @@ Features:
 
 ## Profile Tools
 
-Launched via the **Profile Tools** button on the Azure Files tab, or by running `profile-tools.ps1` directly. Requires an active Azure context (`Connect-AzAccount`). Reads the same `config/config.psd1` as the main dashboard.
+Launched via the **Profile Tools** button on the Azure Files tab, or by running `profile-tools.ps1` directly. Authenticates independently via `Connect-AzureDashboard` (see [Authentication](#authentication)) — prompts for sign-in if no cached token is available. Reads the same `config/config.psd1` as the main dashboard.
 
 A **Settings** button in the status bar allows the stale profile threshold to be persisted across sessions (saved to `HKCU:\Software\AVDDashboard`).
 
@@ -1172,7 +1131,7 @@ No Azure connection is required — the editor is purely local file editing.
 
 Connects to Azure and checks what RBAC roles the signed-in account holds against the full set required by the dashboard and its supporting scripts. Roles are checked at subscription scope first (covering Management Group-inherited grants), then per resource group using the RG lists from `config.psd1`. Results are shown in a colour-coded grid — green for present, red for missing.
 
-Supports the same authentication modes as the main dashboard (`-UseDeviceAuthentication`, `-UseExistingContext`, `-UseServicePrincipal`). The `-ConfigFile` parameter allows checking permissions against an alternative config file. Run this after initial setup or after role changes to confirm permissions before launching the dashboard.
+Supports `-UseDeviceAuthentication`, `-UseExistingContext`, and `-UseServicePrincipal`. **Note:** this script has not been migrated to MSAL.NET and still authenticates via the `Az.Accounts` PowerShell module (`Get-AzContext` / `Connect-AzAccount`) — it is the only script in the suite with that dependency, and is the only one where `-UseServicePrincipal` still functions. The `-ConfigFile` parameter allows checking permissions against an alternative config file. Run this after initial setup or after role changes to confirm permissions before launching the dashboard.
 
 A **Switch Subscription** button in the status bar allows checking permissions against a different subscription without restarting. A **Re-check** button refreshes the RBAC results against the current subscription.
 

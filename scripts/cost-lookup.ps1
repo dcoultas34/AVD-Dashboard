@@ -1065,7 +1065,7 @@ $script:isCostTimer.Add_Tick({
     } catch {
         if ($script:LogFile) { try { [IO.File]::AppendAllText($script:LogFile, "[$(Get-Date -Format 'HH:mm:ss')] [CostLookup-Infra] ERROR: $_`r`n") } catch {} }
         if ($script:ISActionStatus) { $script:ISActionStatus.Text = "Load Costs failed: $_" }
-        [System.Windows.MessageBox]::Show("Cost fetch failed:`n$_", 'Load Costs Error', [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
+        Show-ThemedDialog -Message "Cost fetch failed:`n$_" -Title 'Load Costs Error' -Icon Error | Out-Null
         if ($script:ISLoadCostsButton) { $script:ISLoadCostsButton.IsEnabled = $true; $script:ISLoadCostsButton.Content = 'Load Costs' }
     } finally {
         try { $script:isCostPS.Runspace.Dispose() } catch {}

@@ -60,24 +60,17 @@
 # "RequestDisallowedByAzure" when Azure Conditional Access requires MFA
 # step-up.  Scriptblocks detect this and return an
 # MFA_CHALLENGE:<base64-claims>:::<session> marker.  OnComplete callbacks
-# call Resolve-MfaChallenge (in rest-api-helpers.ps1), which launches a
-# hidden child powershell.exe.
-#
-# First MFA: prompts the user, child runs Connect-AzAccount -ClaimsChallenge
-# (browser MFA) then executes the ARM operations via Invoke-AzRestMethod.
-# Sets $_mfaEverDone flag on success.
-#
-# Subsequent MFA: no dialog, child just does Import-Module Az.Accounts
-# (loads saved context + MSAL cache from disk) then Invoke-AzRestMethod.
-# The Az HTTP pipeline handles claims challenges using cached MFA tokens
-# silently - no browser needed.  If cache has expired, resets the flag
-# so the next attempt shows the full interactive MFA dialog again.
+# call Resolve-MfaChallenge (in rest-api-helpers.ps1), which re-authenticates
+# directly via MSAL on the main thread (no child process) - first attempting
+# AcquireTokenSilent with the claims challenge attached, then falling back to
+# AcquireTokenInteractive (browser) if the silent attempt fails - then retries
+# the failed ARM operations with the fresh token.
 #
 # DEPENDENCIES (from the main script scope)
 # -----------------------------------------
 #   $window                  - main WPF Window
 #   $script:PoolGrid         - Per Host Pool DataGrid (for double-click handler)
-#   $contextFile             - path to the exported Az context file
+#   $contextFile             - reserved (unused, kept for API compatibility)
 #   $subscriptionId          - current subscription ID
 #   $RefreshIntervalSeconds  - auto-refresh interval
 #   $RunspaceMaxSessionPool  - max parallel runspaces for global session fetch
@@ -581,17 +574,15 @@ $sessionXaml = @'
 #   it just throws. Adding claims handling to Invoke-Arm would be impractical
 #   because it runs in background runspaces that can't do interactive auth.
 #
-# WHY A CHILD PROCESS IS NEEDED:
-#   Invoke-AzRestMethod (from Az.Accounts) has a full HTTP pipeline that
-#   automatically detects 403 + claims, calls AcquireTokenSilent(claims)
-#   against the MSAL token cache, and retries - all transparently. However,
-#   it requires Az.Accounts module loaded with a valid context. A child
-#   powershell.exe process is used because:
-#     - Background runspaces have no interactive host for browser-based MFA
-#     - Running Connect-AzAccount on the WPF UI thread would block the
-#       dispatcher / message loop
-#     - The child process's MSAL tokens are saved to the shared disk cache
-#       (~/.Azure/) so subsequent child processes can reuse them silently
+# HOW RE-AUTHENTICATION WORKS:
+#   Resolve-MfaChallenge calls MSAL directly on the main WPF thread (no child
+#   process) - AcquireTokenSilent with the claims challenge attached first
+#   (works silently if a still-valid cached token covers the new claim), then
+#   AcquireTokenInteractive (opens a browser) if the silent attempt fails.
+#   This runs from OnComplete callbacks (button click handlers), not from a
+#   background runspace, so a blocking interactive prompt is safe here - it
+#   would not be safe to call from inside a runspace, which has no
+#   interactive host for browser-based MFA.
 #
 # MFA DETECTION:
 #   The catch blocks below detect RequestDisallowedByAzure and extract the

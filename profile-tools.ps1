@@ -49,9 +49,13 @@
                           appears as a radio button above the storage account checkboxes on all action
                           tabs (Delete, Remove Locks, Profile Sizes, Profile Cleanup). Selecting a pair
                           radio ticks only that pair's account checkboxes and deselects the other pairs.
+    2026-07-08 - Removed the Az.Accounts module dependency, replaced with bundled MSAL.NET
+                          (see avd-live-dashboard.ps1 changelog / CHANGELOG.md for full details).
+                          Service principal authentication removed.
 
     Requirements:
-      - Az.Accounts module
+      - lib\Microsoft.Identity.Client.dll and lib\Microsoft.IdentityModel.Abstractions.dll
+        (bundled in the repo - no module install needed)
 
     Customer/environment-specific settings ($StorageAccountShareMap,
     $ExcludeStorage, $FileShareSubPath) are loaded from
@@ -70,13 +74,12 @@
     Use device code flow instead of interactive browser sign-in.
 
 .PARAMETER UseExistingContext
-    Skip Connect-AzAccount and reuse an existing Az context from the current
-    PowerShell session. Used when launched from the dashboard or when the user
-    has already authenticated manually.
+    Try silent token acquisition from the local MSAL token cache first; falls
+    back to interactive browser sign-in automatically if no cached token is found.
 
 .PARAMETER UseServicePrincipal
-    Authenticate non-interactively using a DPAPI-encrypted App ID + Client Secret
-    stored in AppData. Requires Azure.TenantId to be set in config.psd1.
+    Not supported. Retained only for backward-compatibility with existing
+    shortcuts/configs - shows a "Not Supported" dialog and exits if passed.
 
 .EXAMPLE
     .\Profile-Tools.ps1
@@ -97,14 +100,26 @@ param(
     [switch]$UseDeviceAuthentication,
     [switch]$UseExistingContext,
     [switch]$UseServicePrincipal,
-    [int]$DashboardTheme = -1
+    [int]$DashboardTheme = -1,
+    [switch]$SkipUpdateCheck
 )
 
 # =============================================================================
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-05-27"
+$ScriptVersion = "2026-07-11.2"
+
+# Captured once, at top level, so the update-check flow can relaunch this exact script
+# with the same arguments it was originally passed.
+$script:_ptScriptPath  = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
+$script:_ptBoundParams = $PSBoundParameters
+
+# Auto-update support. Dot-sourced this early (before any Add-Type) so that
+# Complete-DashboardPendingUpdate can swap in files a previous update couldn't overwrite
+# while they were loaded (lib\*.dll) - the swap has to happen before anything locks them.
+. (Join-Path $PSScriptRoot 'scripts\update-check.ps1')
+Complete-DashboardPendingUpdate -RepoRoot $PSScriptRoot
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
@@ -409,18 +424,16 @@ $script:profileDeleteScript      = Join-Path $PSScriptRoot 'scripts\profile-dele
 $script:profileDeleteLocksScript = Join-Path $PSScriptRoot 'scripts\profile-delete-unlock.ps1'
 $script:profileDeleteRemoveScript= Join-Path $PSScriptRoot 'scripts\profile-delete-remove.ps1'
 if (-not (Test-Path $_configFile)) {
-    [System.Windows.MessageBox]::Show(
-        "Configuration file not found:`n`n$_configFile`n`nEnsure config.psd1 is in the config subfolder alongside this script.",
-        "Missing Configuration File", "OK", "Error") | Out-Null
+    Show-DashboardMessageDialog -Title 'Missing Configuration File' -Heading 'Configuration file not found' -Icon Error `
+        -Message 'Ensure config.psd1 is in the config subfolder alongside this script.' -Detail $_configFile
     exit 1
 }
 
 try {
     $_cfg = & ([scriptblock]::Create([System.IO.File]::ReadAllText($_configFile)))
 } catch {
-    [System.Windows.MessageBox]::Show(
-        "config.psd1 could not be parsed:`n`n$_`n`nCheck the file for syntax errors.",
-        "Invalid Configuration File", "OK", "Error") | Out-Null
+    Show-DashboardMessageDialog -Title 'Invalid Configuration File' -Heading 'config.psd1 could not be parsed' -Icon Error `
+        -Message 'Check the file for syntax errors.' -Detail "$_"
     exit 1
 }
 
@@ -442,18 +455,19 @@ if ($_cfg.ProfileTools.StorageAccountPairs) {
 $script:EnableAuditLog = if ($null -ne $_cfg.Dashboard.EnableAuditLog) { [bool]$_cfg.Dashboard.EnableAuditLog } else { $true }
 
 # =============================================================================
-# Module check - only Az.Accounts is required (for Get-AzAccessToken).
-# All storage operations use direct REST API calls via storage-api-helpers.ps1.
+# MSAL.NET DLL check. Authentication uses bundled MSAL.NET (no Az.Accounts).
+# Both DLLs are required: Microsoft.Identity.Client depends on
+# Microsoft.IdentityModel.Abstractions at runtime.
 # =============================================================================
 
-$requiredModules = @('Az.Accounts')
-$missingModules  = $requiredModules | Where-Object { -not (Get-Module -ListAvailable -Name $_) }
-
-if ($missingModules) {
-    $msg = "The following PowerShell modules are required but not installed:`n`n" +
-           ($missingModules -join "`n") +
-           "`n`nInstall them by running:`nInstall-Module " + ($missingModules -join ", ") + " -Scope CurrentUser"
-    [System.Windows.MessageBox]::Show($msg, "Missing Modules", "OK", "Error") | Out-Null
+$_reqDlls = @(
+    "$PSScriptRoot\lib\Microsoft.Identity.Client.dll",
+    "$PSScriptRoot\lib\Microsoft.IdentityModel.Abstractions.dll"
+)
+$_missingDlls = $_reqDlls | Where-Object { -not (Test-Path $_) }
+if ($_missingDlls) {
+    Show-DashboardMessageDialog -Title 'Missing MSAL Library' -Heading 'Required sign-in library files not found' -Icon Error `
+        -Message 'See misc\az-accounts-reference.md for download instructions.' -Detail ($_missingDlls -join "`n")
     exit 1
 }
 
@@ -474,6 +488,17 @@ if ($EnableLogging) {
     Write-Host "REST API logging enabled: $($script:LogFile)" -ForegroundColor Cyan
     Write-Log "Profile Tools v$ScriptVersion | PS $($PSVersionTable.PSVersion)"
 }
+
+# -- Update check (before auth). Skipped when launched as a companion process from the
+#    dashboard ($_ptLaunchedFromDashboard) since the dashboard already ran its own check.
+#    update-check.ps1 itself is dot-sourced near the top of the script. --------------------
+Invoke-DashboardUpdateCheck `
+    -RepoRoot        $PSScriptRoot `
+    -CurrentVersion  $ScriptVersion `
+    -ScriptPath      $script:_ptScriptPath `
+    -BoundParameters $script:_ptBoundParams `
+    -SkipUpdateCheck:($SkipUpdateCheck -or $_ptLaunchedFromDashboard) `
+    -LogCallback     { param($m) if ($script:LogFile) { Write-Log $m } }
 
 # =============================================================================
 # Azure authentication
@@ -523,9 +548,8 @@ try {
     if (-not $testTok) { throw "Token was empty" }
 } catch {
     Write-Log "ERROR [ProfileTools] Storage OAuth token validation failed: $_"
-    [System.Windows.MessageBox]::Show(
-        "Failed to acquire a storage OAuth token:`n`n$_`n`nEnsure you are signed in and have 'Storage File Data Privileged Contributor' role on the storage accounts.",
-        "Storage Token Error", "OK", "Error") | Out-Null
+    Show-DashboardMessageDialog -Title 'Storage Token Error' -Heading 'Could not access storage' -Icon Error `
+        -Message "Ensure you are signed in and have the 'Storage File Data Privileged Contributor' role on the storage accounts." -Detail "$_"
     exit 1
 }
 
@@ -2762,13 +2786,19 @@ function Show-About {
             <TextBlock Text="Profile Tools" FontSize="18" FontWeight="Bold" Foreground="#0078D4"/>
             <TextBlock x:Name="AboutVersion"   FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,4,0,0"/>
             <TextBlock x:Name="AboutPSVersion" FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,2,0,0"/>
-            <TextBlock FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,2,0,0">GitHub: <Hyperlink x:Name="AboutGitHub" Foreground="#0078D4" TextDecorations="None">virtualwebber</Hyperlink></TextBlock>
+            <TextBlock FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,2,0,0">GitHub: <Hyperlink x:Name="AboutGitHub" Foreground="#0078D4" TextDecorations="None">virtualwebber/AVD-Dashboard</Hyperlink></TextBlock>
         </StackPanel>
 
-        <!-- Close button -->
-        <Button DockPanel.Dock="Bottom" x:Name="AboutCloseBtn"
+        <!-- Close / Check for updates buttons -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+        <Button x:Name="AboutUpdateBtn"
+                Content="Check for Updates" Width="140" Height="32" Margin="0,0,8,0"
+                Background="Transparent" Foreground="{DynamicResource Avd.Window.Fg}"
+                BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
+                FontSize="13" Cursor="Hand"/>
+        <Button x:Name="AboutCloseBtn"
                 Content="Close" HorizontalAlignment="Right"
-                Width="90" Height="32" Margin="0,16,0,0"
+                Width="90" Height="32"
                 Background="#0078D4" Foreground="White"
                 BorderThickness="0" FontSize="13" FontWeight="SemiBold" Cursor="Hand">
             <Button.Template>
@@ -2784,6 +2814,7 @@ function Show-About {
                 </ControlTemplate>
             </Button.Template>
         </Button>
+        </StackPanel>
 
         <!-- Disclaimer -->
         <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.Card.Bg}" CornerRadius="6" Padding="14,12"
@@ -2818,7 +2849,29 @@ function Show-About {
     $aWin.FindName("AboutVersion").Text   = "Version $ScriptVersion"
     $aWin.FindName("AboutPSVersion").Text = "PowerShell $($PSVersionTable.PSVersion)"
     $aWin.FindName("AboutCloseBtn").Add_Click({ $aWin.Close() })
-    $aWin.FindName("AboutGitHub").Add_Click({ Start-Process "https://github.com/virtualwebber" })
+    $aWin.FindName("AboutGitHub").Add_Click({ Start-Process "https://github.com/virtualwebber/AVD-Dashboard" })
+    $aWin.FindName("AboutUpdateBtn").Add_Click({
+        $_updBtn = $aWin.FindName("AboutUpdateBtn")
+        $_updBtn.IsEnabled = $false
+        $_updBtn.Content   = "Checking..."
+        # Force the "Checking..." state to actually paint before the blocking network
+        # call below - otherwise the click looks like it did nothing until it returns.
+        $_updBtn.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+        try {
+            Invoke-DashboardUpdateCheck `
+                -RepoRoot        $PSScriptRoot `
+                -CurrentVersion  $ScriptVersion `
+                -ScriptPath      $script:_ptScriptPath `
+                -BoundParameters $script:_ptBoundParams `
+                -Manual `
+                -IconPath        (Join-Path $PSScriptRoot 'data\avd-dashboard.ico') `
+                -OwnerWindow     $aWin `
+                -LogCallback     { param($m) Write-Log $m }
+        } finally {
+            $_updBtn.IsEnabled = $true
+            $_updBtn.Content   = "Check for Updates"
+        }
+    })
 
     $aWin.ShowDialog() | Out-Null
 }

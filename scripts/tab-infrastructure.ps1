@@ -498,7 +498,7 @@ $script:infraRefreshScript = {
 #
 # Parameters (supplied by the main script after the window is shown):
 #   $Window         - the loaded System.Windows.Window object
-#   $ContextFile    - path to the saved Az context JSON file (for Az.Accounts)
+#   $ContextFile    - reserved (unused, kept for API compatibility)
 #   $SubscriptionId - current Azure subscription ID for REST API calls
 # =============================================================================
 
@@ -690,7 +690,7 @@ function Initialize-InfrastructureTab {
             Invoke-RDPToSessionHost -SessionHost $vmName -IPAddress $ip
         }
         catch {
-            [System.Windows.MessageBox]::Show("Failed to launch RDP: $_", "RDP Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Failed to launch RDP: $_" -Title 'RDP Error' -Icon Error | Out-Null
         }
     }.GetNewClosure())
 
@@ -752,11 +752,8 @@ function Invoke-InfrastructurePowerAction {
     param([string]$Action)
 
     if ($script:infraActionHandle -and -not $script:infraActionHandle.IsCompleted) {
-        [System.Windows.MessageBox]::Show(
-            'A power action is already in progress. Please wait for it to complete.',
-            'Action In Progress',
-            [System.Windows.MessageBoxButton]::OK,
-            [System.Windows.MessageBoxImage]::Information) | Out-Null
+        Show-ThemedDialog -Message 'A power action is already in progress. Please wait for it to complete.' `
+            -Title 'Action In Progress' -Icon Information | Out-Null
         return
     }
 
@@ -790,13 +787,10 @@ function Invoke-InfrastructurePowerAction {
     $vmList = ($targets | ForEach-Object { $_.Name }) -join ', '
 
     if ($Action -in @('Deallocate', 'Restart')) {
-        $icon    = if ($Action -eq 'Deallocate') { [System.Windows.MessageBoxImage]::Warning } else { [System.Windows.MessageBoxImage]::Question }
-        $confirm = [System.Windows.MessageBox]::Show(
-            "$Action the following VM(s)?`n`n$vmList",
-            "Confirm $Action",
-            [System.Windows.MessageBoxButton]::YesNo,
-            $icon)
-        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+        $icon    = if ($Action -eq 'Deallocate') { 'Warning' } else { 'Question' }
+        $confirm = Show-ThemedDialog -Message "$Action the following VM(s)?`n`n$vmList" `
+            -Title "Confirm $Action" -Buttons YesNo -Icon $icon
+        if (-not $confirm) { return }
     }
 
     # Audit log - record each VM power action
@@ -955,10 +949,7 @@ function Invoke-InfrastructureExport {
                 Export-Csv -Path $dlg.FileName -NoTypeInformation -Force
             $script:ISStatusText.Text = "Exported $($script:infraDataTable.Rows.Count) row(s) to $($dlg.FileName)"
         } catch {
-            [System.Windows.MessageBox]::Show(
-                "Export failed:`n$_", 'Export Error',
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Error) | Out-Null
+            Show-ThemedDialog -Message "Export failed:`n$_" -Title 'Export Error' -Icon Error | Out-Null
         }
     }
 }

@@ -1,0 +1,6 @@
+# Disable all line-ending conversion. The auto-update feature compares SHA-256 hashes of
+# local files against blobs served by raw.githubusercontent.com, so working trees, blobs,
+# zips, and raw downloads must all be byte-identical regardless of anyone's core.autocrlf.
+# Text files are committed with LF (one-time normalization done 2026-07-11); .cmd files
+# are committed with CRLF (cmd.exe label parsing is unreliable with bare LF).
+* -text

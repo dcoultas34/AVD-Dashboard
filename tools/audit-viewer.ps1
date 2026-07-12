@@ -58,6 +58,10 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
+# Styled message dialog (Show-DashboardMessageDialog) - shared with the apps.
+# update-check.ps1 only defines functions at dot-source time; no update check runs.
+. "$PSScriptRoot\..\scripts\update-check.ps1"
+
 # Set a unique AppUserModelID so the viewer appears as its own taskbar entry
 try {
     $null = Add-Type -MemberDefinition @'
@@ -322,14 +326,14 @@ $ExportBtn.Add_Click({
         try {
             $items = @($AuditGrid.ItemsSource)
             if ($items.Count -eq 0) {
-                [System.Windows.MessageBox]::Show("No data to export.", "Export", "OK", "Information") | Out-Null
+                Show-DashboardMessageDialog -Title 'Export' -Icon Information -Message 'No data to export.'
                 return
             }
             $items | Select-Object Timestamp, User, Action, Target, Details, Result |
                 Export-Csv -Path $dlg.FileName -NoTypeInformation -Force
             $StatusText.Text = "Exported $($items.Count) entries to: $($dlg.FileName)"
         } catch {
-            [System.Windows.MessageBox]::Show("Export failed:`n$_", "Export Error", "OK", "Error") | Out-Null
+            Show-DashboardMessageDialog -Title 'Export Error' -Icon Error -Message "Export failed:`n$_"
         }
     }
 })

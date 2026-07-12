@@ -2561,7 +2561,7 @@ function Initialize-MonitoringTab {
             $script:_kqlPopupWin.FindName('KqlSavedCombo').SelectedItem = $name
             $script:_kqlPopupWin.FindName('KqlStatus').Text = "Saved: $name"
             } catch {
-                [System.Windows.MessageBox]::Show("Save error: $_", "KQL Save Error", 'OK', 'Error') | Out-Null
+                Show-ThemedDialog -Message "Save error: $_" -Title 'KQL Save Error' -Icon Error | Out-Null
             }
         })
 

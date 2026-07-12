@@ -781,7 +781,7 @@ function Initialize-ImagesTab {
             Invoke-RDPToSessionHost -SessionHost $vmName -IPAddress $ip
         }
         catch {
-            [System.Windows.MessageBox]::Show("Failed to launch RDP: $_", "RDP Error", "OK", "Error") | Out-Null
+            Show-ThemedDialog -Message "Failed to launch RDP: $_" -Title 'RDP Error' -Icon Error | Out-Null
         }
     }.GetNewClosure())
 
@@ -872,7 +872,7 @@ function Set-IMGActionStatus {
 
 function Invoke-ImagesCleanSnapshots {
     if ($script:imgActionHandle -and -not $script:imgActionHandle.IsCompleted) {
-        [System.Windows.MessageBox]::Show('An action is already in progress. Please wait.', 'Busy', 'OK', 'Information') | Out-Null
+        Show-ThemedDialog -Message 'An action is already in progress. Please wait.' -Title 'Busy' -Icon Information | Out-Null
         return
     }
 
@@ -899,16 +899,15 @@ function Invoke-ImagesCleanSnapshots {
         } else {
             "No snapshots found in:`n" + ($rgs -join "`n") + "`n`nSubscription: $subId"
         }
-        [System.Windows.MessageBox]::Show($msg, 'Clean Snapshots', 'OK', 'Information') | Out-Null
+        Show-ThemedDialog -Message $msg -Title 'Clean Snapshots' -Icon Information | Out-Null
         return
     }
 
     $rgList  = ($rgs -join ', ')
     $names   = ($snapshots | ForEach-Object { $_.Name }) -join "`n  "
-    $confirm = [System.Windows.MessageBox]::Show(
-        "Delete $($snapshots.Count) snapshot(s) from: $rgList`n`n  $names`n`nThis cannot be undone.",
-        'Clean Snapshots', 'YesNo', 'Warning')
-    if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+    $confirm = Show-ThemedDialog -Message "Delete $($snapshots.Count) snapshot(s) from: $rgList`n`n  $names`n`nThis cannot be undone." `
+        -Title 'Clean Snapshots' -Buttons YesNo -Icon Warning
+    if (-not $confirm) { return }
 
     Write-AuditLog -Action 'CleanSnapshots' -Target $rgList
 
@@ -947,7 +946,7 @@ function Invoke-ImagesCleanSnapshots {
 
 function Invoke-ImagesCleanImageVersions {
     if ($script:imgActionHandle -and -not $script:imgActionHandle.IsCompleted) {
-        [System.Windows.MessageBox]::Show('An action is already in progress. Please wait.', 'Busy', 'OK', 'Information') | Out-Null
+        Show-ThemedDialog -Message 'An action is already in progress. Please wait.' -Title 'Busy' -Icon Information | Out-Null
         return
     }
 
@@ -972,7 +971,7 @@ function Invoke-ImagesCleanImageVersions {
     }
 
     if ($galleries.Count -eq 0) {
-        [System.Windows.MessageBox]::Show('No Shared Image Galleries found in the configured resource groups.', 'Clean Image Versions', 'OK', 'Information') | Out-Null
+        Show-ThemedDialog -Message 'No Shared Image Galleries found in the configured resource groups.' -Title 'Clean Image Versions' -Icon Information | Out-Null
         return
     }
 
@@ -1000,15 +999,14 @@ function Invoke-ImagesCleanImageVersions {
     }
 
     if ($toDelete.Count -eq 0) {
-        [System.Windows.MessageBox]::Show("No image versions to delete. Each definition already has $keepCount or fewer versions.", 'Clean Image Versions', 'OK', 'Information') | Out-Null
+        Show-ThemedDialog -Message "No image versions to delete. Each definition already has $keepCount or fewer versions." -Title 'Clean Image Versions' -Icon Information | Out-Null
         return
     }
 
     $summary = ($toDelete | ForEach-Object { "  $($_.Definition)  v$($_.Version)  [$($_.Gallery)]" }) -join "`n"
-    $confirm = [System.Windows.MessageBox]::Show(
-        "Delete $($toDelete.Count) image version(s), keeping newest $keepCount per definition:`n`n$summary`n`nThis cannot be undone.",
-        'Clean Image Versions', 'YesNo', 'Warning')
-    if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+    $confirm = Show-ThemedDialog -Message "Delete $($toDelete.Count) image version(s), keeping newest $keepCount per definition:`n`n$summary`n`nThis cannot be undone." `
+        -Title 'Clean Image Versions' -Buttons YesNo -Icon Warning
+    if (-not $confirm) { return }
 
     Write-AuditLog -Action 'CleanImageVersions' -Target "$($toDelete.Count) versions across $($galleries.Count) gallery/galleries (keep $keepCount)"
 
@@ -1049,11 +1047,8 @@ function Invoke-ImagesPowerAction {
     param([string]$Action)
 
     if ($script:imgActionHandle -and -not $script:imgActionHandle.IsCompleted) {
-        [System.Windows.MessageBox]::Show(
-            'A power action is already in progress. Please wait for it to complete.',
-            'Action In Progress',
-            [System.Windows.MessageBoxButton]::OK,
-            [System.Windows.MessageBoxImage]::Information) | Out-Null
+        Show-ThemedDialog -Message 'A power action is already in progress. Please wait for it to complete.' `
+            -Title 'Action In Progress' -Icon Information | Out-Null
         return
     }
 
@@ -1086,13 +1081,10 @@ function Invoke-ImagesPowerAction {
     $vmList = ($targets | ForEach-Object { $_.Name }) -join ', '
 
     if ($Action -in @('Deallocate', 'Restart')) {
-        $icon    = if ($Action -eq 'Deallocate') { [System.Windows.MessageBoxImage]::Warning } else { [System.Windows.MessageBoxImage]::Question }
-        $confirm = [System.Windows.MessageBox]::Show(
-            "$Action the following VM(s)?`n`n$vmList",
-            "Confirm $Action",
-            [System.Windows.MessageBoxButton]::YesNo,
-            $icon)
-        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+        $icon    = if ($Action -eq 'Deallocate') { 'Warning' } else { 'Question' }
+        $confirm = Show-ThemedDialog -Message "$Action the following VM(s)?`n`n$vmList" `
+            -Title "Confirm $Action" -Buttons YesNo -Icon $icon
+        if (-not $confirm) { return }
     }
 
     Write-AuditLog -Action "VM$Action" -Target ($vmList -replace ', ', '; ')
@@ -1891,18 +1883,16 @@ function Invoke-ImagesCreateImage {
     # Reject if 2 jobs are already running
     $activeCount = @($script:imgJobs | Where-Object { -not $_.Handle.IsCompleted }).Count
     if ($activeCount -ge 2) {
-        [System.Windows.MessageBox]::Show(
-            'Two image creation jobs are already running. Stop one before starting another.',
-            'Max Jobs Running', 'OK', 'Warning') | Out-Null
+        Show-ThemedDialog -Message 'Two image creation jobs are already running. Stop one before starting another.' `
+            -Title 'Max Jobs Running' -Icon Warning | Out-Null
         return
     }
 
     # Validate create-image.ps1 exists
     $createImageScript = Join-Path $PSScriptRoot 'create-image.ps1'
     if (-not (Test-Path $createImageScript)) {
-        [System.Windows.MessageBox]::Show(
-            "Cannot find create-image.ps1 at:`n$createImageScript",
-            'Script Not Found', 'OK', 'Error') | Out-Null
+        Show-ThemedDialog -Message "Cannot find create-image.ps1 at:`n$createImageScript" `
+            -Title 'Script Not Found' -Icon Error | Out-Null
         return
     }
 
@@ -2132,10 +2122,7 @@ function Invoke-ImagesExport {
                 Export-Csv -Path $dlg.FileName -NoTypeInformation -Force
             $script:IMGStatusText.Text = "Exported $($script:imgDataTable.Rows.Count) row(s) to $($dlg.FileName)"
         } catch {
-            [System.Windows.MessageBox]::Show(
-                "Export failed:`n$_", 'Export Error',
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Error) | Out-Null
+            Show-ThemedDialog -Message "Export failed:`n$_" -Title 'Export Error' -Icon Error | Out-Null
         }
     }
 }

@@ -1,0 +1,346 @@
+{
+    "version":  "2026-07-12",
+    "notes":  "## 2026-07-12\n- **All remaining message boxes converted to styled WPF dialogs** (68 native boxes across the dashboard, Profile Tools, permissions checker, config editor, log viewer and audit viewer). In-app messages and confirmations (Start/Stop VM, drain mode, snapshot/image-version cleanup, MFA elevation) now use the theme-aware dialog; startup and standalone-tool messages use the same styled dialog as the update prompt, which gained Yes/No and Yes/No/Cancel button support for confirmations. Native boxes remain only as internal fallbacks, OS file pickers, and the restricted-language-mode warning in the tools (where WPF may be unavailable).",
+    "files":  [
+                  {
+                      "path":  ".gitattributes",
+                      "sha256":  "C3F15CAC89A9FC48A594F48100FB81C21DDF99261718D66B3FFF414BF815BF84",
+                      "size":  444
+                  },
+                  {
+                      "path":  "avd-live-dashboard.ps1",
+                      "sha256":  "25C948AA0C7F38006C547BCB68B52E841F1F44B9C7503249751BC44F7652AB91",
+                      "size":  292278
+                  },
+                  {
+                      "path":  "CHANGELOG.md",
+                      "sha256":  "808975A4AC0B7647282457FC4E485DCDFE6469CFCA97B52F17AD6BA9860D72C3",
+                      "size":  50406
+                  },
+                  {
+                      "path":  "Check-AVD-Permissions.cmd",
+                      "sha256":  "810BAB09F24D874D3A81DCA208E7F4999A13F540E6B84B526C8635BBE54023E8",
+                      "size":  1431
+                  },
+                  {
+                      "path":  "config/EXAMPLE-config.psd1",
+                      "sha256":  "1635E3A7E46F8C1627F040AA88FC7956D9E3FA052237A5CBB4E2A0820363B5B8",
+                      "size":  18799
+                  },
+                  {
+                      "path":  "Create-Dashboard-Role.cmd",
+                      "sha256":  "A1B829A4390AC0D3203D75C9683780BA271C9C6CA0AA57ADC8225A07572A6D89",
+                      "size":  1025
+                  },
+                  {
+                      "path":  "data/dark-theme.xaml",
+                      "sha256":  "7F737D2CA2FA8AD1AF149F658FF549093843CE96A3E96F561B58A24EEB7C0FF8",
+                      "size":  22677
+                  },
+                  {
+                      "path":  "data/kql/rtt-by-gateway.kql",
+                      "sha256":  "378349CEF0760DFD67E7809FFFC96879BD53D9CBB9441D87C6A619AFCB10B1FC",
+                      "size":  2392
+                  },
+                  {
+                      "path":  "data/kql/scaling-plan-history.kql",
+                      "sha256":  "AA233806DBCA17203F44A2294888FD0F091F8E0EFD950170388D6E87623A89F3",
+                      "size":  1616
+                  },
+                  {
+                      "path":  "data/kql/session-history.kql",
+                      "sha256":  "9788854E43A4C7831FEDA8C2BF4D5956A04748D80C3C13B3552A3DEC3B581003",
+                      "size":  3279
+                  },
+                  {
+                      "path":  "data/kql/winlogon-hostpools.kql",
+                      "sha256":  "865CF286ADEF5C3556D031048761A5892B1F848A44F8701B128E197ADB61BEF4",
+                      "size":  1205
+                  },
+                  {
+                      "path":  "data/kql/winlogon-stages.kql",
+                      "sha256":  "C7CA35A79BD9ABED017DA0C8E1BF25B9BA45FF07FD46ED06A279620509BEDEDE",
+                      "size":  4595
+                  },
+                  {
+                      "path":  "data/light-theme.xaml",
+                      "sha256":  "E27CA17BE830ACE3DFA68D8BBEF66758852B93F75147D528F2E68F374B8A5D23",
+                      "size":  15752
+                  },
+                  {
+                      "path":  "data/run-commands.psd1",
+                      "sha256":  "0613940FDCB0A393DFEB5D282D2B84F71E6497E45DDF939C634058C11DB57AE7",
+                      "size":  4878
+                  },
+                  {
+                      "path":  "data/runcommands/applocker-errors.ps1",
+                      "sha256":  "1392637166F405CBC954DB438A04D17A83421CECF51FF7D8ADA9E82650C46BAA",
+                      "size":  2745
+                  },
+                  {
+                      "path":  "data/runcommands/check-tcp-ports.ps1",
+                      "sha256":  "386C11647CD0EE05B3281607707AB774EEA866304A95C913CA900A8E76705CE5",
+                      "size":  2791
+                  },
+                  {
+                      "path":  "data/runcommands/disk-io-trace.ps1",
+                      "sha256":  "E31437F32700DDC09454B0B6C9C474BB67966B3DCB23E612F1E403B7CD64F526",
+                      "size":  9374
+                  },
+                  {
+                      "path":  "data/runcommands/fslogix-events.ps1",
+                      "sha256":  "F4199F78483110DAFFC9D2BD776CE4154D6977B1F302DE0A4EBEAACBC6FF08B2",
+                      "size":  4250
+                  },
+                  {
+                      "path":  "data/runcommands/fslogix-redirections-check.ps1",
+                      "sha256":  "4C9178E0393D09C7C81DCD4F8F46C74113144F0E67A64270073ED5AD01A45470",
+                      "size":  5508
+                  },
+                  {
+                      "path":  "data/runcommands/installed-apps.ps1",
+                      "sha256":  "571702E0AFF6B3E4A75328AFBD5188F16CED2F33287CF01441F403C15F5FF3EB",
+                      "size":  2354
+                  },
+                  {
+                      "path":  "data/runcommands/recent-errors.ps1",
+                      "sha256":  "292183021F9179E97F5E3D106183E660F95AD2E669A2346D0B9BDF1B698FEC6C",
+                      "size":  2439
+                  },
+                  {
+                      "path":  "data/runcommands/top-disk-io.ps1",
+                      "sha256":  "D71EBC04D74264A2372832E2E9AABD9AC5A3E3E77E4922F6EFD120C78D4E9CEB",
+                      "size":  4823
+                  },
+                  {
+                      "path":  "data/runcommands/top-processes.ps1",
+                      "sha256":  "BFA6C7CC61754352EAB2C3231187F76AAB2B87BDDEAB5998C5E71DC03351B05D",
+                      "size":  3056
+                  },
+                  {
+                      "path":  "data/runcommands/top-user-processes.ps1",
+                      "sha256":  "1F77A5981A0055F554D2C3971B523B860CA7867E343E624A838D049C45CC4B6F",
+                      "size":  3107
+                  },
+                  {
+                      "path":  "Edit-AVD-Config.cmd",
+                      "sha256":  "4BF24824FDCD3BD2EDD69B58B623DAE6E0B29DB4A93924D39BCC758E0E2DA6CB",
+                      "size":  281
+                  },
+                  {
+                      "path":  "Launch-AVD-Dashboard.cmd",
+                      "sha256":  "E1307E8B4904C7AE5D27CC1E74D14ACD93937D7E8BD156A8D8ED72D8930FBF17",
+                      "size":  280
+                  },
+                  {
+                      "path":  "Launch-AVD-Dashboard-Logging.cmd",
+                      "sha256":  "A073C4F7BAF38DB5B58AE99B1E8D1C5137C46B255C71640BDA5D10463356C25A",
+                      "size":  295
+                  },
+                  {
+                      "path":  "Launch-AVD-Dashboard-Select.cmd",
+                      "sha256":  "E3CCA524AB52EB4C22CB87623467F0B07FA0F2D7D1EDFA3A664A371627A51FEB",
+                      "size":  1563
+                  },
+                  {
+                      "path":  "Launch-AVD-Dashboard-SP.cmd",
+                      "sha256":  "ADF53665A48B19B624AED631D530AA5C5ED469D740064732C748E62D35B53097",
+                      "size":  301
+                  },
+                  {
+                      "path":  "Launch-Log-Viewer.cmd",
+                      "sha256":  "D19D824DC1C5D91DB41E760A1FDF1190E4A4EE09207FEB8FC8006C87C5E95635",
+                      "size":  296
+                  },
+                  {
+                      "path":  "Launch-Profile-Tools.cmd",
+                      "sha256":  "8BA16762BAB45294CE77B1F4CA74839FC5177FF4793D0FE75AFD8770AAB3BDA9",
+                      "size":  275
+                  },
+                  {
+                      "path":  "Launch-Profile-Tools-Logging.cmd",
+                      "sha256":  "E242CF1B52F9D676D000AE63812E33041983B0385401CD449A28D24CEC729445",
+                      "size":  106
+                  },
+                  {
+                      "path":  "Launch-Profile-Tools-Select.cmd",
+                      "sha256":  "DA3516EDC4E8B547BF85AED569F11DAAFC561F13F94E318CAE5441947D848781",
+                      "size":  1558
+                  },
+                  {
+                      "path":  "lib/Microsoft.Identity.Client.dll",
+                      "sha256":  "674707125E7D3ACE88F34068CF96D3E2C40E7ACE3B2730510DAFDD5566F85582",
+                      "size":  1646136
+                  },
+                  {
+                      "path":  "lib/Microsoft.IdentityModel.Abstractions.dll",
+                      "sha256":  "7B067E465F413D67E4F83E581DD588BED97E55A6D05502F7F9A6F2BD50CFCB36",
+                      "size":  18976
+                  },
+                  {
+                      "path":  "profile-tools.ps1",
+                      "sha256":  "E0211268ECDA00C64F1C59A9BEE499B5740215F0A70104DE978B8ABBC8608014",
+                      "size":  203014
+                  },
+                  {
+                      "path":  "README.md",
+                      "sha256":  "712D1028CDF5E60F76C44ED4BCF0A45721A73E4AA13A407FF7C8E78ED15617C3",
+                      "size":  81423
+                  },
+                  {
+                      "path":  "scripts/audit-log.ps1",
+                      "sha256":  "0BC9E2FF7FFE563D2EC3B76DF9CB471C94B28AEB7471548EA2DB1A8D1D7F90C2",
+                      "size":  2599
+                  },
+                  {
+                      "path":  "scripts/check-permissions.ps1",
+                      "sha256":  "F36C51EE51F801D74407741559AC04B82A5B6F4834194C2EDE6290B4E2B6FB19",
+                      "size":  75635
+                  },
+                  {
+                      "path":  "scripts/connect-azure.ps1",
+                      "sha256":  "424746BAB5A2295AD446E83CDF5A219154A4E202F4FF83A3900E9F4895D5AEE2",
+                      "size":  18507
+                  },
+                  {
+                      "path":  "scripts/cost-lookup.ps1",
+                      "sha256":  "CFBF22A994C2FDEEFDF15E223DB71DA69476D8E2A0F39A9EA783936B0BF7D910",
+                      "size":  86120
+                  },
+                  {
+                      "path":  "scripts/create-dashboardrole.ps1",
+                      "sha256":  "FC80ABDC34E3C1E827ACAED02C67C8A373A57C82DFC4A31B6C0C684E2F76EE2A",
+                      "size":  15429
+                  },
+                  {
+                      "path":  "scripts/create-image.ps1",
+                      "sha256":  "82469EB7146C961A52C54A7CB3FEC1A622DAEBFD02394E1F062251567D0476CB",
+                      "size":  32714
+                  },
+                  {
+                      "path":  "scripts/edit-config.ps1",
+                      "sha256":  "DEE59EC47B33CB90EFC5CC55AC9A63AD4C5BEA19139F2D2193B6DD45E3B190AF",
+                      "size":  118465
+                  },
+                  {
+                      "path":  "scripts/enrol-intune.ps1",
+                      "sha256":  "99BE72BBDF048B550E23F307957675DE27D56681E8CE0EF79D92720CEAB2AFAE",
+                      "size":  4019
+                  },
+                  {
+                      "path":  "scripts/profile-cleanup.ps1",
+                      "sha256":  "4E7B4103678822FEDEED4C5299A7005AD4A7C67B2C2A2A0D1C2F14E3540E1E98",
+                      "size":  6647
+                  },
+                  {
+                      "path":  "scripts/profile-delete-check.ps1",
+                      "sha256":  "7F9EBE7950351622B4245E1D04D586DC217B9E70D0005082B502328E0E11B644",
+                      "size":  10437
+                  },
+                  {
+                      "path":  "scripts/profile-delete-remove.ps1",
+                      "sha256":  "50A3BFBAC62BD07D7C5678B355A9AA8B1A129A87233236EBFDF5F4FD59939DCD",
+                      "size":  2175
+                  },
+                  {
+                      "path":  "scripts/profile-delete-unlock.ps1",
+                      "sha256":  "9513839003AFDF97851A1A346D6895C11DC22132BAA793B2721BD73DA88591EE",
+                      "size":  5053
+                  },
+                  {
+                      "path":  "scripts/profile-sizes.ps1",
+                      "sha256":  "35B246D49AA0132D8E223C97BDE1A65FD42B4FCA6ACD9A8D031BEBC96FCA1DBF",
+                      "size":  5460
+                  },
+                  {
+                      "path":  "scripts/rest-api-helpers.ps1",
+                      "sha256":  "D36A94F8A673E883C136AE55DA46F3975047804C44165FB41CA51ADC3148FBB2",
+                      "size":  46892
+                  },
+                  {
+                      "path":  "scripts/run-command.ps1",
+                      "sha256":  "40D6922737A05FEC2500A4065152F62E0CDDB48CB4D06D49A865043A50F9D485",
+                      "size":  34430
+                  },
+                  {
+                      "path":  "scripts/session-detail.ps1",
+                      "sha256":  "B19FDBF9CC7A0AC4550FF3ECA2DF00D76F55472C8895F53B5A140C028EDB851F",
+                      "size":  164582
+                  },
+                  {
+                      "path":  "scripts/session-history.ps1",
+                      "sha256":  "7B3256D72A173AE89CDD321A5758B0D99E12BB312D46CC91D13DBCE8EC69E3D1",
+                      "size":  102733
+                  },
+                  {
+                      "path":  "scripts/storage-api-helpers.ps1",
+                      "sha256":  "82145CDB06BAC74D9E16B368EC81B1B6CE35022478FFC481008CD81EBA2087ED",
+                      "size":  14452
+                  },
+                  {
+                      "path":  "scripts/tab-azuredevops.ps1",
+                      "sha256":  "CDAB4DD443B1A8CB6C495BCA86BB4D66452B8031E1C63B152F62CD29CFE878F1",
+                      "size":  112663
+                  },
+                  {
+                      "path":  "scripts/tab-azurefiles.ps1",
+                      "sha256":  "BB2A47B193E08F83A11FFDEAFB3A29837505C6D5F9D8D63AA3D4C17BEE9A128E",
+                      "size":  34756
+                  },
+                  {
+                      "path":  "scripts/tab-images.ps1",
+                      "sha256":  "96973EDE8F2BAD093CC046EBBC5BE6E17D58FABC88B72FE92A928CF683AE92D4",
+                      "size":  110445
+                  },
+                  {
+                      "path":  "scripts/tab-infrastructure.ps1",
+                      "sha256":  "736373E8F40508CE52762CFB3B35B1F8DAD3CE05BA1C650554574C4C97884C13",
+                      "size":  57309
+                  },
+                  {
+                      "path":  "scripts/tab-monitoring.ps1",
+                      "sha256":  "5FCAE278F96C86D7E2F1FD9EFBF3603449E3CACFD1EADEAB727D6287E8E3B781",
+                      "size":  144374
+                  },
+                  {
+                      "path":  "scripts/tab-sessionhosts.ps1",
+                      "sha256":  "A35E501C7DB364815CD5BDCA20CFFE4952B4F6C835259D8DCF40E9CF1AFF7468",
+                      "size":  365550
+                  },
+                  {
+                      "path":  "scripts/tab-sessioninfo.ps1",
+                      "sha256":  "880F49FD09A1010AAD279192F0B39392B15833286C7CBE8D162FDE4BB62EEE55",
+                      "size":  101934
+                  },
+                  {
+                      "path":  "scripts/update-check.ps1",
+                      "sha256":  "0E314CE0E3D94091A02CE4BC053D068B24CD6688B4D8092780C0E961A1765A4E",
+                      "size":  32099
+                  },
+                  {
+                      "path":  "tools/audit-viewer.ps1",
+                      "sha256":  "F629886ACE6DC06581537678B65F708188B53F84A65EE88B41E1B0F2A0EBF883",
+                      "size":  15016
+                  },
+                  {
+                      "path":  "tools/eventlog-summary.ps1",
+                      "sha256":  "30A1EF6FA77B65AB58408D9D7A3BAA3025DF9F5BDC8A8C19181472830DA7727C",
+                      "size":  31525
+                  },
+                  {
+                      "path":  "tools/fslogix-log-viewer.ps1",
+                      "sha256":  "96551E605B2150C983C4ED751E8AB13421C49DB210C5C0CE238DC9FB12EB0655",
+                      "size":  44756
+                  },
+                  {
+                      "path":  "tools/log-viewer.ps1",
+                      "sha256":  "B188212410B8886BF77BE97948F1247B2BB17CFF0513E6CC772D6357E5ABF875",
+                      "size":  38367
+                  },
+                  {
+                      "path":  "tools/New-UpdateManifest.ps1",
+                      "sha256":  "7AC92BCAD293F2982D900104E1D3B79798251E94671A98D94EB3E8B2859022A9",
+                      "size":  5791
+                  }
+              ]
+}

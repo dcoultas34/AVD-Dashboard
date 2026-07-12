@@ -1,11 +1,11 @@
-<#
+﻿<#
 .SYNOPSIS
     Azure REST API helper functions for the AVD Live Dashboard.
 
 .DESCRIPTION
     Provides Invoke-ArmRestMethod (core REST wrapper with pagination, retry, and
-    bearer-token auth) plus resource-specific wrapper functions that replace
-    Az PowerShell module cmdlets. Only Az.Accounts is required (for token acquisition).
+    bearer-token auth) plus resource-specific wrapper functions. Token acquisition
+    uses MSAL.NET directly (no Az.Accounts required).
 
     Dot-source this file from the main dashboard script before tab modules:
         . "$PSScriptRoot\scripts\rest-api-helpers.ps1"
@@ -46,11 +46,12 @@
 
     TOKEN FLOW
     ----------
-    Az.Accounts (Get-AzAccessToken) is used ONCE to obtain a bearer token. The token
-    is cached by Get-ArmToken with a 5-minute expiry buffer. The main dashboard timer
-    calls Get-ArmToken before each refresh cycle, and the fresh token is passed into
-    runspaces via SessionStateProxy.SetVariable (persistent runspaces) or AddArgument
-    (pool threads). Runspace threads never call Get-AzAccessToken themselves.
+    MSAL.NET (Microsoft.Identity.Client.dll, bundled in lib/) is used for token
+    acquisition. Get-ArmToken / Get-LawToken call AcquireTokenSilent on the
+    $script:msalApp instance created by Connect-AzureDashboard. MSAL handles
+    caching, expiry detection, and silent refresh internally. The main dashboard
+    timer calls Get-ArmToken before each refresh cycle and passes the resulting
+    bearer token into runspaces. Runspace threads never call MSAL themselves.
 
     LOGGING
     -------
@@ -62,7 +63,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-04-29
+    Version       : 2026-07-08
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -95,57 +96,36 @@ $script:ApiVersions = @{
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Token management
-# Get-ArmToken is the ONLY function that calls Az.Accounts. It caches the
-# bearer token and only requests a new one when the cached token is within
-# 5 minutes of expiry. The main dashboard timer calls this before every
-# refresh cycle and passes the token into all runspaces - runspace threads
-# never call Get-AzAccessToken themselves.
+# Get-ArmToken / Get-LawToken acquire bearer tokens via MSAL.NET (no Az.Accounts).
+# $script:msalApp and $script:msalAccount are set by Connect-AzureDashboard in
+# connect-azure.ps1 before these functions are called.
 #
-# PS 5.1 vs PS 7 difference: Get-AzAccessToken -AsSecureString returns a
-# SecureString on PS 7 but a plain string on some PS 5.1 builds. The
-# conditional below handles both cases.
+# MSAL handles token caching, expiry detection, and silent refresh internally -
+# no manual cache hash table is needed. AcquireTokenSilent uses the in-memory
+# (and disk-persisted) MSAL cache; it only contacts the network when the cached
+# token has expired or is missing.
 # ─────────────────────────────────────────────────────────────────────────────
-$script:_armTokenCache = @{}
 
 function Get-ArmToken {
     param(
         [string]$ResourceUrl = 'https://management.azure.com/'
     )
-    $cached = $script:_armTokenCache[$ResourceUrl]
-    if ($cached -and $cached.ExpiresOn -gt [DateTimeOffset]::UtcNow.AddMinutes(5)) {
-        return $cached.Token
-    }
-
-    $_tok = Get-AzAccessToken -ResourceUrl $ResourceUrl -AsSecureString -ErrorAction Stop
-    $plainToken = if ($_tok.Token -is [securestring]) {
-        [System.Net.NetworkCredential]::new('', $_tok.Token).Password
-    } else { [string]$_tok.Token }
-
-    $script:_armTokenCache[$ResourceUrl] = @{
-        Token     = $plainToken
-        ExpiresOn = $_tok.ExpiresOn
-    }
-    return $plainToken
+    # Convert resource URL to a v2 scope (e.g. https://management.azure.com/.default)
+    $scope = $ResourceUrl.TrimEnd('/') + '/.default'
+    # NOTE: use an intermediate variable rather than backtick line-continuation
+    # chaining - PowerShell parses a leading '.ExecuteAsync' on a continued line
+    # as a syntax error.
+    $req = $script:msalApp.AcquireTokenSilent([string[]]@($scope), $script:msalAccount)
+    $result = $req.ExecuteAsync().GetAwaiter().GetResult()
+    return $result.AccessToken
 }
 
 function Get-LawToken {
-    # SharedTokenCacheCredential fails for raw resource URLs like api.loganalytics.azure.com.
-    # Try the Az.Accounts built-in named type first; fall back to the explicit URL.
-    $cacheKey = 'https://api.loganalytics.azure.com/'
-    $cached = $script:_armTokenCache[$cacheKey]
-    if ($cached -and $cached.ExpiresOn -gt [DateTimeOffset]::UtcNow.AddMinutes(5)) {
-        return $cached.Token
-    }
-    $_tok = $null
-    try { $_tok = Get-AzAccessToken -ResourceTypeName 'OperationalInsights' -AsSecureString -ErrorAction Stop } catch {}
-    if (-not $_tok) {
-        $_tok = Get-AzAccessToken -ResourceUrl $cacheKey -AsSecureString -ErrorAction Stop
-    }
-    $plainToken = if ($_tok.Token -is [securestring]) {
-        [System.Net.NetworkCredential]::new('', $_tok.Token).Password
-    } else { [string]$_tok.Token }
-    $script:_armTokenCache[$cacheKey] = @{ Token = $plainToken; ExpiresOn = $_tok.ExpiresOn }
-    return $plainToken
+    # Log Analytics uses api.loganalytics.azure.com - different audience from ARM.
+    $scope = 'https://api.loganalytics.azure.com/.default'
+    $req = $script:msalApp.AcquireTokenSilent([string[]]@($scope), $script:msalAccount)
+    $result = $req.ExecuteAsync().GetAwaiter().GetResult()
+    return $result.AccessToken
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -757,27 +737,14 @@ function Wait-VMPowerState {
 #
 # Called by OnComplete callbacks when an ARM operation returns MFA errors.
 # Scans the error array for the MFA_CHALLENGE:<claims>:::<session> marker
-# produced by scriptblock catch blocks.  If found, launches a child
-# powershell.exe to authenticate and execute the ARM operations directly.
+# produced by scriptblock catch blocks. If found, re-authenticates via MSAL
+# with the claims challenge and retries the ARM operations directly.
 #
 # WHY THIS EXISTS:
 #   Invoke-Arm / Invoke-ArmRestMethod are lightweight REST helpers that cannot
 #   handle Conditional Access claims challenges - they just throw on 403.
-#   Invoke-AzRestMethod (Az.Accounts) has a full HTTP pipeline that auto-retries
-#   with claims, but requires the Az module loaded with a valid context.
-#   A child powershell.exe is needed because background runspaces lack an
-#   interactive host for browser-based MFA, and running Connect-AzAccount on the
-#   WPF UI thread would block the dispatcher.
-#
-# MODES:
-#   Interactive (first MFA): shows dialog, launches child with
-#     Connect-AzAccount -ClaimsChallenge (opens browser for MFA step-up),
-#     then executes ARM operations via Invoke-AzRestMethod.
-#   Silent (subsequent): skips dialog, launches child that only does
-#     Import-Module Az.Accounts (loads saved context + MSAL cache from
-#     disk) then Invoke-AzRestMethod.  The Az HTTP pipeline handles
-#     claims challenges using cached MFA tokens - no browser needed.
-#     If silent mode fails, resets flag so next attempt shows full dialog.
+#   When Azure issues a claims challenge, the app must acquire a new token
+#   with the claims embedded. MSAL handles this natively via WithClaims().
 #
 # PARAMETERS:
 #   -Errors        Error array to scan for MFA_CHALLENGE markers
@@ -786,8 +753,8 @@ function Wait-VMPowerState {
 #   -PauseTimer    DispatcherTimer to pause during MFA (default: $script:sdCountdownTimer)
 #
 # CALLERS:
-#   session-detail.ps1  - logoff OnComplete callbacks (4 sites: global/per-pool x selected/disconnected)
-#   tab-sessionhosts.ps1 - drain mode result handler in Invoke-SessionHostsTabTimer section (c)
+#   session-detail.ps1   - logoff OnComplete callbacks
+#   tab-sessionhosts.ps1 - drain mode result handler
 #
 # RETURN VALUES:
 #   Sets $script:_mfaRetryReady = $true  if MFA + operations succeeded
@@ -799,281 +766,96 @@ function Wait-VMPowerState {
 function script:Resolve-MfaChallenge {
     param(
         [array]$Errors,
-        [hashtable[]]$ArmOperations,     # @{Method='DELETE'; Path='...'; Body='...' (optional)}
+        [hashtable[]]$ArmOperations,
         [System.Windows.Controls.TextBlock]$StatusText,
         [System.Windows.Threading.DispatcherTimer]$PauseTimer
     )
-    # Default to session-detail controls if not specified
     if (-not $StatusText) { $StatusText = $script:sdStatus }
     if (-not $PSBoundParameters.ContainsKey('PauseTimer')) { $PauseTimer = $script:sdCountdownTimer }
 
-    $script:_mfaRetryReady  = $false
-    $script:_mfaInProgress  = $false
-    # ── MFA Debug Logging ────────────────────────────────────────────────
-    # Two log files are written to %TEMP% during MFA to aid troubleshooting:
-    #
-    # 1. PARENT LOG: avd-dashboard-mfa-debug.txt
-    #    Written by this function (the WPF UI thread) using $script:_mfaDbg.
-    #    Each line is appended immediately (not batched) so the log is
-    #    useful even if the parent gets stuck waiting in PushFrame.
-    #    Tracks: MFA marker detection, claims extraction, mode selection,
-    #    child process launch/exit, result file parsing, final outcome.
-    #
-    # 2. CHILD LOG: avd-dashboard-mfa-child.log
-    #    Written by the child powershell.exe process that runs the actual
-    #    Connect-AzAccount + ARM operations. This is critical because if
-    #    the parent is stuck "waiting for browser", only the child log
-    #    reveals what happened (module load, auth success/fail, ARM calls).
-    #
-    # Both files are overwritten on each MFA attempt (not appended across
-    # attempts) so they always reflect the most recent run.
-    # ───────────────────────────────────────────────────────────────────────
-    if ($script:LogFile) {
-        $script:_mfaDebugLog = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "avd-dashboard-mfa-debug.txt")
-        try { [IO.File]::WriteAllText($script:_mfaDebugLog, "") } catch {}
-        $script:_mfaDbg = { param($msg) try { [IO.File]::AppendAllText($script:_mfaDebugLog, "[$(Get-Date -f 'HH:mm:ss')] $msg`r`n") } catch {} }
-    } else {
-        $script:_mfaDbg = { }   # no-op when logging is disabled
-    }
-    & $script:_mfaDbg "=== Resolve-MfaChallenge ==="
+    $script:_mfaRetryReady = $false
+    $script:_mfaInProgress = $false
 
-    # Look for MFA_CHALLENGE marker returned by scriptblocks
+    # Look for MFA_CHALLENGE marker
     $mfaErr = $null
-    foreach ($e in $Errors) {
-        if ($e -match '^MFA_CHALLENGE:') { $mfaErr = $e; break }
-    }
-    if (-not $mfaErr) { & $script:_mfaDbg ("No MFA marker found"); return $false }
+    foreach ($e in $Errors) { if ($e -match '^MFA_CHALLENGE:') { $mfaErr = $e; break } }
+    if (-not $mfaErr) { return $false }
 
     # Extract base64 claims challenge from the marker prefix
     $claims = $null
-    $parts  = $mfaErr -split ':::', 2
-    $prefix = $parts[0] -replace '^MFA_CHALLENGE:', ''
+    $prefix = ($mfaErr -split ':::', 2)[0] -replace '^MFA_CHALLENGE:', ''
     if ($prefix) { $claims = $prefix }
-    & $script:_mfaDbg ("Claims extracted: $(if ($claims) { $claims.Substring(0, [Math]::Min(60, $claims.Length)) + '...' } else { '(none)' })")
-    & $script:_mfaDbg ("ArmOperations count: $($ArmOperations.Count)")
-    & $script:_mfaDbg ("_mfaEverDone: $($script:_mfaEverDone)")
 
-    # Pause refresh timer so it doesn't fire during MFA (the PushFrame
-    # dispatcher loop would allow it to tick and overwrite status text).
+    Write-Log "=== Resolve-MfaChallenge === claims=$(if($claims){'present'}else{'none'}) ops=$($ArmOperations.Count)"
+
     $wasTimerRunning = $false
-    if ($PauseTimer -and $PauseTimer.IsEnabled) {
-        $PauseTimer.Stop()
-        $wasTimerRunning = $true
+    if ($PauseTimer -and $PauseTimer.IsEnabled) { $PauseTimer.Stop(); $wasTimerRunning = $true }
+
+    $msg = "Azure Conditional Access requires elevated authentication for this action.`n`n" +
+           "Click Yes to authenticate (browser may open).`n`nClick No to cancel."
+    $ans = Show-ThemedDialog -Message $msg -Title 'Elevated Authentication Required' -Buttons YesNo -Icon Question
+    if (-not $ans) {
+        $StatusText.Text = "Operation cancelled - elevated authentication required."
+        if ($wasTimerRunning -and $PauseTimer) { $PauseTimer.Start() }
+        return $true
     }
 
-    # ── Decide: first MFA (show dialog + browser) vs subsequent (silent) ──
-    $silentMode = $script:_mfaEverDone -eq $true
+    $StatusText.Text = "Authenticating for elevated access..."
+    $script:_mfaInProgress = $true
 
-    if (-not $silentMode) {
-        $msg = "Azure Conditional Access requires elevated authentication for this action.`n`n" +
-               "Click Yes to authenticate - this may open a browser if needed,`n" +
-               "or use cached credentials if a recent MFA session exists.`n`n" +
-               "Click No to cancel."
-        $ans = [System.Windows.MessageBox]::Show($msg, "Elevated Authentication Required", "YesNo", "Information")
-        if ($ans -ne 'Yes') {
-            $StatusText.Text = "Operation cancelled - elevated authentication required."
+    $armScopes = [string[]]@('https://management.azure.com/.default')
+    $tok = $null
+    try {
+        # Try silent first with the claims challenge embedded
+        $builder = $script:msalApp.AcquireTokenSilent($armScopes, $script:msalAccount)
+        if ($claims) { $builder = $builder.WithClaims($claims) }
+        $r = $builder.ExecuteAsync().GetAwaiter().GetResult()
+        $tok = $r.AccessToken
+        $script:msalAccount = $r.Account
+        Write-Log "MFA: silent token with claims succeeded"
+    } catch {
+        Write-Log "MFA: silent failed ($($_.Exception.GetType().Name)) - trying interactive"
+        try {
+            $builder = $script:msalApp.AcquireTokenInteractive($armScopes).WithAccount($script:msalAccount)
+            if ($claims) { $builder = $builder.WithClaims($claims) }
+            $r = $builder.ExecuteAsync().GetAwaiter().GetResult()
+            $tok = $r.AccessToken
+            $script:msalAccount = $r.Account
+            Write-Log "MFA: interactive token succeeded"
+        } catch {
+            Write-Log "MFA: interactive failed: $_"
+            $StatusText.Text = "MFA authentication failed."
+            Show-ThemedDialog -Message "MFA re-authentication failed:`n$_" -Title 'Auth Error' -Icon Error | Out-Null
+            $script:_mfaInProgress = $false
             if ($wasTimerRunning -and $PauseTimer) { $PauseTimer.Start() }
             return $true
         }
     }
 
-    $StatusText.Text = if ($silentMode) { "Retrying with cached credentials..." } `
-                       else { "Authenticating for elevated access..." }
-    $script:_mfaInProgress = $true
-    & $script:_mfaDbg ("Mode: $(if ($silentMode) {'silent'} else {'interactive'}) - launching child process")
-
-    # Build child powershell.exe script:
-    # - Interactive mode: Connect-AzAccount -ClaimsChallenge (browser MFA) then ARM ops
-    # - Silent mode: just ARM ops using saved Az context + MSAL cache (no browser)
-    $guid     = [guid]::NewGuid().ToString('N').Substring(0,8)
-    $tempDir  = [System.IO.Path]::GetTempPath()
-    $script:_mfaTempScript = [System.IO.Path]::Combine($tempDir, "avd-dashboard-mfa-$guid.ps1")
-    $script:_mfaTempResult = [System.IO.Path]::Combine($tempDir, "avd-dashboard-mfa-$guid.result")
-
-    # ── Child Process Log (see "MFA Debug Logging" block above) ──────────
-    # The child .ps1 writes step-by-step progress to this file so we can
-    # see exactly where it got to, even when the parent is stuck in
-    # PushFrame polling. Each step appends: module load, Connect-AzAccount
-    # result, each ARM operation result, and final completion.
-    # Only included when -EnableLogging is active ($script:LogFile is set).
-    $script:_mfaChildLogging = [bool]$script:LogFile
-    if ($script:_mfaChildLogging) {
-        $script:_mfaChildLog = [System.IO.Path]::Combine($tempDir, "avd-dashboard-mfa-child.log")
-        $cmdLines = @(
-            "`$_log = '$($script:_mfaChildLog)'"
-            "[IO.File]::WriteAllText(`$_log, `"=== MFA child started `$(Get-Date -f 'HH:mm:ss') ===`r`n`")"
-            'try { Import-Module Az.Accounts -ErrorAction Stop } catch { [IO.File]::AppendAllText($_log, "Import-Module FAILED: $_`r`n"); exit 1 }'
-            "[IO.File]::AppendAllText(`$_log, `"Az.Accounts loaded`r`n`")"
-        )
-    } else {
-        $cmdLines = @(
-            'Import-Module Az.Accounts -ErrorAction Stop'
-        )
-    }
-
-    if (-not $silentMode) {
-        # First MFA: Connect-AzAccount with claims challenge opens browser
-        $ctx = Get-AzContext
-        $cmdLines += '$p = @{ ErrorAction = "Stop" }'
-        if ($ctx.Tenant.Id)       { $cmdLines += "`$p['TenantId']       = '$($ctx.Tenant.Id)'" }
-        if ($ctx.Account.Id)      { $cmdLines += "`$p['AccountId']      = '$($ctx.Account.Id)'" }
-        if ($ctx.Subscription.Id) { $cmdLines += "`$p['SubscriptionId'] = '$($ctx.Subscription.Id)'" }
-        if ($claims)              { $cmdLines += "`$p['ClaimsChallenge'] = '$claims'" }
-        if ($script:_mfaChildLogging) {
-            $cmdLines += @(
-                "[IO.File]::AppendAllText(`$_log, `"Calling Connect-AzAccount...`r`n`")"
-                'try {'
-                '    Connect-AzAccount @p | Out-Null'
-                "    [IO.File]::AppendAllText(`$_log, `"Connect-AzAccount succeeded`r`n`")"
-                '} catch {'
-                "    [IO.File]::AppendAllText(`$_log, `"Connect-AzAccount FAILED: `$_`r`n`")"
-                "    [IO.File]::WriteAllText('$($script:_mfaTempResult)', `"AUTH_ERROR:`$_`")"
-                '    exit 1'
-                '}'
-            )
-        } else {
-            $cmdLines += @(
-                'try {'
-                '    Connect-AzAccount @p | Out-Null'
-                '} catch {'
-                "    [IO.File]::WriteAllText('$($script:_mfaTempResult)', `"AUTH_ERROR:`$_`")"
-                '    exit 1'
-                '}'
-            )
-        }
-    }
-    # Silent mode: Az context auto-loaded from disk; Invoke-AzRestMethod's HTTP
-    # pipeline handles claims challenges using cached MFA tokens from MSAL
-
-    # Add ARM operation calls (DELETE, PATCH, etc.)
-    $cmdLines += '$errs = @()'
+    # Execute the ARM operations directly with the fresh token
+    $errs = @()
     foreach ($op in $ArmOperations) {
-        $method      = $op.Method
-        $escapedPath = $op.Path.Replace("'", "''")
-        if ($script:_mfaChildLogging) {
-            $cmdLines += "[IO.File]::AppendAllText(`$_log, `"Calling $method $($op.Path.Split('/')[-1])...`r`n`")"
-        }
-        if ($op.Body) {
-            $escapedBody = $op.Body.Replace("'", "''")
-            if ($script:_mfaChildLogging) {
-                $cmdLines += "try { Invoke-AzRestMethod -Method $method -Path '$escapedPath' -Payload '$escapedBody' -ErrorAction Stop | Out-Null; [IO.File]::AppendAllText(`$_log, `"  OK`r`n`") } catch { `$errs += `"$($escapedPath.Split('/')[-1]): `$_`"; [IO.File]::AppendAllText(`$_log, `"  FAILED: `$_`r`n`") }"
-            } else {
-                $cmdLines += "try { Invoke-AzRestMethod -Method $method -Path '$escapedPath' -Payload '$escapedBody' -ErrorAction Stop | Out-Null } catch { `$errs += `"$($escapedPath.Split('/')[-1]): `$_`" }"
-            }
-        } else {
-            if ($script:_mfaChildLogging) {
-                $cmdLines += "try { Invoke-AzRestMethod -Method $method -Path '$escapedPath' -ErrorAction Stop | Out-Null; [IO.File]::AppendAllText(`$_log, `"  OK`r`n`") } catch { `$errs += `"$($escapedPath.Split('/')[-1]): `$_`"; [IO.File]::AppendAllText(`$_log, `"  FAILED: `$_`r`n`") }"
-            } else {
-                $cmdLines += "try { Invoke-AzRestMethod -Method $method -Path '$escapedPath' -ErrorAction Stop | Out-Null } catch { `$errs += `"$($escapedPath.Split('/')[-1]): `$_`" }"
-            }
+        try {
+            Invoke-ArmRestMethod -Method $op.Method -Path $op.Path -Token $tok -Body $op.Body -FullResponse | Out-Null
+            Write-Log "MFA op OK: $($op.Method) $($op.Path.Split('/')[-1])"
+        } catch {
+            $errs += "$($op.Path.Split('/')[-1]): $_"
+            Write-Log "MFA op FAILED: $($op.Method) $($op.Path.Split('/')[-1]) - $_"
         }
     }
-    $cmdLines += @(
-        "if (`$errs.Count -eq 0) { [IO.File]::WriteAllText('$($script:_mfaTempResult)', 'SUCCESS') }"
-        "else { [IO.File]::WriteAllText('$($script:_mfaTempResult)', `"ERRORS:`$(`$errs -join '|||')`") }"
-    )
-    if ($script:_mfaChildLogging) {
-        $cmdLines += "[IO.File]::AppendAllText(`$_log, `"Child complete - errs=`$(`$errs.Count) result written`r`n`")"
-    }
-    [System.IO.File]::WriteAllText($script:_mfaTempScript, ($cmdLines -join "`r`n"))
-    & $script:_mfaDbg ("Child script written: $($script:_mfaTempScript)")
 
-    # Launch powershell.exe with the temp script (hidden window - only the browser is visible)
-    $script:_mfaProc = Start-Process powershell.exe `
-        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$($script:_mfaTempScript)`"" `
-        -PassThru -WindowStyle Hidden
-
-    # Nested dispatcher frame keeps WPF responsive while we poll the child process.
-    # Timeout after 5 minutes to prevent the UI hanging indefinitely if the user
-    # closes the browser or abandons the MFA prompt without completing auth.
-    $script:_mfaFrame = [System.Windows.Threading.DispatcherFrame]::new()
-    $script:_mfaStartTime = [DateTime]::UtcNow
-    $script:_mfaTimeoutMinutes = 5
-    $script:_mfaTimer = New-Object System.Windows.Threading.DispatcherTimer
-    $script:_mfaTimer.Interval = [TimeSpan]::FromMilliseconds(500)
-    $script:_mfaTimer.Add_Tick({
-        if ($script:_mfaProc.HasExited) {
-            $script:_mfaTimer.Stop()
-            $script:_mfaTimer = $null
-            $script:_mfaFrame.Continue = $false
-        } elseif (([DateTime]::UtcNow - $script:_mfaStartTime).TotalMinutes -ge $script:_mfaTimeoutMinutes) {
-            # MFA timed out - kill the child process and exit the frame
-            & $script:_mfaDbg "MFA timed out after $($script:_mfaTimeoutMinutes) minutes - killing child process"
-            try { $script:_mfaProc.Kill() } catch {}
-            $script:_mfaTimer.Stop()
-            $script:_mfaTimer = $null
-            $script:_mfaFrame.Continue = $false
-        }
-    })
-    $script:_mfaTimer.Start()
-    [System.Windows.Threading.Dispatcher]::PushFrame($script:_mfaFrame)
-    & $script:_mfaDbg ("PushFrame exited - child ExitCode: $($script:_mfaProc.ExitCode)")
-
-    # Safety: kill child process if it's still running after PushFrame exits
-    try { if (-not $script:_mfaProc.HasExited) { $script:_mfaProc.Kill(); & $script:_mfaDbg "Killed orphaned child process" } } catch {}
-
-    # Clean up temp script
-    try { Remove-Item $script:_mfaTempScript -Force -ErrorAction SilentlyContinue } catch {}
-
-    # Read result file from child process (SUCCESS or ERRORS:<err1>|||<err2>)
-    & $script:_mfaDbg ("Result file exists: $([System.IO.File]::Exists($script:_mfaTempResult))  Path: $($script:_mfaTempResult)")
-    if ([System.IO.File]::Exists($script:_mfaTempResult)) {
-        $content = [System.IO.File]::ReadAllText($script:_mfaTempResult)
-        try { Remove-Item $script:_mfaTempResult -Force -ErrorAction SilentlyContinue } catch {}
-
-        & $script:_mfaDbg ("Result: $($content.Substring(0, [Math]::Min(200, $content.Length)))")
-
-        if ($content -eq 'SUCCESS') {
-            $script:_mfaRetryReady = $true
-            $script:_mfaEverDone   = $true
-            $StatusText.Text = "MFA complete - operation succeeded."
-        } elseif ($content.StartsWith('AUTH_ERROR:')) {
-            $errMsg = $content.Substring(11)
-            $StatusText.Text = "MFA authentication failed."
-            [System.Windows.MessageBox]::Show(
-                "MFA re-authentication failed:`n$errMsg",
-                "Auth Error", "OK", "Error") | Out-Null
-        } elseif ($content.StartsWith('ERRORS:')) {
-            $errList = $content.Substring(7) -split '\|\|\|'
-            # Check if error is still MFA-related (silent mode cache may have expired)
-            $stillMfa = @($errList | Where-Object { $_ -match 'RequestDisallowedByAzure' })
-            if ($silentMode -and $stillMfa.Count -gt 0) {
-                # Silent mode failed - cached MFA expired; reset flag so next attempt shows dialog
-                $script:_mfaEverDone = $false
-                $StatusText.Text = "Cached MFA expired - please retry to re-authenticate."
-                & $script:_mfaDbg ("Silent mode failed with MFA error - reset _mfaEverDone")
-            } else {
-                $script:_mfaRetryReady = $true
-                $script:_mfaEverDone   = $true
-                $StatusText.Text = "MFA complete - some errors occurred."
-                [System.Windows.MessageBox]::Show(
-                    "Operation completed with errors after MFA:`n$($errList -join "`n")",
-                    "Operation Error", "OK", "Error") | Out-Null
-            }
-        } else {
-            $StatusText.Text = "Unexpected MFA result."
-            [System.Windows.MessageBox]::Show(
-                "Unexpected result from MFA process:`n$($content.Substring(0, [Math]::Min(200, $content.Length)))",
-                "Auth Error", "OK", "Error") | Out-Null
-        }
+    if ($errs.Count -eq 0) {
+        $script:_mfaRetryReady = $true
+        $StatusText.Text = "MFA complete - operation succeeded."
     } else {
-        $exitCode = $script:_mfaProc.ExitCode
-        if ($silentMode) {
-            # Silent mode child crashed - reset flag so next attempt shows full dialog
-            $script:_mfaEverDone = $false
-            $StatusText.Text = "Cached MFA failed - please retry to re-authenticate."
-            & $script:_mfaDbg ("Silent mode no result file - reset _mfaEverDone")
-        } else {
-            $StatusText.Text = "MFA authentication failed."
-            [System.Windows.MessageBox]::Show(
-                "MFA re-authentication process exited with code $exitCode.`nNo result file was created - check if authentication completed.",
-                "Auth Error", "OK", "Error") | Out-Null
-        }
+        $script:_mfaRetryReady = $true
+        $StatusText.Text = "MFA complete - some errors occurred."
+        Show-ThemedDialog -Message "Operation completed with errors after MFA:`n$($errs -join `"`n`")" `
+            -Title 'Operation Error' -Icon Error | Out-Null
     }
 
-    # Resume refresh timer and clean up
     $script:_mfaInProgress = $false
     if ($wasTimerRunning -and $PauseTimer) { $PauseTimer.Start() }
-    & $script:_mfaDbg ("Returning true - _mfaRetryReady=$($script:_mfaRetryReady)")
+    Write-Log "Resolve-MfaChallenge returning true - _mfaRetryReady=$($script:_mfaRetryReady)"
     return $true
 }

@@ -93,22 +93,26 @@ try {
 } catch {}
 
 # =============================================================================
+# Styled message dialog (Show-DashboardMessageDialog) - shared with the apps.
+# update-check.ps1 only defines functions at dot-source time; no update check runs.
+# =============================================================================
+. "$PSScriptRoot\update-check.ps1"
+
+# =============================================================================
 # Configuration  (script lives in scripts\, config.psd1 is in ..\config\)
 # =============================================================================
 
 $_configFile = if ($ConfigFile) { $ConfigFile } else { Join-Path $PSScriptRoot '..\config\config.psd1' }
 if (-not (Test-Path $_configFile)) {
-    [System.Windows.MessageBox]::Show(
-        "Configuration file not found:`n`n$_configFile`n`nEnsure config.psd1 is in the config folder.",
-        "Missing Configuration File", "OK", "Error") | Out-Null
+    Show-DashboardMessageDialog -Title 'Missing Configuration File' -Heading 'Configuration file not found' -Icon Error `
+        -Message 'Ensure config.psd1 is in the config folder.' -Detail $_configFile
     exit 1
 }
 try {
     $_cfg = & ([scriptblock]::Create([System.IO.File]::ReadAllText($_configFile)))
 } catch {
-    [System.Windows.MessageBox]::Show(
-        "config.psd1 could not be parsed:`n`n$_`n`nCheck the file for syntax errors.",
-        "Invalid Configuration File", "OK", "Error") | Out-Null
+    Show-DashboardMessageDialog -Title 'Invalid Configuration File' -Heading 'config.psd1 could not be parsed' -Icon Error `
+        -Message 'Check the file for syntax errors.' -Detail "$_"
     exit 1
 }
 
@@ -215,13 +219,13 @@ if (-not $UseExistingContext -and -not $UseDeviceAuthentication -and -not $UseSe
         if (-not [string]::IsNullOrWhiteSpace($DefaultSubscriptionId)) { $_connectParams['SubscriptionId'] = $DefaultSubscriptionId }
         $_earlyAuthContext = (Connect-AzAccount @_connectParams).Context
         if (-not $_earlyAuthContext -or -not $_earlyAuthContext.Account) {
-            [System.Windows.MessageBox]::Show("Sign-in did not complete. Please try again.",
-                "Sign-In Failed", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
+            Show-DashboardMessageDialog -Title 'Sign-In Failed' -Heading 'Sign-in did not complete' -Icon Error `
+                -Message 'Please try again.'
             exit 1
         }
     } catch {
-        [System.Windows.MessageBox]::Show("Sign-in failed:`n`n$_", "Sign-In Failed",
-            [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
+        Show-DashboardMessageDialog -Title 'Sign-In Failed' -Heading 'Sign-in did not complete' -Icon Error `
+            -Message 'The Azure sign-in could not be completed.' -Detail "$_"
         exit 1
     }
 }
@@ -288,11 +292,8 @@ if ($UseExistingContext) {
 
     if (-not $azContext -or -not $azContext.Account) {
         $splashWin.Close()
-        [System.Windows.MessageBox]::Show(
-            "No active Azure context was found.`n`nPlease authenticate first by running Connect-AzAccount in a PowerShell window, then relaunch.",
-            "No Azure Context",
-            [System.Windows.MessageBoxButton]::OK,
-            [System.Windows.MessageBoxImage]::Warning) | Out-Null
+        Show-DashboardMessageDialog -Title 'No Azure Context' -Heading 'No active Azure session found' -Icon Warning `
+            -Message 'Please authenticate first by running Connect-AzAccount in a PowerShell window, then relaunch.'
         exit 1
     }
     if (-not [string]::IsNullOrWhiteSpace($DefaultSubscriptionId)) {
@@ -308,14 +309,14 @@ if ($UseExistingContext) {
         $azContext = (Connect-AzAccount @_connectParams).Context
         if (-not $azContext -or -not $azContext.Account) {
             $splashWin.Close()
-            [System.Windows.MessageBox]::Show("Sign-in did not complete. Please try again.",
-                "Sign-In Failed", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
+            Show-DashboardMessageDialog -Title 'Sign-In Failed' -Heading 'Sign-in did not complete' -Icon Error `
+                -Message 'Please try again.'
             exit 1
         }
     } catch {
         $splashWin.Close()
-        [System.Windows.MessageBox]::Show("Sign-in failed:`n`n$_", "Sign-In Failed",
-            [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
+        Show-DashboardMessageDialog -Title 'Sign-In Failed' -Heading 'Sign-in did not complete' -Icon Error `
+            -Message 'The device-code sign-in could not be completed.' -Detail "$_"
         exit 1
     }
 
@@ -323,10 +324,8 @@ if ($UseExistingContext) {
 
     if ([string]::IsNullOrWhiteSpace($DefaultTenantId)) {
         $splashWin.Close()
-        [System.Windows.MessageBox]::Show(
-            "Azure.TenantId is not set in config.psd1.`n`nService Principal authentication requires a Tenant ID.",
-            "Service Principal - Missing Tenant ID",
-            [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
+        Show-DashboardMessageDialog -Title 'Service Principal - Missing Tenant ID' -Heading 'Tenant ID is not configured' -Icon Error `
+            -Message 'Azure.TenantId is not set in config.psd1. Service Principal authentication requires a Tenant ID.'
         exit 1
     }
 
@@ -372,9 +371,8 @@ if ($UseExistingContext) {
             $appId  = $script:_spDialogWin.FindName('AppIdBox').Text.Trim()
             $secret = $script:_spDialogWin.FindName('SecretBox').Password
             if ([string]::IsNullOrWhiteSpace($appId) -or [string]::IsNullOrWhiteSpace($secret)) {
-                [System.Windows.MessageBox]::Show("Both App ID and Client Secret are required.",
-                    "Missing Fields", [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                Show-DashboardMessageDialog -Title 'Missing Fields' -Icon Warning `
+                    -Message 'Both App ID and Client Secret are required.'
                 return
             }
             $script:_spDialogAppId  = $appId
@@ -392,10 +390,8 @@ if ($UseExistingContext) {
     if (Test-Path $_spCredPath) {
         try { $_spCred = Import-Clixml $_spCredPath -ErrorAction Stop }
         catch {
-            [System.Windows.MessageBox]::Show(
-                "The saved service principal credential could not be loaded:`n`n$_`n`nYou will be prompted to re-enter it.",
-                "Credential Load Failed", [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Warning) | Out-Null
+            Show-DashboardMessageDialog -Title 'Credential Load Failed' -Heading 'Saved credential could not be loaded' -Icon Warning `
+                -Message 'You will be prompted to re-enter it.' -Detail "$_"
             $_spCred = $null
         }
     }
@@ -411,10 +407,8 @@ if ($UseExistingContext) {
         if (-not (Test-Path $_spCredDir)) { New-Item -ItemType Directory -Path $_spCredDir -Force | Out-Null }
         try { $_spCred | Export-Clixml $_spCredPath -Force -ErrorAction Stop }
         catch {
-            [System.Windows.MessageBox]::Show(
-                "Warning: Credential could not be saved:`n`n$_`n`nYou will be prompted again on next launch.",
-                "Credential Save Warning", [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Warning) | Out-Null
+            Show-DashboardMessageDialog -Title 'Credential Save Warning' -Heading 'Credential could not be saved' -Icon Warning `
+                -Message 'You will be prompted again on next launch.' -Detail "$_"
         }
     }
 
@@ -424,20 +418,19 @@ if ($UseExistingContext) {
         $azContext = (Connect-AzAccount @_connectParams).Context
         if (-not $azContext -or -not $azContext.Account) {
             $splashWin.Close()
-            [System.Windows.MessageBox]::Show("Service principal sign-in did not complete.",
-                "Sign-In Failed", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
+            Show-DashboardMessageDialog -Title 'Sign-In Failed' -Heading 'Sign-in did not complete' -Icon Error `
+                -Message 'Service principal sign-in did not complete.'
             exit 1
         }
     } catch {
         $splashWin.Close()
-        $_retry = [System.Windows.MessageBox]::Show(
-            "Service principal sign-in failed:`n`n$_`n`nWould you like to clear the saved credential so you can re-enter it on next launch?",
-            "Sign-In Failed", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Error)
-        if ($_retry -eq 'Yes' -and (Test-Path $_spCredPath)) {
+        $_retry = Show-DashboardMessageDialog -Title 'Sign-In Failed' -Heading 'Service principal sign-in failed' -Icon Error `
+            -Message 'Would you like to clear the saved credential so you can re-enter it on next launch?' `
+            -Detail "$_" -Buttons YesNo
+        if ($_retry -and (Test-Path $_spCredPath)) {
             Remove-Item $_spCredPath -Force
-            [System.Windows.MessageBox]::Show("Saved credential cleared. Relaunch to enter new credentials.",
-                "Credential Cleared", [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Information) | Out-Null
+            Show-DashboardMessageDialog -Title 'Credential Cleared' -Icon Information `
+                -Message 'Saved credential cleared. Relaunch to enter new credentials.'
         }
         exit 1
     }

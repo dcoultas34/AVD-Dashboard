@@ -83,9 +83,10 @@
       - MSRA (Remote Assistance) uses port 3389 only and does not require port 445.
 
     Performance:
-      - All Azure API calls use direct REST API via bearer token. Only Az.Accounts is
-        required (for token acquisition). RunspacePool threads use a compact Invoke-Arm
-        helper injected via scriptblock string, eliminating all module import overhead.
+      - All Azure API calls use direct REST API via bearer token. MSAL.NET
+        (Microsoft.Identity.Client.dll, bundled in lib/) handles token acquisition.
+        RunspacePool threads use a compact Invoke-Arm helper injected via scriptblock
+        string, eliminating all module import overhead.
       - Parallel host pool queries use a capped RunspacePool (max 10 concurrent) to
         avoid ARM API throttling under large deployments.
       - RG location lookups are cached persistently across refresh cycles so unchanged
@@ -106,10 +107,10 @@
     browser prompt is blocked (e.g. by a corporate proxy).
 
 .PARAMETER UseExistingContext
-    When specified, skips authentication entirely and uses the current Az PowerShell
-    context. If no active context is found the dashboard exits with a prompt to
-    authenticate first (e.g. by running Connect-AzAccount in a PowerShell window).
-    Use this when the user has already authenticated manually before launching.
+    When specified, tries silent token acquisition from the MSAL cache first. If no
+    cached token is found, falls back to interactive browser auth automatically.
+    Use this to avoid re-authenticating when restarting the dashboard shortly after
+    a previous session.
 
 .PARAMETER UseServicePrincipal
     When specified, authenticates non-interactively using a service principal
@@ -125,10 +126,8 @@
     user's TEMP folder. Three log files may be created:
       - avd-dashboard-<timestamp>.log : main log with REST API calls (method,
         URI, status, duration), LAW query diagnostics, and tab refresh errors.
-      - avd-dashboard-mfa-debug.txt : MFA parent process log (marker detection,
-        claims extraction, child launch/exit, result parsing).
-      - avd-dashboard-mfa-child.log : MFA child process log (module load,
-        Connect-AzAccount result, ARM operation results).
+      - avd-dashboard-mfa-debug.txt : MFA log (marker detection, claims,
+        MSAL token result, ARM operation outcomes).
     The main log path is printed to the PowerShell console on startup. MFA logs
     are only created when an MFA elevation is triggered. Use this when
     troubleshooting REST API errors, LAW data issues, or MFA authentication
@@ -140,7 +139,7 @@
 
 .NOTES
     Author        : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
-    Version       : 2026-06-10
+    Version       : 2026-07-11.2
     Requires      : PowerShell 5.1 or PowerShell 7 (Windows)
 
     DISCLAIMER:
@@ -152,7 +151,7 @@
     Version history moved to CHANGELOG.md.
 
     Requirements:
-      - Az.Accounts module
+      - lib\Microsoft.Identity.Client.dll (bundled in the repo - no install needed)
 
 .EXAMPLE
     .\avd-live-dashboard.ps1
@@ -167,14 +166,27 @@ param(
     [switch]$UseExistingContext,
     [switch]$UseServicePrincipal,
     [switch]$EnableLogging,
-    [string]$ConfigFile
+    [string]$ConfigFile,
+    [switch]$SkipUpdateCheck
 )
 
 # =============================================================================
 # Script version - not customer-specific, stays here rather than in config
 # =============================================================================
 
-$ScriptVersion = "2026-06-10"
+$ScriptVersion = "2026-07-12"
+
+# Captured once, at top level, so the update-check flow can relaunch this exact script
+# with the same arguments the user originally passed (Show-About's manual check needs
+# these too, from inside a function, where $PSBoundParameters would be the function's own).
+$script:_dashboardScriptPath  = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
+$script:_dashboardBoundParams = $PSBoundParameters
+
+# Auto-update support. Dot-sourced this early (before any Add-Type) so that
+# Complete-DashboardPendingUpdate can swap in files a previous update couldn't overwrite
+# while they were loaded (lib\*.dll) - the swap has to happen before anything locks them.
+. "$PSScriptRoot\scripts\update-check.ps1"
+Complete-DashboardPendingUpdate -RepoRoot $PSScriptRoot
 
 # All native type definitions and assembly loads are done here, before any WPF windows
 # are created. Show-ConfigPicker (the startup config picker) runs before the main
@@ -509,18 +521,16 @@ function Resolve-StartupConfig {
 $_configFile = if ($ConfigFile) { $ConfigFile } else { Resolve-StartupConfig }
 $script:_configFile = $_configFile   # exposed for Invoke-ConfigReload
 if (-not (Test-Path $_configFile)) {
-    [System.Windows.MessageBox]::Show(
-        "Configuration file not found:`n`n$_configFile`n`nEnsure config.psd1 is in the config subfolder alongside this script.",
-        "Missing Configuration File", "OK", "Error") | Out-Null
+    Show-DashboardMessageDialog -Title 'Missing Configuration File' -Heading 'Configuration file not found' -Icon Error `
+        -Message 'Ensure config.psd1 is in the config subfolder alongside this script.' -Detail $_configFile
     exit 1
 }
 
 try {
     $_cfg = & ([scriptblock]::Create([System.IO.File]::ReadAllText($_configFile)))
 } catch {
-    [System.Windows.MessageBox]::Show(
-        "config.psd1 could not be parsed:`n`n$_`n`nCheck the file for syntax errors.",
-        "Invalid Configuration File", "OK", "Error") | Out-Null
+    Show-DashboardMessageDialog -Title 'Invalid Configuration File' -Heading 'config.psd1 could not be parsed' -Icon Error `
+        -Message 'Check the file for syntax errors.' -Detail "$_"
     exit 1
 }
 
@@ -687,53 +697,18 @@ public static extern int SetCurrentProcessExplicitAppUserModelID([MarshalAs(Unma
     [Win32.Shell32]::SetCurrentProcessExplicitAppUserModelID('AVDDashboard') | Out-Null
 } catch { <# non-critical - continue without custom taskbar grouping #> }
 
-# -- Module check --
-$requiredModules = @('Az.Accounts')
-$missingModules  = $requiredModules | Where-Object { -not (Get-Module -ListAvailable -Name $_ ) }
-
-if ($missingModules) {
-    $msg = "The following required PowerShell modules are not installed:`n`n" +
-           ($missingModules -join "`n") +
-           "`n`nWould you like to install them now for the current user?"
-    $answer = [System.Windows.MessageBox]::Show(
-        $msg,
-        "Missing Modules",
-        [System.Windows.MessageBoxButton]::YesNo,
-        [System.Windows.MessageBoxImage]::Warning
-    )
-    if ($answer -eq 'Yes') {
-        try {
-            foreach ($mod in $missingModules) {
-                [System.Windows.MessageBox]::Show(
-                    "Installing $mod - this may take a moment.`n`nClick OK to continue.",
-                    "Installing $mod",
-                    [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Information
-                ) | Out-Null
-                # Ensure NuGet provider is available (required on clean machines)
-                if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
-                    Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
-                }
-                Install-Module -Name $mod -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
-            }
-            [System.Windows.MessageBox]::Show(
-                "All modules installed successfully.`n`nClick OK to launch the dashboard.",
-                "Installation Complete",
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Information
-            ) | Out-Null
-        } catch {
-            [System.Windows.MessageBox]::Show(
-                "Failed to install modules:`n`n$_`n`nPlease install manually:`nInstall-Module " + ($missingModules -join ", ") + " -Scope CurrentUser",
-                "Installation Failed",
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Error
-            ) | Out-Null
-            exit 1
-        }
-    } else {
-        exit 1
-    }
+# -- MSAL.NET DLL check --
+# Both DLLs are required: Microsoft.Identity.Client depends on
+# Microsoft.IdentityModel.Abstractions at runtime.
+$_reqDlls = @(
+    "$PSScriptRoot\lib\Microsoft.Identity.Client.dll",
+    "$PSScriptRoot\lib\Microsoft.IdentityModel.Abstractions.dll"
+)
+$_missingDlls = $_reqDlls | Where-Object { -not (Test-Path $_) }
+if ($_missingDlls) {
+    Show-DashboardMessageDialog -Title 'Missing MSAL Library' -Heading 'Required sign-in library files not found' -Icon Error `
+        -Message 'See misc\az-accounts-reference.md for download instructions.' -Detail ($_missingDlls -join "`n")
+    exit 1
 }
 
 # -- Logging setup (early, so auth events are captured) -----------------------
@@ -757,6 +732,17 @@ Write-LogEarly "AVD Live Dashboard v$ScriptVersion | Auth starting | PS $($PSVer
 
 . "$PSScriptRoot\scripts\connect-azure.ps1"
 
+# -- Update check (before auth, so an update-and-relaunch happens before an interactive
+#    browser sign-in that would otherwise just be thrown away by the relaunch).
+#    update-check.ps1 itself is dot-sourced near the top of the script. -------------------
+Invoke-DashboardUpdateCheck `
+    -RepoRoot        $PSScriptRoot `
+    -CurrentVersion  $ScriptVersion `
+    -ScriptPath      $script:_dashboardScriptPath `
+    -BoundParameters $script:_dashboardBoundParams `
+    -SkipUpdateCheck:$SkipUpdateCheck `
+    -LogCallback     { param($m) Write-LogEarly $m }
+
 $_cfgBase  = [System.IO.Path]::GetFileNameWithoutExtension($_configFile)
 $azContext = Connect-AzureDashboard `
     -TenantId               $DefaultTenantId `
@@ -772,9 +758,8 @@ $script:azAccountId    = $azContext.Account.Id
 $script:azTenantId     = $azContext.Tenant.Id
 $script:azArmToken     = ''   # populated fresh before each logoff
 
-# Load REST API helper functions (replaces all Az module calls except Az.Accounts).
-# This dot-sources rest-api-helpers.ps1 which defines:
-#   - Get-ArmToken          : cached bearer token acquisition via Az.Accounts
+# Load REST API helper functions. This dot-sources rest-api-helpers.ps1 which defines:
+#   - Get-ArmToken          : bearer token via MSAL.NET (no Az.Accounts)
 #   - Invoke-ArmRestMethod  : core REST wrapper (pagination, retry, backoff)
 #   - $script:restHelperDef : compact "Invoke-Arm" string for RunspacePool injection
 #   - 20+ resource wrappers : Get-ArmHostPools, Get-ArmSessionHosts, etc.
@@ -916,9 +901,9 @@ $contextFile = [System.IO.Path]::GetTempFileName() + ".json"
 #    via .AddArgument(). They CANNOT use param() - see rest-api-helpers.ps1.
 #
 # All REST calls use bearer tokens passed from the main thread. No Azure
-# modules are imported into any runspace - only Az.Accounts is loaded in the
-# main thread for token acquisition.
-Set-SplashStatus "Initialising runspaces and saving Azure context..." -Progress 10
+# modules are imported into any runspace - MSAL.NET handles token acquisition
+# on the main thread only.
+Set-SplashStatus "Initialising runspaces..." -Progress 10
 
 $script:bgRunspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
 $script:bgRunspace.ApartmentState = "MTA"
@@ -927,8 +912,6 @@ $script:bgRunspace.Open()
 $script:filesRunspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
 $script:filesRunspace.ApartmentState = "MTA"
 $script:filesRunspace.Open()
-
-Save-AzContext -Path $contextFile -Force | Out-Null
 
 # -- Create persistent RunspacePools for parallel fan-out queries ───────────────
 # These pools are created once at startup and reused every refresh cycle.
@@ -4153,10 +4136,16 @@ function Show-About {
             <TextBlock FontSize="12" Foreground="{DynamicResource Avd.Fg.Secondary}" Margin="0,2,0,0">GitHub: <Hyperlink x:Name="AboutGitHub" Foreground="{DynamicResource Avd.Fg.Accent}" TextDecorations="None">virtualwebber/AVD-Dashboard</Hyperlink></TextBlock>
         </StackPanel>
 
-        <!-- Close button -->
-        <Button DockPanel.Dock="Bottom" x:Name="AboutCloseBtn"
+        <!-- Close / Check for updates buttons -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="AboutUpdateBtn"
+                    Content="Check for Updates" Width="140" Height="32" Margin="0,0,8,0"
+                    Background="Transparent" Foreground="{DynamicResource Avd.Window.Fg}"
+                    BorderBrush="{DynamicResource Avd.Border.Std}" BorderThickness="1"
+                    FontSize="13" Cursor="Hand"/>
+        <Button x:Name="AboutCloseBtn"
                 Content="Close" HorizontalAlignment="Right"
-                Width="90" Height="32" Margin="0,16,0,0"
+                Width="90" Height="32"
                 Foreground="White"
                 BorderThickness="0" FontSize="13" FontWeight="SemiBold" Cursor="Hand">
             <Button.Template>
@@ -4175,6 +4164,7 @@ function Show-About {
                 </ControlTemplate>
             </Button.Template>
         </Button>
+        </StackPanel>
 
         <!-- Disclaimer -->
         <Border DockPanel.Dock="Bottom" Background="{DynamicResource Avd.Card.Bg}" CornerRadius="6" Padding="14,12"
@@ -4210,6 +4200,28 @@ function Show-About {
     $aWin.FindName("AboutPSVersion").Text = "PowerShell $($PSVersionTable.PSVersion)"
     $aWin.FindName("AboutCloseBtn").Add_Click({ $aWin.Close() })
     $aWin.FindName("AboutGitHub").Add_Click({ Start-Process "https://github.com/virtualwebber/AVD-Dashboard" })
+    $aWin.FindName("AboutUpdateBtn").Add_Click({
+        $_updBtn = $aWin.FindName("AboutUpdateBtn")
+        $_updBtn.IsEnabled = $false
+        $_updBtn.Content   = "Checking..."
+        # Force the "Checking..." state to actually paint before the blocking network
+        # call below - otherwise the click looks like it did nothing until it returns.
+        $_updBtn.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+        try {
+            Invoke-DashboardUpdateCheck `
+                -RepoRoot        $PSScriptRoot `
+                -CurrentVersion  $ScriptVersion `
+                -ScriptPath      $script:_dashboardScriptPath `
+                -BoundParameters $script:_dashboardBoundParams `
+                -Manual `
+                -IconPath        (Join-Path $PSScriptRoot 'data\avd-dashboard.ico') `
+                -OwnerWindow     $aWin `
+                -LogCallback     { param($m) Write-Log $m }
+        } finally {
+            $_updBtn.IsEnabled = $true
+            $_updBtn.Content   = "Check for Updates"
+        }
+    })
 
     $aWin.ShowDialog() | Out-Null
 }
@@ -4794,29 +4806,20 @@ function Show-SwitchSubscription {
     $script:rgLocationCache = @{}
     $script:vmRgMap         = @{}
 
-    # Switch Az context synchronously (same pattern as fetch above)
-    $swRS = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
-    $swRS.ApartmentState = 'MTA'
-    $swRS.Open()
-    $swPS = [System.Management.Automation.PowerShell]::Create()
-    $swPS.Runspace = $swRS
-    [void]$swPS.AddScript({
-        param($cf, $subId)
-        Import-Module Az.Accounts -ErrorAction Stop -WarningAction SilentlyContinue
-        Import-AzContext -Path $cf | Out-Null
-        $newCtx = Set-AzContext -SubscriptionId $subId -ErrorAction Stop
-        Save-AzContext -Path $cf -Force | Out-Null
-        [PSCustomObject]@{
-            AccountId        = $newCtx.Account.Id
-            SubscriptionName = $newCtx.Subscription.Name
-            SubscriptionId   = $newCtx.Subscription.Id
-        }
-    }).AddArgument($contextFile).AddArgument($selected.Id)
-
+    # Resolve new subscription name via ARM REST (no Az module needed)
     $result = $null
-    try   { $result = $swPS.Invoke() | Select-Object -Last 1 }
-    catch { $script:StatusText.Text = "Failed to switch subscription: $_"; return }
-    finally { try { $swRS.Close(); $swPS.Dispose() } catch {} }
+    try {
+        $tok = Get-ArmToken
+        $sub = Invoke-RestMethod "https://management.azure.com/subscriptions/$($selected.Id)?api-version=2022-12-01" `
+            -Headers @{ Authorization = "Bearer $tok"; 'Content-Type' = 'application/json' }
+        $result = [PSCustomObject]@{
+            AccountId        = $script:azAccountId
+            SubscriptionName = $sub.displayName
+            SubscriptionId   = $sub.subscriptionId
+        }
+    } catch {
+        $script:StatusText.Text = "Failed to switch subscription: $_"; return
+    }
 
     if (-not $result) { $script:StatusText.Text = "Switch returned no result."; return }
 
@@ -4929,8 +4932,6 @@ $window.Add_Closed({
     try { if ($script:isCostPS)  { $script:isCostPS.Stop();  $script:isCostPS.Runspace.Dispose();  $script:isCostPS.Dispose() } }  catch {}
     try { if ($script:isTxnPS)   { $script:isTxnPS.Stop();   $script:isTxnPS.Runspace.Dispose();   $script:isTxnPS.Dispose() } }   catch {}
     try { if ($script:afCostPS)  { $script:afCostPS.Stop();  $script:afCostPS.Runspace.Dispose();  $script:afCostPS.Dispose() } }  catch {}
-    # Kill any orphaned MFA child process (powershell.exe running Connect-AzAccount)
-    try { if ($script:_mfaProc   -and -not $script:_mfaProc.HasExited)   { $script:_mfaProc.Kill() }   } catch {}
     # Kill any orphaned Profile Tools or Log Viewer child processes
     try { if ($script:toolsProc  -and -not $script:toolsProc.HasExited)  { $script:toolsProc.Kill() }  } catch {}
     try { if ($script:lvProc     -and -not $script:lvProc.HasExited)     { $script:lvProc.Kill() }     } catch {}

@@ -1,51 +1,123 @@
 #
 # Azure authentication helper - dot-sourced by avd-live-dashboard.ps1 and profile-tools.ps1.
-# Provides Connect-AzureDashboard: a single function that handles all four auth modes.
+# Provides Connect-AzureDashboard: a single function that handles all auth modes via MSAL.NET.
+#
+# Requires: lib/Microsoft.Identity.Client.dll (bundled in repo - no module install needed)
 #
 # Author  : virtualwebber (https://github.com/virtualwebber/AVD-Dashboard)
 #
 
+# Load MSAL.NET at dot-source time. The DLLs are bundled in lib/ relative to the repo root.
+# $PSScriptRoot is scripts/, so go up one level. Microsoft.Identity.Client depends on
+# Microsoft.IdentityModel.Abstractions - load it first so the MSAL builder resolves it.
+$_libDir  = Join-Path (Split-Path $PSScriptRoot -Parent) 'lib'
+$_absDll  = Join-Path $_libDir 'Microsoft.IdentityModel.Abstractions.dll'
+$_msalDll = Join-Path $_libDir 'Microsoft.Identity.Client.dll'
+foreach ($_d in @($_absDll, $_msalDll)) {
+    if (-not (Test-Path $_d)) {
+        throw "Required library not found at '$_d'. See misc/az-accounts-reference.md for download instructions."
+    }
+    # Windows tags files that arrived via git/OneDrive/a browser download with a
+    # Zone.Identifier "Mark of the Web" alternate data stream. The .NET loader can
+    # silently no-op Add-Type against a blocked file (no exception, but the type
+    # never actually becomes available) instead of throwing - unblock defensively
+    # on every load so this is never the cause of a failure.
+    try { Unblock-File -Path $_d -ErrorAction SilentlyContinue } catch {}
+}
+
+# Guard against double dot-sourcing within the same process (e.g. a config reload
+# that re-dot-sources this file) - Add-Type throws if the same simple assembly
+# name is loaded twice, even from an identical path.
+if (-not ('Microsoft.Identity.Client.PublicClientApplicationBuilder' -as [type])) {
+    Add-Type -Path $_absDll  -ErrorAction Stop
+    Add-Type -Path $_msalDll -ErrorAction Stop
+    if (-not ('Microsoft.Identity.Client.PublicClientApplicationBuilder' -as [type])) {
+        throw "Add-Type completed without error, but Microsoft.Identity.Client.PublicClientApplicationBuilder " +
+              "still cannot be resolved. The DLL at '$_msalDll' may be corrupt, blocked, or an incompatible " +
+              "build - try deleting lib\*.dll and re-downloading them (see misc/az-accounts-reference.md)."
+    }
+}
+
+# MSAL token-cache persistence helper (compiled C#, not a PowerShell scriptblock).
+# MSAL invokes the BeforeAccess/AfterAccess callbacks on background threads that
+# have no PowerShell runspace - a scriptblock callback throws "There is no Runspace
+# available to run scripts in this thread". A compiled static method is pure .NET
+# and runs on any thread. The cache bytes are DPAPI-encrypted (CurrentUser) since
+# they contain refresh tokens.
+if (-not ('AvdMsalCache' -as [type])) {
+    $_cacheCs = @"
+using System;
+using System.IO;
+using System.Security.Cryptography;
+using Microsoft.Identity.Client;
+
+public static class AvdMsalCache {
+    public static string CacheFile;
+    public static void Before(TokenCacheNotificationArgs args) {
+        if (File.Exists(CacheFile)) {
+            try {
+                byte[] prot = File.ReadAllBytes(CacheFile);
+                byte[] data = ProtectedData.Unprotect(prot, null, DataProtectionScope.CurrentUser);
+                args.TokenCache.DeserializeMsalV3(data, false);
+            } catch { }
+        }
+    }
+    public static void After(TokenCacheNotificationArgs args) {
+        if (args.HasStateChanged) {
+            try {
+                string dir = Path.GetDirectoryName(CacheFile);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                byte[] data = args.TokenCache.SerializeMsalV3();
+                byte[] prot = ProtectedData.Protect(data, null, DataProtectionScope.CurrentUser);
+                File.WriteAllBytes(CacheFile, prot);
+            } catch { }
+        }
+    }
+}
+"@
+    Add-Type -TypeDefinition $_cacheCs -ReferencedAssemblies @($_msalDll, 'System.Security') -ErrorAction Stop
+}
+
 function Connect-AzureDashboard {
     <#
     .SYNOPSIS
-        Authenticates to Azure and returns an Az context object.
+        Authenticates to Azure via MSAL.NET and returns a context object.
 
     .DESCRIPTION
-        Wraps Connect-AzAccount with support for four authentication modes:
+        Replaces the Az.Accounts dependency with direct MSAL.NET calls. Supports:
           - Interactive browser (default)
           - Device code flow       (-UseDeviceAuthentication)
-          - Existing Az context    (-UseExistingContext)
-          - Service principal      (-UseServicePrincipal)
+          - Silent re-use          (-UseExistingContext, uses cached token from previous run)
 
-        On success returns the Az context. On failure shows an error dialog and
-        calls exit 1 so the calling script terminates cleanly.
+        Token cache is persisted to %APPDATA%\AVDDashboard\token-cache.bin.
+
+        On success returns a PSCustomObject with .Subscription, .Account, .Tenant matching
+        the shape previously returned by Get-AzContext so all callers are unchanged.
+        On failure shows an error dialog and calls exit 1.
 
     .PARAMETER TenantId
-        Azure AD tenant ID to authenticate against. Pass '' to use the default.
+        Azure AD tenant ID to authenticate against. Pass '' to use 'organizations' (multi-tenant).
 
     .PARAMETER SubscriptionId
-        Subscription to activate after sign-in. Pass '' to use the default.
+        Subscription to activate after sign-in.
 
     .PARAMETER UseDeviceAuthentication
         Use device code flow instead of interactive browser.
 
     .PARAMETER UseExistingContext
-        Skip Connect-AzAccount and reuse whatever Az context is already active.
+        Try silent token acquisition from cache first; falls back to interactive if no cached token.
 
     .PARAMETER UseServicePrincipal
-        Authenticate non-interactively using a stored App ID + Client Secret.
-        Requires TenantId. Credential is DPAPI-encrypted in AppData.
+        Not supported in this version (user accounts only). Shows an error if passed.
 
     .PARAMETER CredentialTag
-        Suffix appended to the SP credential filename so each config file gets
-        its own stored credential. Pass the config basename (e.g. 'prod').
-        Default 'config' maps to sp-credential.xml (backward-compatible).
+        Ignored - retained for backward-compatibility with existing config files.
 
     .PARAMETER LogCallback
         Optional scriptblock called with a single string for log/trace output.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', 'CredentialTag',
-        Justification = 'CredentialTag is a config file basename used to derive a filename, not a secret value.')]
+        Justification = 'CredentialTag is a config file basename, not a secret value.')]
     param(
         [string]  $TenantId                 = '',
         [string]  $SubscriptionId           = '',
@@ -58,239 +130,231 @@ function Connect-AzureDashboard {
 
     function _Log { param([string]$m); if ($LogCallback) { & $LogCallback $m } }
 
-    # -------------------------------------------------------------------------
-    # Helper: SP credential prompt (WPF dialog)
-    # -------------------------------------------------------------------------
-    function Invoke-SPCredentialPrompt {
-        $xaml = @'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Service Principal Credentials" Width="430" Height="260"
-        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
-        ShowInTaskbar="False">
-    <Grid Margin="16">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,10"
-                   Text="Enter the App (Client) ID and Client Secret for the service principal. The credential is encrypted with your Windows account (DPAPI) and saved to AppData."/>
-        <Label Grid.Row="1" Content="App (Client) ID:" FontWeight="SemiBold" Padding="0,0,0,2"/>
-        <TextBox Grid.Row="2" Name="AppIdBox" Margin="0,0,0,8" Padding="4,3" FontFamily="Consolas"/>
-        <Label Grid.Row="3" Content="Client Secret:" FontWeight="SemiBold" Padding="0,0,0,2"/>
-        <PasswordBox Grid.Row="4" Name="SecretBox" Margin="0,0,0,4" Padding="4,3"/>
-        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Name="OkBtn" Content="Save and Connect" Width="120" Height="28" Margin="0,0,8,0" IsDefault="True"/>
-            <Button Name="CancelBtn" Content="Cancel" Width="70" Height="28" IsCancel="True"/>
-        </StackPanel>
-    </Grid>
-</Window>
-'@
-        $reader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($xaml))
-        $_win   = [System.Windows.Markup.XamlReader]::Load($reader)
-
-        $_win.FindName('OkBtn').Add_Click({
-            $a = $_win.FindName('AppIdBox').Text.Trim()
-            $s = $_win.FindName('SecretBox').Password
-            if ([string]::IsNullOrWhiteSpace($a) -or [string]::IsNullOrWhiteSpace($s)) {
-                [System.Windows.MessageBox]::Show(
-                    "Both App ID and Client Secret are required.",
-                    "Missing Fields",
-                    [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Warning) | Out-Null
-                return
+    # Styled WPF dialog matching the update prompt (Show-DashboardMessageDialog lives in
+    # update-check.ps1, which both apps dot-source before this file). Native MessageBox
+    # fallback keeps this file usable standalone.
+    function _AuthDialog {
+        param(
+            [string]$Heading,
+            [string]$Message,
+            [string]$Detail = '',
+            [ValidateSet('Information', 'Warning', 'Error')][string]$Icon = 'Error',
+            [string]$Title = 'Sign-In Failed'
+        )
+        if (Get-Command Show-DashboardMessageDialog -ErrorAction SilentlyContinue) {
+            Show-DashboardMessageDialog -Title $Title -Heading $Heading -Message $Message -Detail $Detail -Icon $Icon
+        } else {
+            $img = switch ($Icon) {
+                'Error'   { [System.Windows.MessageBoxImage]::Error }
+                'Warning' { [System.Windows.MessageBoxImage]::Warning }
+                default   { [System.Windows.MessageBoxImage]::Information }
             }
-            $script:_spPromptAppId  = $a
-            $script:_spPromptSecret = $s
-            $_win.DialogResult = $true
-            $_win.Close()
-        })
-
-        if ($_win.ShowDialog()) {
-            return [pscustomobject]@{ AppId = $script:_spPromptAppId; Secret = $script:_spPromptSecret }
+            $full = if ("$Detail".Trim()) { "$Message`n`n$Detail" } else { $Message }
+            [System.Windows.MessageBox]::Show($full, $Title, [System.Windows.MessageBoxButton]::OK, $img) | Out-Null
         }
-        return $null
     }
 
-    # -------------------------------------------------------------------------
-    # Mode: UseExistingContext
-    # -------------------------------------------------------------------------
-    if ($UseExistingContext) {
-        _Log "[Auth] Mode: UseExistingContext"
-        try   { $ctx = Get-AzContext -ErrorAction Stop } catch { $ctx = $null }
-
-        if ($ctx -and $ctx.Account) {
-            _Log "[Auth] Existing context: $($ctx.Account.Id) | Tenant: $($ctx.Tenant.Id)"
-
-            if (-not [string]::IsNullOrWhiteSpace($SubscriptionId)) {
-                _Log "[Auth] Switching to subscription: $SubscriptionId"
-                try {
-                    Set-AzContext -SubscriptionId $SubscriptionId -ErrorAction Stop | Out-Null
-                    $ctx = Get-AzContext
-                    _Log "[Auth] Switched to: $($ctx.Subscription.Name) ($($ctx.Subscription.Id))"
-                } catch {
-                    _Log "[Auth] WARNING - subscription switch failed: $_"
-                }
-            }
-            return $ctx
-        }
-
-        # Az token cache is per-process; child processes (e.g. Profile Tools launched
-        # from the dashboard) may have no cached context even though the parent does.
-        # Fall through to interactive browser auth rather than failing silently.
-        _Log "[Auth] No existing context found - falling back to interactive browser auth"
+    # Innermost exception message - the part worth showing, without PowerShell's
+    # 'Exception calling "GetResult" with "0" argument(s)' method-invocation wrapper.
+    function _AuthErrorDetail {
+        param($ErrorRecord)
+        $ex = $ErrorRecord.Exception
+        while ($ex.InnerException) { $ex = $ex.InnerException }
+        return "$($ex.Message)".Trim()
     }
 
-    # -------------------------------------------------------------------------
-    # Mode: UseDeviceAuthentication
-    # -------------------------------------------------------------------------
-    if ($UseDeviceAuthentication) {
-        _Log "[Auth] Mode: DeviceAuthentication | TenantId: $TenantId | SubId: $SubscriptionId"
-        try {
-            $_p = @{ UseDeviceAuthentication = $true; ErrorAction = 'Stop' }
-            if (-not [string]::IsNullOrWhiteSpace($TenantId))      { $_p['TenantId']      = $TenantId      }
-            if (-not [string]::IsNullOrWhiteSpace($SubscriptionId)) { $_p['SubscriptionId'] = $SubscriptionId }
-            _Log "[Auth] Calling Connect-AzAccount (device code)..."
-            $ctx = (Connect-AzAccount @_p).Context
-            if (-not $ctx -or -not $ctx.Account) {
-                _Log "[Auth] Connect-AzAccount returned no context"
-                [System.Windows.MessageBox]::Show("Sign-in did not complete. Please try again.",
-                    "Sign-In Failed", [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Error) | Out-Null
-                exit 1
-            }
-            _Log "[Auth] Sign-in OK: $($ctx.Account.Id) | Sub: $($ctx.Subscription.Name)"
-        } catch {
-            _Log "[Auth] ERROR - device sign-in failed: $_"
-            [System.Windows.MessageBox]::Show("Sign-in failed:`n`n$_", "Sign-In Failed",
-                [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
-            exit 1
+    # True when the user cancelled the sign-in themselves (closed the browser window /
+    # pressed Cancel). MSAL surfaces that as MsalClientException 'authentication_canceled';
+    # the message match is a belt-and-braces fallback for wrapped/rethrown variants.
+    function _IsAuthCancelled {
+        param($ErrorRecord)
+        $ex = $ErrorRecord.Exception
+        while ($ex) {
+            if ($ex -is [Microsoft.Identity.Client.MsalClientException] -and $ex.ErrorCode -eq 'authentication_canceled') { return $true }
+            $ex = $ex.InnerException
         }
-        return $ctx
+        return ("$ErrorRecord" -match 'canceled authentication')
     }
 
-    # -------------------------------------------------------------------------
-    # Mode: UseServicePrincipal
-    # -------------------------------------------------------------------------
     if ($UseServicePrincipal) {
-        if ([string]::IsNullOrWhiteSpace($TenantId)) {
-            [System.Windows.MessageBox]::Show(
-                "Azure.TenantId is not set in config.psd1.`n`nService Principal authentication requires a Tenant ID. Please add it and relaunch.",
-                "Service Principal - Missing Tenant ID",
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Error) | Out-Null
-            exit 1
-        }
-
-        $_credFile = if ($CredentialTag -eq 'config') { 'sp-credential.xml' } else { "sp-credential-$CredentialTag.xml" }
-        $_credPath = Join-Path $env:APPDATA "AVDDashboard\$_credFile"
-
-        $_spCred = $null
-        if (Test-Path $_credPath) {
-            try {
-                $_spCred = Import-Clixml $_credPath -ErrorAction Stop
-            } catch {
-                _Log "[Auth] SP credential load failed from '$_credPath': $_"
-                [System.Windows.MessageBox]::Show(
-                    "The saved service principal credential could not be loaded:`n`n$_`n`nYou will be prompted to re-enter it.",
-                    "Credential Load Failed",
-                    [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Warning) | Out-Null
-                $_spCred = $null
-            }
-        }
-
-        if (-not $_spCred) {
-            $_input = Invoke-SPCredentialPrompt
-            if (-not $_input) { exit 0 }
-
-            $_spCred = [System.Management.Automation.PSCredential]::new(
-                $_input.AppId,
-                (ConvertTo-SecureString $_input.Secret -AsPlainText -Force)
-            )
-
-            $_credDir = Split-Path $_credPath -Parent
-            if (-not (Test-Path $_credDir)) { New-Item -ItemType Directory -Path $_credDir -Force | Out-Null }
-
-            try {
-                $_spCred | Export-Clixml $_credPath -Force -ErrorAction Stop
-            } catch {
-                _Log "[Auth] SP credential save failed to '$_credPath': $_"
-                [System.Windows.MessageBox]::Show(
-                    "Warning: Credential could not be saved:`n`n$_`n`nYou will be prompted again on next launch.",
-                    "Credential Save Warning",
-                    [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Warning) | Out-Null
-            }
-        }
-
-        _Log "[Auth] Mode: ServicePrincipal | TenantId: $TenantId | AppId: $($_spCred.UserName)"
-        try {
-            $_p = @{
-                ServicePrincipal = $true
-                TenantId         = $TenantId
-                Credential       = $_spCred
-                ErrorAction      = 'Stop'
-            }
-            if (-not [string]::IsNullOrWhiteSpace($SubscriptionId)) { $_p['SubscriptionId'] = $SubscriptionId }
-            _Log "[Auth] Calling Connect-AzAccount (service principal)..."
-            $ctx = (Connect-AzAccount @_p).Context
-            if (-not $ctx -or -not $ctx.Account) {
-                _Log "[Auth] Connect-AzAccount returned no context"
-                [System.Windows.MessageBox]::Show("Service principal sign-in did not complete. Please try again.",
-                    "Sign-In Failed", [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Error) | Out-Null
-                exit 1
-            }
-            _Log "[Auth] SP sign-in OK: $($ctx.Account.Id) | Sub: $($ctx.Subscription.Name)"
-        } catch {
-            _Log "[Auth] ERROR - SP sign-in failed: $_"
-            $_retry = [System.Windows.MessageBox]::Show(
-                "Service principal sign-in failed:`n`n$_`n`nWould you like to clear the saved credential so you can re-enter it on next launch?",
-                "Sign-In Failed",
-                [System.Windows.MessageBoxButton]::YesNo,
-                [System.Windows.MessageBoxImage]::Error)
-            if ($_retry -eq 'Yes' -and (Test-Path $_credPath)) {
-                Remove-Item $_credPath -Force
-                [System.Windows.MessageBox]::Show(
-                    "Saved credential cleared. Relaunch to enter new credentials.",
-                    "Credential Cleared",
-                    [System.Windows.MessageBoxButton]::OK,
-                    [System.Windows.MessageBoxImage]::Information) | Out-Null
-            }
-            exit 1
-        }
-        return $ctx
-    }
-
-    # -------------------------------------------------------------------------
-    # Mode: Interactive browser (default)
-    # -------------------------------------------------------------------------
-    _Log "[Auth] Mode: Interactive browser | TenantId: $TenantId | SubId: $SubscriptionId"
-    try {
-        $_p = @{ ErrorAction = 'Stop' }
-        if (-not [string]::IsNullOrWhiteSpace($TenantId))      { $_p['TenantId']      = $TenantId      }
-        if (-not [string]::IsNullOrWhiteSpace($SubscriptionId)) { $_p['SubscriptionId'] = $SubscriptionId }
-        _Log "[Auth] Calling Connect-AzAccount (interactive)..."
-        $ctx = (Connect-AzAccount @_p).Context
-        if (-not $ctx -or -not $ctx.Account) {
-            _Log "[Auth] Connect-AzAccount returned no context"
-            [System.Windows.MessageBox]::Show("Sign-in did not complete. Please try again.",
-                "Sign-In Failed", [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Error) | Out-Null
-            exit 1
-        }
-        _Log "[Auth] Sign-in OK: $($ctx.Account.Id) | Sub: $($ctx.Subscription.Name) ($($ctx.Subscription.Id))"
-    } catch {
-        _Log "[Auth] ERROR - interactive sign-in failed: $_"
-        [System.Windows.MessageBox]::Show("Sign-in failed:`n`n$_", "Sign-In Failed",
-            [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
+        _AuthDialog -Title 'Not Supported' -Heading 'Service principal sign-in is not supported' `
+            -Message 'This version supports user account authentication only (interactive browser or device code). Launch again without the service principal option.'
         exit 1
     }
-    return $ctx
+
+    # ─── Build MSAL public client app ────────────────────────────────────────
+    # Client ID: Azure PowerShell well-known app (pre-trusted in every Entra tenant).
+    # Authority: use explicit tenant if provided, otherwise 'organizations' for multi-tenant.
+    $authority = if (-not [string]::IsNullOrWhiteSpace($TenantId)) {
+        "https://login.microsoftonline.com/$TenantId"
+    } else {
+        "https://login.microsoftonline.com/organizations"
+    }
+    _Log "[Auth] Building MSAL app | Authority: $authority"
+
+    # NOTE: Build the app with intermediate variable assignments, NOT backtick
+    # line-continuation chaining. PowerShell treats a leading '.Method' on a
+    # continued line as a parse error ('Unexpected token .WithAuthority').
+    #
+    # The whole setup block is wrapped so a failure here shows the same
+    # detailed "Sign-In Failed" dialog (with line number) as the auth-mode
+    # blocks below, instead of crashing with an unhandled/invisible error.
+    try {
+        $_builder = [Microsoft.Identity.Client.PublicClientApplicationBuilder]::Create('1950a258-227b-4e31-a9cf-717495945fc2')
+        if (-not $_builder) { throw "PublicClientApplicationBuilder.Create() returned null." }
+
+        $_builder = $_builder.WithAuthority($authority)
+        $_builder = $_builder.WithRedirectUri('http://localhost')
+        $script:msalApp = $_builder.Build()
+        if (-not $script:msalApp) { throw "PublicClientApplicationBuilder.Build() returned null." }
+
+        # ─── Token cache persistence ──────────────────────────────────────────
+        # Serialise/deserialise the MSAL token cache to disk (DPAPI-encrypted) so
+        # silent re-auth works across dashboard restarts. Replaces Save-AzContext /
+        # Import-AzContext. Uses the compiled AvdMsalCache helper (see top of file)
+        # because MSAL fires these callbacks on runspace-less background threads.
+        $cacheFile = "$env:APPDATA\AVDDashboard\token-cache.bin"
+        [AvdMsalCache]::CacheFile = $cacheFile
+
+        if (-not $script:msalApp.UserTokenCache) {
+            throw "`$script:msalApp.UserTokenCache is null - cannot wire token-cache persistence."
+        }
+        $_beforeCb = [Delegate]::CreateDelegate([Microsoft.Identity.Client.TokenCacheCallback], [AvdMsalCache], 'Before')
+        $_afterCb  = [Delegate]::CreateDelegate([Microsoft.Identity.Client.TokenCacheCallback], [AvdMsalCache], 'After')
+        $script:msalApp.UserTokenCache.SetBeforeAccess($_beforeCb)
+        $script:msalApp.UserTokenCache.SetAfterAccess($_afterCb)
+    } catch {
+        _Log "[Auth] ERROR - MSAL setup failed: $_"
+        _AuthDialog -Heading 'Could not start sign-in' `
+            -Message 'The Microsoft sign-in components (MSAL) could not be initialised.' `
+            -Detail "$(_AuthErrorDetail $_)`n(line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim()))"
+        exit 1
+    }
+
+    # ─── Authenticate ─────────────────────────────────────────────────────────
+    $armScopes   = [string[]]@('https://management.azure.com/.default')
+    $authResult  = $null
+
+    # Mode: UseExistingContext - try silent auth from cache first
+    if ($UseExistingContext) {
+        _Log "[Auth] Mode: UseExistingContext - trying silent token acquisition"
+        try {
+            $accounts = $script:msalApp.GetAccountsAsync().GetAwaiter().GetResult()
+            if ($accounts -and @($accounts).Count -gt 0) {
+                $_req = $script:msalApp.AcquireTokenSilent($armScopes, @($accounts)[0])
+                $authResult = $_req.ExecuteAsync().GetAwaiter().GetResult()
+                _Log "[Auth] Silent token OK: $($authResult.Account.Username)"
+            } else {
+                _Log "[Auth] No cached accounts - falling back to interactive"
+            }
+        } catch {
+            _Log "[Auth] Silent token failed: $_ - falling back to interactive"
+            $authResult = $null
+        }
+    }
+
+    # Mode: Device code
+    if (-not $authResult -and $UseDeviceAuthentication) {
+        _Log "[Auth] Mode: DeviceAuthentication"
+        try {
+            $authResult = $script:msalApp.AcquireTokenByDeviceCode($armScopes, [System.Action[Microsoft.Identity.Client.DeviceCodeResult]]{
+                param($dc)
+                _Log "[Auth] Device code: $($dc.Message)"
+                # Surface the message to the user - write to console (visible in the
+                # PowerShell window that launched the dashboard)
+                Write-Host "`n$($dc.Message)`n"
+            }).ExecuteAsync().GetAwaiter().GetResult()
+            _Log "[Auth] Device code sign-in OK: $($authResult.Account.Username)"
+        } catch {
+            if (_IsAuthCancelled $_) {
+                _Log "[Auth] Sign-in cancelled by user"
+                _AuthDialog -Title 'Sign-In Cancelled' -Heading 'Sign-in was cancelled' -Icon Warning `
+                    -Message 'The dashboard needs an Azure sign-in to start, so it will close now. Launch it again when you are ready to sign in.'
+                exit 0
+            }
+            _Log "[Auth] ERROR - device sign-in failed: $_"
+            _AuthDialog -Heading 'Sign-in did not complete' `
+                -Message 'The device-code sign-in could not be completed.' `
+                -Detail (_AuthErrorDetail $_)
+            exit 1
+        }
+    }
+
+    # Mode: Interactive browser (default, or fallback from UseExistingContext)
+    if (-not $authResult) {
+        _Log "[Auth] Mode: Interactive browser"
+        try {
+            $_req = $script:msalApp.AcquireTokenInteractive($armScopes)
+            $authResult = $_req.ExecuteAsync().GetAwaiter().GetResult()
+            _Log "[Auth] Interactive sign-in OK: $($authResult.Account.Username)"
+        } catch {
+            if (_IsAuthCancelled $_) {
+                _Log "[Auth] Sign-in cancelled by user"
+                _AuthDialog -Title 'Sign-In Cancelled' -Heading 'Sign-in was cancelled' -Icon Warning `
+                    -Message 'The dashboard needs an Azure sign-in to start, so it will close now. Launch it again when you are ready to sign in.'
+                exit 0
+            }
+            _Log "[Auth] ERROR - interactive sign-in failed: $_"
+            _AuthDialog -Heading 'Sign-in did not complete' `
+                -Message 'The Azure sign-in could not be completed.' `
+                -Detail (_AuthErrorDetail $_)
+            exit 1
+        }
+    }
+
+    # Expose the authenticated account for token functions in rest-api-helpers.ps1
+    $script:msalAccount  = $authResult.Account
+    $script:msalTenantId = $authResult.TenantId
+
+    _Log "[Auth] Signed in as: $($authResult.Account.Username) | Tenant: $($authResult.TenantId)"
+
+    # ─── Resolve subscription ─────────────────────────────────────────────────
+    # Get subscription details from ARM REST (replaces Get-AzContext subscription info).
+    # If no SubscriptionId was provided, list available subscriptions and pick the first.
+    $armToken = $authResult.AccessToken
+    $armHdr   = @{ Authorization = "Bearer $armToken"; 'Content-Type' = 'application/json' }
+
+    if ([string]::IsNullOrWhiteSpace($SubscriptionId)) {
+        _Log "[Auth] No SubscriptionId configured - fetching available subscriptions"
+        try {
+            $subs = (Invoke-RestMethod 'https://management.azure.com/subscriptions?api-version=2022-12-01' -Headers $armHdr).value
+            if (-not $subs -or @($subs).Count -eq 0) {
+                _AuthDialog -Title 'No Subscriptions' -Heading 'No Azure subscriptions found' `
+                    -Message "Account '$($authResult.Account.Username)' does not have access to any Azure subscriptions in this tenant."
+                exit 1
+            }
+            $subInfo = @($subs)[0]
+            _Log "[Auth] Using first available subscription: $($subInfo.displayName) ($($subInfo.subscriptionId))"
+        } catch {
+            _Log "[Auth] ERROR fetching subscriptions: $_"
+            _AuthDialog -Title 'Subscription Error' -Heading 'Could not list subscriptions' `
+                -Message 'You are signed in, but the list of Azure subscriptions could not be retrieved.' `
+                -Detail (_AuthErrorDetail $_)
+            exit 1
+        }
+    } else {
+        _Log "[Auth] Fetching subscription: $SubscriptionId"
+        try {
+            $subInfo = Invoke-RestMethod "https://management.azure.com/subscriptions/$SubscriptionId`?api-version=2022-12-01" -Headers $armHdr
+        } catch {
+            _Log "[Auth] ERROR fetching subscription '$SubscriptionId': $_"
+            _AuthDialog -Title 'Subscription Error' -Heading 'Could not open the subscription' `
+                -Message "Subscription '$SubscriptionId' (from your config) could not be retrieved. Check the ID and that your account has access to it." `
+                -Detail (_AuthErrorDetail $_)
+            exit 1
+        }
+    }
+
+    _Log "[Auth] Subscription: $($subInfo.displayName) ($($subInfo.subscriptionId))"
+
+    # Return a context object matching the shape previously provided by Get-AzContext.
+    # All callers read .Subscription.Id, .Subscription.Name, .Account.Id, .Tenant.Id.
+    return [PSCustomObject]@{
+        Subscription = [PSCustomObject]@{
+            Id   = $subInfo.subscriptionId
+            Name = $subInfo.displayName
+        }
+        Account = [PSCustomObject]@{ Id = $authResult.Account.Username }
+        Tenant  = [PSCustomObject]@{ Id = $authResult.TenantId }
+    }
 }

@@ -355,7 +355,7 @@ function Invoke-FilesRefresh {
 #
 # Parameters:
 #   $Window         - the loaded System.Windows.Window object
-#   $ContextFile    - path to the saved Az context JSON file (for Az.Accounts)
+#   $ContextFile    - reserved (unused, kept for API compatibility)
 #   $SubscriptionId - current Azure subscription ID for REST API calls
 # =============================================================================
 
@@ -416,9 +416,8 @@ function Initialize-AzureFilesTab {
         $lvBtn    = $script:LogViewerLaunchButton
         $lvScript = Join-Path $script:dashboardDir 'tools\log-viewer.ps1'
         if (-not (Test-Path $lvScript)) {
-            [System.Windows.MessageBox]::Show(
-                "log-viewer.ps1 was not found.`n`nExpected location:`n$lvScript",
-                "Script Not Found", "OK", "Warning") | Out-Null
+            Show-ThemedDialog -Message "log-viewer.ps1 was not found.`n`nExpected location:`n$lvScript" `
+                -Title 'Script Not Found' -Icon Warning | Out-Null
             return
         }
         $lvBtn.IsEnabled = $false
@@ -444,9 +443,8 @@ function Initialize-AzureFilesTab {
         $toolsBtn    = $script:ToolsLaunchButton
         $toolsScript = Join-Path $script:dashboardDir 'profile-tools.ps1'
         if (-not (Test-Path $toolsScript)) {
-            [System.Windows.MessageBox]::Show(
-                "profile-tools.ps1 was not found in the same folder as this dashboard.`n`nExpected location:`n$toolsScript",
-                "Script Not Found", "OK", "Warning") | Out-Null
+            Show-ThemedDialog -Message "profile-tools.ps1 was not found in the same folder as this dashboard.`n`nExpected location:`n$toolsScript" `
+                -Title 'Script Not Found' -Icon Warning | Out-Null
             return
         }
         $toolsBtn.IsEnabled = $false

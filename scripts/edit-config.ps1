@@ -44,6 +44,10 @@
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
+# Styled message dialog (Show-DashboardMessageDialog) - shared with the apps.
+# update-check.ps1 only defines functions at dot-source time; no update check runs.
+. "$PSScriptRoot\update-check.ps1"
+
 # Set a unique AppUserModelID so the window appears as its own taskbar entry
 # (separate from the PowerShell group) and shows the custom window icon.
 try {
@@ -223,7 +227,8 @@ function Resolve-EditorStartupConfig {
         $dlg.Filter = "Config Files (*.psd1)|*.psd1|All Files (*.*)|*.*"
         $dlg.InitialDirectory = Join-Path $PSScriptRoot '..\config'
         if (-not $dlg.ShowDialog()) {
-            [System.Windows.MessageBox]::Show("No config file selected. The editor will exit.", "No Config Selected", "OK", "Information") | Out-Null
+            Show-DashboardMessageDialog -Title 'No Config Selected' -Icon Information `
+                -Message 'No config file selected. The editor will exit.'
             exit 0
         }
         return $dlg.FileName
@@ -253,12 +258,25 @@ $script:lastConfigError = $null
 
 function Import-ConfigFile {
     param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        $script:lastConfigError = "No config file path was provided (empty path)."
+        return $null
+    }
+    if (-not (Test-Path -LiteralPath $Path)) {
+        $script:lastConfigError = "Config file not found:`n$Path`n`nIf this is a OneDrive-synced folder, confirm the file has finished syncing and is not a cloud-only placeholder (right-click the file in Explorer -> 'Always keep on this device')."
+        return $null
+    }
     try {
-        $result = & ([scriptblock]::Create([System.IO.File]::ReadAllText($Path)))
+        $_content = [System.IO.File]::ReadAllText($Path)
+        if ([string]::IsNullOrWhiteSpace($_content)) {
+            $script:lastConfigError = "Config file is empty (0 bytes):`n$Path"
+            return $null
+        }
+        $result = & ([scriptblock]::Create($_content))
         $script:lastConfigError = $null
         return $result
     } catch {
-        $script:lastConfigError = [string]$_
+        $script:lastConfigError = "Failed to parse:`n$Path`n`n$_"
         return $null
     }
 }
@@ -2192,10 +2210,9 @@ function Save-Config {
 
     # If this is a new config and the target file already exists, confirm or pick a new name
     if ($script:isNewConfig -and (Test-Path $script:currentConfigFile)) {
-        $answer = [System.Windows.MessageBox]::Show(
-            "The file '$($script:currentConfigFile)' already exists.`n`nOverwrite it?",
-            'File Already Exists',
-            'YesNoCancel', 'Warning')
+        $answer = Show-DashboardMessageDialog -Title 'File Already Exists' -Heading 'Overwrite existing file?' -Icon Warning `
+            -Message "The file '$($script:currentConfigFile)' already exists.`n`nYes overwrites it; No lets you pick a different name." `
+            -Buttons YesNoCancel
         if ($answer -eq 'Cancel') { return }
         if ($answer -eq 'No') {
             $dlg = New-Object Microsoft.Win32.SaveFileDialog
@@ -2270,8 +2287,14 @@ $browseButton.Add_Click({
         $dlg = New-Object Microsoft.Win32.OpenFileDialog
         $dlg.Title   = "Open Config File"
         $dlg.Filter  = "Config Files (*.psd1)|*.psd1|All Files (*.*)|*.*"
+        # Prefer the directory of the currently loaded config; fall back to the
+        # config\ folder next to this script if that path is invalid/empty
+        # (e.g. the current config failed to resolve on startup).
         $_initDir = try { [System.IO.Path]::GetFullPath([System.IO.Path]::GetDirectoryName($script:currentConfigFile)) } catch { '' }
-        if (-not [string]::IsNullOrWhiteSpace($_initDir) -and (Test-Path -LiteralPath $_initDir)) {
+        if ([string]::IsNullOrWhiteSpace($_initDir) -or -not (Test-Path -LiteralPath $_initDir)) {
+            $_initDir = Join-Path $PSScriptRoot '..\config'
+        }
+        if (Test-Path -LiteralPath $_initDir) {
             $dlg.InitialDirectory = $_initDir
         }
 
@@ -2358,7 +2381,10 @@ $newButton.Add_Click({
     $dlg.DefaultExt       = '.psd1'
     $dlg.FileName         = 'config.psd1'
     $dlg.OverwritePrompt  = $false   # file doesn't exist yet, overwrite check is on Save
-    $dlg.InitialDirectory = [System.IO.Path]::GetDirectoryName($script:currentConfigFile)
+    # Default to the config\ folder next to this script - not the (possibly
+    # invalid/empty) directory of whatever config is currently loaded.
+    $_configDir = Join-Path $PSScriptRoot '..\config'
+    $dlg.InitialDirectory = if (Test-Path -LiteralPath $_configDir) { $_configDir } else { $PSScriptRoot }
 
     if (-not $dlg.ShowDialog() -or [string]::IsNullOrWhiteSpace($dlg.FileName)) { return }
 
